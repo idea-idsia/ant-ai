@@ -44,7 +44,7 @@ jobs:
         run: |
           uv version --bump ${{ steps.bump.outputs.type }}
           uv lock
-          NEW=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml','rb').read())['project']['version'])")
+          NEW=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           echo "new=$NEW" >> $GITHUB_OUTPUT
 
       - name: Commit, tag, and push
