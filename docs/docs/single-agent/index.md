@@ -4,7 +4,7 @@ title: Single-agent
 
 # Single-agent setup
 
-A single ant_ai agent pairs an LLM with a set of tools and, optionally, a Workflow that structures how it processes a request.
+A single `ant-ai` agent pairs an LLM with tools and, optionally, a Workflow that controls how it moves through a task.
 
 ## Creating an agent
 
@@ -99,7 +99,7 @@ agent = Agent(..., tools=tools)
 
 ## Streaming a response
 
-[`Agent.stream()`][ant_ai.agent.agent.Agent.stream] runs the ReAct loop — LLM call → tool calls → tool results — until a final answer is produced. It yields [`Event`][ant_ai.core.events.Event] objects throughout.
+[`Agent.stream()`][ant_ai.agent.agent.Agent.stream] drives the agent until it produces a final answer, yielding [`Event`][ant_ai.core.events.Event] objects at each step — LLM output, tool calls, tool results, and completion.
 
 ```python
 import asyncio

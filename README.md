@@ -8,7 +8,7 @@
 ![Python](https://img.shields.io/badge/python-3.14%2B-4584b6?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue?logo=MIT&logoColor=white-lightgrey)
 [![Coverage](https://codecov.io/gh/idea-idsia/ant-ai/branch/main/graph/badge.svg)](https://codecov.io/gh/idea-idsia/ant-ai)
-[![Docs](https://img.shields.io/badge/docs-mkdocs-526cfe?logo=materialformkdocs&logoColor=white)](https://ant-ai-27f99d.pages-core.supsi.ch)
+[![Docs](https://img.shields.io/badge/docs-mkdocs-526cfe?logo=materialformkdocs&logoColor=white)](https://idea-idsia.github.io/ant-ai/)
 
 **A lightweight Python framework for building tool-driven AI agents and multi-agent systems.**
 
@@ -16,17 +16,17 @@
 
 ---
 
-ANT AI provides a composable set of primitives for building production-ready AI agents: a ReAct reasoning loop, a flexible tool system with MCP support, a graph-based workflow engine, and first-class agent-to-agent (A2A) communication via the [A2A protocol](https://github.com/a2aproject/A2A).
+`ant-ai` is a lightweight Python framework for building multi-agent systems: graph-based workflow orchestration, first-class agent-to-agent (A2A) communication via the [A2A protocol](https://github.com/a2aproject/A2A), MCP tool integration, lifecycle hooks for guardrails, and built-in observability — all on top of an LLM-agnostic core.
 
-## Features
+## Why ANT AI
 
-- **ReAct agent** — built-in Reason→Act loop with streaming, structured output, and configurable retry logic
-- **Flexible tools** — define tools as decorated functions, class namespaces, or load them directly from any [MCP](https://modelcontextprotocol.io/) server
-- **Workflow engine** — graph-based orchestration with static and conditional edges to sequence agent behaviour predictably
-- **Multi-agent colony** — wire agents together with the A2A protocol; each agent becomes a callable tool to its peers
-- **LLM-agnostic** — ships with [LiteLLM](https://github.com/BerriAI/litellm) and native OpenAI backends; any `ChatLLM`-conforming implementation works
-- **Observability** — structured lifecycle events with [Langfuse](https://langfuse.com/), OpenTelemetry, and log sinks
-- **Lifecycle hooks** — intercept and control every LLM call: pass, block, retry, or substitute results; ships with a [GuardrailsAI](https://www.guardrailsai.com/) adapter
+**Multi-agent by design.** Agents communicate and delegate natively via the [A2A protocol](https://github.com/a2aproject/A2A) — build systems that grow without rewrites.
+
+**No lock-in.** Swap LLMs, tools, or observability backends in one line. Your logic stays untouched.
+
+**Structured, not scripted.** Model complex behavior as graphs. Know exactly what runs, when, and why.
+
+**Production-ready out of the box.** Hooks, guardrails, and full observability via [Langfuse](https://langfuse.com/) and OpenTelemetry — without extra setup.
 
 ## Installation
 
@@ -39,7 +39,7 @@ uv add ant-ai
 Or clone and sync for local development:
 
 ```sh
-git clone <repo-url>
+git clone https://github.com/idea-idsia/ant-ai
 cd ant-ai
 uv sync --all-extras
 ```

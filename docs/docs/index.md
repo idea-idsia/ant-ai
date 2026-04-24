@@ -10,7 +10,7 @@ title: Docs
 
     ***
 
-    Get ant_ai installed using uv or from source.
+    Get up and running with `uv` in one command.
 
     [:octicons-arrow-right-24: Get started](install/index.md)
 
@@ -18,7 +18,7 @@ title: Docs
 
     ***
 
-    Build an agent with tools and stream a response.
+    Create your first agent, give it tools, and stream its responses.
 
     [:octicons-arrow-right-24: Build an agent](single-agent/index.md)
 
@@ -26,7 +26,7 @@ title: Docs
 
     ***
 
-    Connect agents in a Colony using the A2A protocol.
+    Wire agents together into a Colony that collaborates via A2A.
 
     [:octicons-arrow-right-24: Build a Colony](multi-agent/index.md)
 
@@ -34,7 +34,7 @@ title: Docs
 
     ***
 
-    Understand how events flow through the system end-to-end.
+    See how agents, workflows, and events fit together end-to-end.
 
     [:octicons-arrow-right-24: Read more](architecture/index.md)
 
