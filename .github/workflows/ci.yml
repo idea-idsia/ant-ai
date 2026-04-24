@@ -49,7 +49,11 @@ jobs:
 
       - run: uv sync --all-packages --all-groups --all-extras
 
-      - run: uv run pytest -m "not vllm and not external" --cov --cov-report=term --junitxml=report.xml
+      - run: uv run pytest -m "not vllm and not external" --cov --cov-report=term --cov-report=xml --junitxml=report.xml
+
+      - uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
 
       - uses: actions/upload-artifact@v7
         if: always()
