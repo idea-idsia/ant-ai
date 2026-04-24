@@ -54,7 +54,8 @@ jobs:
           git add pyproject.toml uv.lock
           git commit -m "chore(release): bump version to v${{ steps.version.outputs.new }}"
           git tag "v${{ steps.version.outputs.new }}"
-          git push origin main --follow-tags
+          git push origin main
+          git push origin "v${{ steps.version.outputs.new }}"
 
       - name: Create GitHub Release
         env:
