@@ -1,0 +1,10 @@
+{
+    "recommendations": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "astral-sh.ty",
+        "njpwerner.autodocstring",
+        "esbenp.prettier-vscode",
+        "samuelcolvin.jinjahtml"
+    ]
+}
