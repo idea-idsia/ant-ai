@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "ant-ai"
 version = "1.0.0"
-description = "ANT AI"
+description = "A lightweight Python framework for building multi-agent AI systems"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -63,6 +63,11 @@ docs = [
     "mkdocs-section-index>=0.3.12",
     "mkdocstrings[python]>=1.0.4",
 ]
+
+[project.urls]
+Homepage = "https://idea-idsia.github.io/ant-ai/"
+Documentation = "https://idea-idsia.github.io/ant-ai/"
+Repository = "https://github.com/idea-idsia/ant-ai"
 
 [tool.uv]
 exclude-newer = "P2D" # Wait for the package to be up for at least 2 days before updating to it.

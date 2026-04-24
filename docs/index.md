@@ -7,7 +7,7 @@ title: Home
   <img alt="ANT AI" src="assets/ant_h_white.png" class="only-dark" style="display: block; margin: 0 auto;" width="220">
 </div>
 
-`ant-ai` is a Python framework for building LLM-powered agents and multi-agent systems.
+`ant-ai` is a lightweight Python framework for building multi-agent AI systems — from a single agent to a full colony of collaborating peers.
 
 ## Quick start
 
@@ -47,7 +47,7 @@ asyncio.run(main())
 
 ## Next steps
 
-- **[Install](docs/install/index.md)** — get ant_ai installed in your project.
+- **[Install](docs/install/index.md)** — get `ant-ai` installed in your project.
 - **[Single-agent guide](docs/single-agent/index.md)** — build an agent with tools.
 - **[Multi-agent guide](docs/multi-agent/index.md)** — connect agents in a Colony.
 - **[Architecture](docs/architecture/index.md)** — how events flow through the system.
