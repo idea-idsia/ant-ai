@@ -2,53 +2,53 @@ name: Change request
 description: Significant change requiring approval before any implementation begins.
 labels: [change-request]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        > **This change request must be approved before any implementation work begins.**
-        > Once approved, one or more issues will be opened to track the implementation.
+    - type: markdown
+      attributes:
+          value: |
+              > **This change request must be approved before any implementation work begins.**
+              > Once approved, one or more issues will be opened to track the implementation.
 
-  - type: textarea
-    id: summary
-    attributes:
-      label: What change is being proposed?
-    validations:
-      required: true
+    - type: textarea
+      id: summary
+      attributes:
+          label: What change is being proposed?
+      validations:
+          required: true
 
-  - type: textarea
-    id: justification
-    attributes:
-      label: Justification
-      description: Why is this change necessary? What problem does it solve?
-    validations:
-      required: true
+    - type: textarea
+      id: justification
+      attributes:
+          label: Justification
+          description: Why is this change necessary? What problem does it solve?
+      validations:
+          required: true
 
-  - type: textarea
-    id: components
-    attributes:
-      label: Affected components
-      description: List the modules, APIs, configs, or services impacted.
-      placeholder: |
-        -
-        -
-    validations:
-      required: true
+    - type: textarea
+      id: components
+      attributes:
+          label: Affected components
+          description: List the modules, APIs, configs, or services impacted.
+          placeholder: |
+              -
+              -
+      validations:
+          required: true
 
-  - type: textarea
-    id: rollback
-    attributes:
-      label: Rollback plan
-      description: How can this change be reverted if something goes wrong?
-    validations:
-      required: true
+    - type: textarea
+      id: rollback
+      attributes:
+          label: Rollback plan
+          description: How can this change be reverted if something goes wrong?
+      validations:
+          required: true
 
-  - type: dropdown
-    id: priority
-    attributes:
-      label: Priority
-      options:
-        - High
-        - Medium
-        - Low
-    validations:
-      required: true
+    - type: dropdown
+      id: priority
+      attributes:
+          label: Priority
+          options:
+              - High
+              - Medium
+              - Low
+      validations:
+          required: true

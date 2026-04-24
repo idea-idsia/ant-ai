@@ -2,54 +2,54 @@ name: Task
 description: Refactor, test, chore, performance, or CI work.
 labels: [chore]
 body:
-  - type: dropdown
-    id: type
-    attributes:
-      label: Commit type
-      description: The Conventional Commits type this work will produce.
-      options:
-        - "refactor — restructuring with no behaviour change"
-        - "test — adding or correcting tests"
-        - "chore — maintenance, deps, config, tooling"
-        - "perf — performance improvement"
-        - "ci — CI/CD pipeline changes"
-    validations:
-      required: true
+    - type: dropdown
+      id: type
+      attributes:
+          label: Commit type
+          description: The Conventional Commits type this work will produce.
+          options:
+              - "refactor — restructuring with no behaviour change"
+              - "test — adding or correcting tests"
+              - "chore — maintenance, deps, config, tooling"
+              - "perf — performance improvement"
+              - "ci — CI/CD pipeline changes"
+      validations:
+          required: true
 
-  - type: textarea
-    id: summary
-    attributes:
-      label: What needs to be done?
-    validations:
-      required: true
+    - type: textarea
+      id: summary
+      attributes:
+          label: What needs to be done?
+      validations:
+          required: true
 
-  - type: textarea
-    id: details
-    attributes:
-      label: Details
-      description: Context, constraints, or background information.
+    - type: textarea
+      id: details
+      attributes:
+          label: Details
+          description: Context, constraints, or background information.
 
-  - type: textarea
-    id: subtasks
-    attributes:
-      label: Subtasks
-      placeholder: |
-        - [ ]
-        - [ ]
+    - type: textarea
+      id: subtasks
+      attributes:
+          label: Subtasks
+          placeholder: |
+              - [ ]
+              - [ ]
 
-  - type: dropdown
-    id: priority
-    attributes:
-      label: Priority
-      options:
-        - High
-        - Medium
-        - Low
-    validations:
-      required: true
+    - type: dropdown
+      id: priority
+      attributes:
+          label: Priority
+          options:
+              - High
+              - Medium
+              - Low
+      validations:
+          required: true
 
-  - type: textarea
-    id: context
-    attributes:
-      label: Additional context
-      description: Related issues, dependencies, references. Remove if not applicable.
+    - type: textarea
+      id: context
+      attributes:
+          label: Additional context
+          description: Related issues, dependencies, references. Remove if not applicable.
