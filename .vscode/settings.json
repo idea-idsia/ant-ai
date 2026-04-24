@@ -1,0 +1,45 @@
+{
+    "editor.formatOnSave": true,
+    "python.terminal.useEnvFile": true,
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff"
+    },
+
+    "[yaml]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+
+    "[toml]": {
+        "editor.defaultFormatter": "tamasfe.even-better-toml"
+    },
+
+    "[json]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+
+    "[jsonc]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+
+    "[jsonl]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+
+    "ruff.configuration": "ruff.toml",
+
+    "editor.codeActionsOnSave": {
+        "source.fixAll": "explicit",
+        "source.organizeImports": "explicit",
+        "source.fixAll.ruff": "explicit"
+    },
+
+    "python.languageServer": "None",
+
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "autoDocstring.docstringFormat": "google-notypes",
+
+    "python.testing.pytestArgs": ["tests"],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}
