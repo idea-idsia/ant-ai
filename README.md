@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/ant_h_white.png">
-  <img alt="ANT AI" src="docs/assets/ant_h_dark.png" height="100">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/idea-idsia/ant-ai/main/docs/assets/ant_h_white.png">
+  <img alt="ANT AI" src="https://raw.githubusercontent.com/idea-idsia/ant-ai/main/docs/assets/ant_h_dark.png" height="100">
 </picture>
 
 ![Python](https://img.shields.io/badge/python-3.14%2B-4584b6?logo=python&logoColor=white)
