@@ -1,0 +1,14 @@
+[src]
+include = ["src"]
+exclude = ["tests"]
+
+[rules]
+# Third-party libraries often lack complete stubs; these fire on legitimate dynamic
+# attribute access (e.g. litellm, langfuse) — demote to warnings so CI stays green
+# while still surfacing them in the IDE.
+unresolved-attribute = "warn"
+possibly-missing-attribute = "warn"
+
+# Union types re-exported through multiple paths in third-party packages can cause
+# false-positive return-type errors (e.g. a2a DatabaseTaskStore re-export).
+invalid-return-type = "warn"
