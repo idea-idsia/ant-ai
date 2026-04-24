@@ -49,18 +49,23 @@ jobs:
 
             - run: uv sync --all-packages --all-groups --all-extras
 
-            - run: uv run pytest -m "not vllm and not external" --cov --cov-report=term --cov-report=xml
+            - run: uv run pytest -m "not vllm and not external" --cov --cov-report=term --cov-report=xml --junitxml=junit.xml
 
             - uses: codecov/codecov-action@v5
               with:
                   files: coverage.xml
                   token: ${{ secrets.CODECOV_TOKEN }}
 
+            - uses: codecov/test-results-action@v1
+              if: ${{ !cancelled() }}
+              with:
+                  token: ${{ secrets.CODECOV_TOKEN }}
+
             - uses: actions/upload-artifact@v7
               if: always()
               with:
                   name: pytest-results
-                  path: report.xml
+                  path: junit.xml
 
     run-pytest-postgres:
         runs-on: ubuntu-latest
@@ -91,6 +96,11 @@ jobs:
             - run: uv run pytest -m "postgres" --cov --cov-report=term --junitxml=report-postgres.xml
               env:
                   POSTGRES_TEST_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/tasks"
+
+            - uses: codecov/test-results-action@v1
+              if: ${{ !cancelled() }}
+              with:
+                  token: ${{ secrets.CODECOV_TOKEN }}
 
             - uses: actions/upload-artifact@v7
               if: always()
