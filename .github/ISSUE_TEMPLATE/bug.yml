@@ -1,0 +1,64 @@
+name: Bug report
+description: Something isn't working correctly.
+title: "fix: "
+labels: [fix]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What went wrong?
+      placeholder: A clear and concise description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Python version, OS, relevant dependency versions.
+      placeholder: "Python 3.14, macOS 15, ant-ai 1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - "Critical — production is broken"
+        - "High — major functionality affected"
+        - "Medium — workaround exists"
+        - "Low — cosmetic or minor impact"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Logs, screenshots, related issues. Remove if not applicable.

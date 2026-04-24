@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a new feature or enhancement.
+title: "feat: "
+labels: [feat]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What should be built?
+      placeholder: A clear and concise description of the feature.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem does this solve or what need does it address?
+    validations:
+      required: true
+
+  - type: textarea
+    id: approach
+    attributes:
+      label: Proposed approach
+      description: Optional. High-level idea of how it could be implemented.
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Related issues, prior art, references. Remove if not applicable.

@@ -1,0 +1,28 @@
+repos:
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v6.0.0
+      hooks:
+          - id: check-added-large-files
+            args: [--maxkb=10000] # Don't allow files larger than 10MB
+          - id: check-merge-conflict
+          - id: check-yaml
+            args: [--unsafe]
+          - id: check-toml
+          - id: check-json
+          - id: end-of-file-fixer
+          - id: trailing-whitespace
+          - id: detect-private-key
+
+    - repo: https://github.com/astral-sh/ruff-pre-commit
+      rev: v0.14.14
+      hooks:
+          - id: ruff-check
+            types_or:
+                - python
+            args: [--fix]
+          - id: ruff-format
+
+    - repo: https://github.com/gitleaks/gitleaks
+      rev: v8.30.0
+      hooks:
+          - id: gitleaks

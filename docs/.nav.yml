@@ -1,0 +1,14 @@
+nav:
+    - Home: index.md
+    - Docs: docs
+    - Reference:
+          - Overview: reference/
+          - Core: reference/core/
+          - Agent: reference/agent/
+          - Tools: reference/tools/
+          - LLM: reference/llm/
+          - Workflow: reference/workflow/
+          - A2A: reference/a2a/
+          - Hooks: reference/hooks/
+          - Observer: reference/observer/
+          - Steps: reference/steps/

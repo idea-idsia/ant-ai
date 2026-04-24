@@ -1,0 +1,67 @@
+# --- Conventional Commits types ---
+- name: "feat"
+  color: "0075ca"
+  description: "New feature (feat: commit type)"
+
+- name: "fix"
+  color: "d73a4a"
+  description: "Bug fix (fix: commit type)"
+
+- name: "docs"
+  color: "0075ca"
+  description: "Documentation only (docs: commit type)"
+
+- name: "refactor"
+  color: "e4e669"
+  description: "Code restructuring, no behaviour change (refactor: commit type)"
+
+- name: "test"
+  color: "bfd4f2"
+  description: "Adding or correcting tests (test: commit type)"
+
+- name: "chore"
+  color: "e4e669"
+  description: "Maintenance, deps, config, tooling (chore: commit type)"
+
+- name: "perf"
+  color: "0e8a16"
+  description: "Performance improvement (perf: commit type)"
+
+- name: "ci"
+  color: "f9d0c4"
+  description: "CI/CD pipeline changes (ci: commit type)"
+
+# --- Process ---
+- name: "change-request"
+  color: "d93f0b"
+  description: "Significant change requiring approval before implementation"
+
+# --- Release ---
+- name: "bump:patch"
+  color: "c5def5"
+  description: "Backwards-compatible bug fixes (x.y.Z)"
+
+- name: "bump:minor"
+  color: "bfe5bf"
+  description: "New backwards-compatible functionality (x.Y.0)"
+
+- name: "bump:major"
+  color: "e11d48"
+  description: "Breaking changes (X.0.0)"
+
+# --- Priority ---
+- name: "priority:critical"
+  color: "b60205"
+  description: "Production is broken"
+
+- name: "priority:high"
+  color: "e11d48"
+  description: "Major functionality affected"
+
+- name: "priority:medium"
+  color: "fbca04"
+  description: "Workaround exists"
+
+- name: "priority:low"
+  color: "c2e0c6"
+  description: "Cosmetic or minor impact"

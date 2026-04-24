@@ -1,0 +1,22 @@
+[pytest]
+asyncio_mode = "auto"
+addopts = ["-ra", "--strict-markers", "--cov=src", "--cov-report=term-missing"]
+
+filterwarnings = [
+    "ignore:::litellm",
+    "ignore:::langfuse",
+    "ignore:::websockets",
+    "ignore:::uvicorn",
+    "ignore::sqlalchemy.exc.SAWarning:a2a.server.models",
+]
+
+markers = [
+    "integration: integration tests that require vLLM service",
+    "unit: unit tests that do not require any external services",
+    "vllm: tests that require vLLM service",
+    "a2a: tests for anything related to A2A, both remote Agent as tool, and A2A server",
+    "external: tests that require access to any external services",
+    "langfuse: tests that require Langfuse integration (set ENV variables)",
+    "multi_agent: integration tests that involve multiple agents",
+    "postgres: tests that require a running PostgreSQL instance (set POSTGRES_TEST_URL env var)",
+]

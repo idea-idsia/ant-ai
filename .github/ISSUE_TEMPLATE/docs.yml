@@ -1,0 +1,43 @@
+name: Documentation
+description: Missing, outdated, unclear, or incorrect documentation.
+title: "docs: "
+labels: [docs]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What needs to be added or updated?
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: Which file(s), section(s), or API(s) are affected?
+      placeholder: "docs/agents.md, Agent.run() docstring"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reason
+    attributes:
+      label: Reason
+      options:
+        - Missing
+        - Outdated
+        - Unclear
+        - Incorrect
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true

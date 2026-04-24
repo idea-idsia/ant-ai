@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - run: uv sync --group dev
+
+      - run: uv run ruff check .
+
+      - run: uv run ruff format --check .
+
+  type-check:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - run: uv sync --all-packages --all-groups --all-extras
+
+      - run: uv run ty check
+
+  run-pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - run: uv sync --all-packages --all-groups --all-extras
+
+      - run: uv run pytest -m "not vllm and not external" --cov --cov-report=term --junitxml=report.xml
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pytest-results
+          path: report.xml
+
+  run-pytest-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.1
+        env:
+          POSTGRES_DB: tasks
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - run: uv sync --all-packages --all-groups --all-extras
+
+      - run: uv run pytest -m "postgres" --cov --cov-report=term --junitxml=report-postgres.xml
+        env:
+          POSTGRES_TEST_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/tasks"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pytest-postgres-results
+          path: report-postgres.xml
