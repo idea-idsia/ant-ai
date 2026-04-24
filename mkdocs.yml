@@ -1,6 +1,6 @@
 site_name: ANT-AI
-repo_url: !ENV [DOCS_REPO_URL, "https://gitlab.com/<org>/ant-ai"]
-repo_name: !ENV [DOCS_REPO_NAME, "<org>/ant-ai"]
+repo_url: !ENV [DOCS_REPO_URL, "https://github.com/idea-idsia/ant-ai"]
+repo_name: !ENV [DOCS_REPO_NAME, "idea-idsia/ant-ai"]
 
 docs_dir: docs
 extra_css:
