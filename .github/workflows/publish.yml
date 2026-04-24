@@ -53,6 +53,7 @@ jobs:
           packages-dir: dist/
 
   pypi-publish:
+    if: false  # disabled until testpypi is verified
     runs-on: ubuntu-latest
     needs:
       - testpypi-publish
