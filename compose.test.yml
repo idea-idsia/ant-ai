@@ -1,0 +1,19 @@
+services:
+    task-db:
+        image: postgres:18.1
+        environment:
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_USER: postgres
+            POSTGRES_DB: tasks
+        ports:
+            - "5433:5432"
+        volumes:
+            - task-db-data:/var/lib/postgresql
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U postgres"]
+            interval: 5s
+            timeout: 3s
+            retries: 20
+
+volumes:
+    task-db-data:

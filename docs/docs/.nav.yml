@@ -1,0 +1,7 @@
+title: Docs
+nav:
+    - index.md
+    - Install: install
+    - Architecture: architecture
+    - Single-agent: single-agent
+    - Multi-agent: multi-agent

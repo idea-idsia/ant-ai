@@ -1,0 +1,28 @@
+target-version = "py314"
+fix = true
+unsafe-fixes = true
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "B",   # flake8-bugbear
+    "I",   # import sorting
+    "UP",  # pyupgrade
+    "SIM", # simplify code
+    "C4",  # comprehensions
+]
+
+ignore = [
+    "E501", # long lines handled by formatter instead of warning
+    "F841", # unused variables
+]
+
+[lint.isort]
+combine-as-imports = true
+force-single-line = false
+
+[format]
+quote-style = "double"
+indent-style = "space"

@@ -1,0 +1,29 @@
+name: Deploy docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - run: uv sync --group docs
+
+      - run: uv run mkdocs gh-deploy --force
+        env:
+          DOCS_REPO_URL: https://github.com/${{ github.repository }}
+          DOCS_REPO_NAME: ${{ github.repository }}

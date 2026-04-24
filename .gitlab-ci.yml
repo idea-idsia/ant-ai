@@ -1,0 +1,70 @@
+image: ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+
+stages:
+    - test
+    - deploy
+
+workflow:
+    rules:
+        - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+        - if: $CI_COMMIT_BRANCH == "develop"
+        - if: $CI_COMMIT_BRANCH =~ /^hotfix\//
+
+lint:
+    stage: test
+    before_script:
+        - uv sync --group dev
+    script:
+        - uv run ruff check .
+        - uv run ruff format --check .
+
+type-check:
+    stage: test
+    before_script:
+        - uv sync --all-packages --all-groups --all-extras
+    script:
+        - uv run ty check
+    allow_failure: true
+
+run-pytest:
+    stage: test
+    before_script:
+        - uv sync --all-packages --all-groups --all-extras
+    script:
+        - uv run pytest -m "not vllm and not external" --cov --cov-report=term --junitxml=report.xml
+    artifacts:
+        reports:
+            junit: report.xml
+        when: always
+    coverage: '/TOTAL.*\s+(\d+%)$/'
+
+run-pytest-postgres:
+    stage: test
+    services:
+        - name: postgres:18.1
+          alias: postgres
+    variables:
+        POSTGRES_DB: tasks
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: postgres
+        POSTGRES_TEST_URL: "postgresql+asyncpg://postgres:postgres@postgres:5432/tasks"
+    before_script:
+        - uv sync --all-packages --all-groups --all-extras
+    script:
+        - uv run pytest -m "postgres" --cov --cov-report=term --junitxml=report-postgres.xml
+    artifacts:
+        reports:
+            junit: report-postgres.xml
+        when: always
+
+create-pages:
+    stage: deploy
+    before_script:
+        - uv sync --group docs
+    script:
+        - uv run mkdocs build -d public
+    pages:
+        publish: public
+    rules:
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
