@@ -56,9 +56,11 @@ jobs:
                   files: coverage.xml
                   token: ${{ secrets.CODECOV_TOKEN }}
 
-            - uses: codecov/test-results-action@v1
+            - uses: codecov/codecov-action@v5
               if: ${{ !cancelled() }}
               with:
+                  files: junit.xml
+                  report_type: test_results
                   token: ${{ secrets.CODECOV_TOKEN }}
 
             - uses: actions/upload-artifact@v7
@@ -97,9 +99,11 @@ jobs:
               env:
                   POSTGRES_TEST_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/tasks"
 
-            - uses: codecov/test-results-action@v1
+            - uses: codecov/codecov-action@v5
               if: ${{ !cancelled() }}
               with:
+                  files: report-postgres.xml
+                  report_type: test_results
                   token: ${{ secrets.CODECOV_TOKEN }}
 
             - uses: actions/upload-artifact@v7
