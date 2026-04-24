@@ -47,7 +47,7 @@ jobs:
                   NEW=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
                   echo "new=$NEW" >> $GITHUB_OUTPUT
 
-            - name: Commit, tag, and push
+            - name: Commit and push tag
               run: |
                   git config user.name "github-actions[bot]"
                   git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -56,11 +56,3 @@ jobs:
                   git tag "v${{ steps.version.outputs.new }}"
                   git push origin HEAD:main
                   git push origin "v${{ steps.version.outputs.new }}"
-
-            - name: Create GitHub Release
-              env:
-                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: |
-                  gh release create "v${{ steps.version.outputs.new }}" \
-                    --title "v${{ steps.version.outputs.new }}" \
-                    --generate-notes
