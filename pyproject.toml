@@ -29,7 +29,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "a2a-sdk[sql,http-server,grpc,encryption,telemetry]>=1.0.0",
+    "a2a-sdk[sql,http-server,grpc,encryption,telemetry]>=1.0.1",
     "fastapi>=0.136.0",
     "litellm>=1.83.10",
     "loguru>=0.7.3",

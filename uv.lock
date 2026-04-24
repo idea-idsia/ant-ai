@@ -3,12 +3,12 @@ revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "2026-04-21T09:48:17.766365Z"
+exclude-newer = "2026-04-22T08:42:57.071076758Z"
 exclude-newer-span = "P2D"
 
 [[package]]
 name = "a2a-sdk"
-version = "1.0.0"
+version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-core" },
@@ -20,9 +20,9 @@ dependencies = [
     { name = "protobuf" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/37/0f/70ded63ee03b576c13299734ffd77b3d29ec6da0ee471bd879a03d68533d/a2a_sdk-1.0.0.tar.gz", hash = "sha256:bd28fb7c3f2601045fade74c9872e10828e91db1fd63c6320b0e57a692621be0", size = 368354, upload-time = "2026-04-20T15:34:13.467Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/36/15a8a6f59a428bee1486ef3a8a4c4eea0ba95e6e1b709bb1d9f01339f11e/a2a_sdk-1.0.1.tar.gz", hash = "sha256:162f862de4868176755537fe9ba57b06d9b2e82b3eff82c6c32a5ea967449866", size = 370028, upload-time = "2026-04-22T07:58:07.25Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/bc/56c31531a29a4d9bdd76408271735c0240506a01380942269e8f74a13aa8/a2a_sdk-1.0.0-py3-none-any.whl", hash = "sha256:2644420b127bfdc19ca698fb07415de5b753b175ae94f659452dc5314f316515", size = 232152, upload-time = "2026-04-20T15:34:11.661Z" },
+    { url = "https://files.pythonhosted.org/packages/30/30/18f984fd93f3783ed21f28bda3be86c2f4e9dabb7ff33c9b50d04684c11a/a2a_sdk-1.0.1-py3-none-any.whl", hash = "sha256:cb01376def03df16c961a14c896ca1f5c378a8b37219aefae8a7ccecce77843b", size = 232118, upload-time = "2026-04-22T07:58:05.635Z" },
 ]
 
 [package.optional-dependencies]
@@ -160,7 +160,7 @@ wheels = [
 
 [[package]]
 name = "ant-ai"
-version = "1.0.0"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk", extra = ["encryption", "grpc", "http-server", "sql", "telemetry"] },
@@ -204,7 +204,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a2a-sdk", extras = ["sql", "http-server", "grpc", "encryption", "telemetry"], specifier = ">=1.0.0" },
+    { name = "a2a-sdk", extras = ["sql", "http-server", "grpc", "encryption", "telemetry"], specifier = ">=1.0.1" },
     { name = "fastapi", specifier = ">=0.136.0" },
     { name = "langfuse", marker = "extra == 'langfuse'", specifier = ">=4.3.1" },
     { name = "litellm", specifier = ">=1.83.10" },
