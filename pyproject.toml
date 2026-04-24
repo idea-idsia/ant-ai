@@ -40,7 +40,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-langfuse = ["langfuse>=4.3.1"]
+langfuse = ["langfuse>=4.5.0"]
 openai = ["openai>=2.24.0"]
 
 [dependency-groups]

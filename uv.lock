@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "2026-04-21T09:48:17.766365Z"
+exclude-newer = "2026-04-22T07:51:16.279286148Z"
 exclude-newer-span = "P2D"
 
 [[package]]
@@ -160,7 +160,7 @@ wheels = [
 
 [[package]]
 name = "ant-ai"
-version = "1.0.0"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk", extra = ["encryption", "grpc", "http-server", "sql", "telemetry"] },
@@ -206,7 +206,7 @@ docs = [
 requires-dist = [
     { name = "a2a-sdk", extras = ["sql", "http-server", "grpc", "encryption", "telemetry"], specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.136.0" },
-    { name = "langfuse", marker = "extra == 'langfuse'", specifier = ">=4.3.1" },
+    { name = "langfuse", marker = "extra == 'langfuse'", specifier = ">=4.5.0" },
     { name = "litellm", specifier = ">=1.83.10" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mcp", specifier = ">=1.27.0" },
@@ -1027,7 +1027,7 @@ wheels = [
 
 [[package]]
 name = "langfuse"
-version = "4.3.1"
+version = "4.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "backoff" },
@@ -1039,9 +1039,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0c/84/e04d7966e79eda4126e9c4a90f374b1b7d9a6d8155e386f9bade49f19296/langfuse-4.3.1.tar.gz", hash = "sha256:fb83155d17c2bc96fdc7c749f10c8ae8b6be1e47619e31627b5a907f965a6580", size = 276525, upload-time = "2026-04-16T12:20:17.679Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/ea/e4a583d39cbbb13bf070a8e8816697874df2e611f2faff5661f6f65c7ac3/langfuse-4.5.0.tar.gz", hash = "sha256:ecb2c3e19098065f64933f8f2b4d8b3a426938ca1c8e9bf7611d6df569adaa3f", size = 279309, upload-time = "2026-04-21T11:30:40.048Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/45/bcc15ea8df11224516e060efb2d813cdfafb8d285233f350ff0d8098ff20/langfuse-4.3.1-py3-none-any.whl", hash = "sha256:4ec1524fcb082acaff1a746f3da1ab92c4fb2352e66350c11341b34c13013685", size = 476379, upload-time = "2026-04-16T12:20:18.741Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/72/0bb02ab2144d9da38a4c91146661f6147323acdd1d17ce45c3a6f9932410/langfuse-4.5.0-py3-none-any.whl", hash = "sha256:99434f9553fa8711bfc6a2e61dac011af0c771f52d61809d7774b85f3b91c9a7", size = 479214, upload-time = "2026-04-21T11:30:38.573Z" },
 ]
 
 [[package]]
