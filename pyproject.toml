@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "ant-ai"
-version = "1.0.4"
+version = "1.0.5"
 description = "A lightweight Python framework for building multi-agent AI systems"
 readme = "README.md"
 license = "MIT"
