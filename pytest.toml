@@ -19,4 +19,5 @@ markers = [
     "langfuse: tests that require Langfuse integration (set ENV variables)",
     "multi_agent: integration tests that involve multiple agents",
     "postgres: tests that require a running PostgreSQL instance (set POSTGRES_TEST_URL env var)",
+    "graphviz: tests that require the graphviz package and dot CLI to be installed",
 ]

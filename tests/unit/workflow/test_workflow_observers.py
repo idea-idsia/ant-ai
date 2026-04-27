@@ -42,18 +42,18 @@ def spy_sink():
 
 
 @pytest.mark.unit
-async def test_no_sink_runs_without_error(agent, seeded_state, make_noop_workflow):
+async def test_no_sink_runs_without_error(agent, seeded_state, noop_workflow):
     obs.configure(None)
-    w = make_noop_workflow()
+    w = noop_workflow
     ctx = InvocationContext(session_id="s1")
     await w.ainvoke(agent, ctx=ctx, state=seeded_state())
 
 
 @pytest.mark.unit
 async def test_event_order_single_node(
-    spy_sink: SpySink, agent, seeded_state, make_noop_workflow
+    spy_sink: SpySink, agent, seeded_state, noop_workflow
 ):
-    w = make_noop_workflow()
+    w = noop_workflow
     ctx = InvocationContext(session_id="s1")
 
     await w.ainvoke(agent, ctx=ctx, state=seeded_state())
@@ -69,9 +69,9 @@ async def test_event_order_single_node(
 
 @pytest.mark.unit
 async def test_correct_node_in_event_fields(
-    spy_sink: SpySink, agent, seeded_state, make_noop_workflow
+    spy_sink: SpySink, agent, seeded_state, noop_workflow
 ):
-    w = make_noop_workflow()
+    w = noop_workflow
     ctx = InvocationContext(session_id="s1")
 
     await w.ainvoke(agent, ctx=ctx, state=seeded_state())
@@ -137,9 +137,9 @@ async def test_router_edge_event(spy_sink: SpySink, agent, seeded_state):
 
 @pytest.mark.unit
 async def test_workflow_start_fields(
-    spy_sink: SpySink, agent, seeded_state, make_noop_workflow
+    spy_sink: SpySink, agent, seeded_state, noop_workflow
 ):
-    w = make_noop_workflow()
+    w = noop_workflow
     ctx = InvocationContext(session_id="s1")
 
     await w.ainvoke(agent, ctx=ctx, state=seeded_state())
