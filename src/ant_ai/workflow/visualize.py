@@ -115,7 +115,7 @@ def build_workflow_graph(
         diamond_id = f"__router_{_gv_id(src)}__"
         g.node(
             diamond_id,
-            label=router.__name__,
+            label=getattr(router, "__name__", repr(router)),
             shape="diamond",
             style="filled",
             fillcolor=_FILL_ROUTER,
