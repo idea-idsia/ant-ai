@@ -27,7 +27,7 @@ jobs:
                   python-version: "3.14"
                   enable-cache: true
 
-            - run: uv sync --group docs
+            - run: uv sync --group docs --extra viz
 
             - run: uv run mkdocs build
               env:
