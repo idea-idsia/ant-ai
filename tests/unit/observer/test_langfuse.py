@@ -310,6 +310,30 @@ async def test_generic_exception_updates_current_observation_only():
 
 
 @pytest.mark.unit
+async def test_router_node_creates_span_with_input_and_output():
+    root = make_observation("root")
+    node = make_observation("node")
+    router_obs = make_observation("router")
+    lf = make_langfuse_mock(root, node, router_obs)
+    sink = LangfuseSink(langfuse=lf)
+    obs.configure(sink)
+
+    await obs.event("workflow.start", session_id="s1", agent_name="a")
+    await obs.event("node.start", node="planner", run_step=1)
+    await obs.event("node.end", node="planner", run_step=1)
+    await obs.event("node.start", node="my_router", run_step=1, input="planner")
+    await obs.event("node.end", node="my_router", run_step=1, output="END")
+
+    assert lf.start_as_current_observation.call_count == 3
+    kwargs = lf.start_as_current_observation.call_args_list[2].kwargs
+    assert kwargs["name"] == "my_router"
+    assert kwargs["input"] == "planner"
+    router_obs.update.assert_called_once()
+    assert router_obs.update.call_args.kwargs["output"] == "END"
+    router_obs.end.assert_called_once()
+
+
+@pytest.mark.unit
 def test_langfuse_sink_instantiates():
     lf = MagicMock()
     sink = LangfuseSink(langfuse=lf)

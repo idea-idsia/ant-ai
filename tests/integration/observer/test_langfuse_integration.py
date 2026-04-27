@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import time
 
@@ -130,6 +131,28 @@ def _failing_workflow() -> Workflow:
     w.add_node("failing_node", boom)
     w.add_edge(START, "failing_node")
     w.add_edge("failing_node", END)
+    return w
+
+
+def _conditional_workflow() -> Workflow:
+    w = Workflow()
+
+    async def noop(agent, state, ctx):
+        async def _gen():
+            await asyncio.sleep(0.05)
+            if False:
+                yield
+
+        return _gen()
+
+    async def route_to_node_b(agent, state, ctx):
+        return "node_b"
+
+    w.add_node("node_a", noop)
+    w.add_node("node_b", noop)
+    w.add_edge(START, "node_a")
+    w.add_conditional_edge("node_a", route_to_node_b)
+    w.add_edge("node_b", END)
     return w
 
 
@@ -345,6 +368,39 @@ async def test_tool_span_input_is_stored():
     assert tool_obs[0].input is not None, "tool observation has no input"
     assert tool_obs[0].output is not None, "tool observation has no output"
     assert trace.output == tool_output
+
+
+@pytest.mark.integration
+@pytest.mark.external
+@pytest.mark.langfuse
+async def test_conditional_router_appears_as_span():
+    lf = _langfuse_client()
+    sink = LangfuseSink(langfuse=lf)
+    obs.configure(sink)
+
+    agent = _DummyAgent(name="integration_agent")
+    ctx = InvocationContext(session_id="integ-test-router")
+    workflow = _conditional_workflow()
+
+    await workflow.ainvoke(agent, ctx=ctx, state=_state_with_message())
+    _flush_and_shutdown(lf)
+
+    assert sink.last_trace_id is not None
+
+    # Expect: agent root + node_a + route_to_node_b router + node_b = 4 observations
+    trace = _get_trace(lf, sink.last_trace_id, min_obs=4)
+    obs_names = {o.name for o in trace.observations}
+    assert "route_to_node_b" in obs_names, (
+        f"Expected router span 'route_to_node_b' in trace, got {obs_names}"
+    )
+
+    router_obs = next(o for o in trace.observations if o.name == "route_to_node_b")
+    assert str(router_obs.input) == "node_a", (
+        f"Expected router input 'node_a', got {router_obs.input!r}"
+    )
+    assert str(router_obs.output) == "node_b", (
+        f"Expected router output 'node_b', got {router_obs.output!r}"
+    )
 
 
 @pytest.mark.integration

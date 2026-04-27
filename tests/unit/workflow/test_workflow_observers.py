@@ -136,6 +136,43 @@ async def test_router_edge_event(spy_sink: SpySink, agent, seeded_state):
 
 
 @pytest.mark.unit
+async def test_router_emits_node_start_and_end(spy_sink: SpySink, agent, seeded_state):
+    w = Workflow()
+
+    async def noop(a, state, ctx):
+        async def gen():
+            if False:
+                yield
+
+        return gen()
+
+    async def my_router(a, state, ctx):
+        return END
+
+    w.add_node("C", noop)
+    w.add_edge(START, "C")
+    w.add_conditional_edge("C", my_router)
+
+    ctx = InvocationContext(session_id="s1")
+    await w.ainvoke(agent, ctx=ctx, state=seeded_state())
+
+    router_starts = [
+        (n, f)
+        for n, f in spy_sink.events
+        if n == "node.start" and f.get("node") == "my_router"
+    ]
+    router_ends = [
+        (n, f)
+        for n, f in spy_sink.events
+        if n == "node.end" and f.get("node") == "my_router"
+    ]
+    assert len(router_starts) == 1
+    assert len(router_ends) == 1
+    assert router_starts[0][1]["input"] == "C"
+    assert router_ends[0][1]["output"] == END
+
+
+@pytest.mark.unit
 async def test_workflow_start_fields(
     spy_sink: SpySink, agent, seeded_state, noop_workflow
 ):
