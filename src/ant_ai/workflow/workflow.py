@@ -130,16 +130,21 @@ class Workflow(BaseModel):
         state: State,
         ctx: InvocationContext | None,
         current: str,
+        run_step: int = 0,
     ) -> str:
         if current in self.conditional_edges:
-            nxt: str = await _maybe_await(
-                self.conditional_edges[current](agent, state, ctx)
+            router = self.conditional_edges[current]
+            router_name = getattr(router, "__name__", f"{current}_router")
+            await obs.event(
+                "node.start", node=router_name, run_step=run_step, input=current
             )
-            await obs.event("node.edge.router", src=current, dst=nxt)
+            nxt: str = await _maybe_await(router(agent, state, ctx))
             if not isinstance(nxt, str) or not nxt:
                 raise RuntimeError("Router must return a non-empty str.")
             if nxt not in (START, END) and nxt not in self.nodes:
                 raise RuntimeError(f"Unknown node '{nxt}'.")
+            await obs.event("node.edge.router", src=current, dst=nxt)
+            await obs.event("node.end", node=router_name, run_step=run_step, output=nxt)
             return nxt
 
         if current in self.edges:
@@ -269,7 +274,7 @@ class Workflow(BaseModel):
                     async for ev in self._run_node(agent, run, ctx, current):
                         yield ev
 
-                current = await self._next(agent, run.state, ctx, current)
+                current = await self._next(agent, run.state, ctx, current, run.step)
 
     async def ainvoke(
         self,
