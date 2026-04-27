@@ -47,6 +47,8 @@ jobs:
                   python-version: "3.14"
                   enable-cache: true
 
+            - run: sudo apt-get install -y graphviz
+
             - run: uv sync --all-packages --all-groups --all-extras
 
             - run: uv run pytest -m "not vllm and not external" --cov --cov-report=term --cov-report=xml --junitxml=junit.xml
