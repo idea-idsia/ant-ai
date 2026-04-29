@@ -122,13 +122,13 @@ asyncio.run(main())
 
 Key event classes (all in [`ant_ai.core.events`][ant_ai.core.events]):
 
-| Class                                                                          | Meaning                         |
-| ------------------------------------------------------------------------------ | ------------------------------- |
-| [`UpdateEvent`][ant_ai.core.events.UpdateEvent]                              | Intermediate LLM output         |
-| [`ToolCallingEvent`][ant_ai.core.events.ToolCallingEvent]                    | Agent is about to call a tool   |
-| [`ToolResultEvent`][ant_ai.core.events.ToolResultEvent]                      | Tool returned a result          |
-| [`FinalAnswerEvent`][ant_ai.core.events.FinalAnswerEvent]                    | Agent produced its final answer |
-| [`MaxStepsReachedEvent`][ant_ai.core.events.MaxStepsReachedEvent]            | Loop hit the step limit         |
+| Class                                                               | Meaning                         |
+| ------------------------------------------------------------------- | ------------------------------- |
+| [`UpdateEvent`][ant_ai.core.events.UpdateEvent]                   | Intermediate LLM output         |
+| [`ToolCallingEvent`][ant_ai.core.events.ToolCallingEvent]         | Agent is about to call a tool   |
+| [`ToolResultEvent`][ant_ai.core.events.ToolResultEvent]           | Tool returned a result          |
+| [`FinalAnswerEvent`][ant_ai.core.events.FinalAnswerEvent]         | Agent produced its final answer |
+| [`MaxStepsReachedEvent`][ant_ai.core.events.MaxStepsReachedEvent] | Loop hit the step limit         |
 
 ## Adding a Workflow
 

@@ -4,14 +4,14 @@ title: Example
 
 # Multi-agent example: Software Engineering Colony
 
-This example walks through a three-agent colony that collaborates to write, test, and review Python code. The setup mirrors the `hv_agent_service` reference implementation.
+This example walks through a three-agent colony that collaborates to write, test, and review Python code.
 
 ## Agents
 
-| Agent | Port | Responsibility | Can call |
-|-------|------|----------------|----------|
-| `codegen` | 9001 | Writes Python code | `testgen` |
-| `testgen` | 9002 | Writes pytest tests | `codegen` |
+| Agent     | Port | Responsibility       | Can call  |
+| --------- | ---- | -------------------- | --------- |
+| `codegen` | 9001 | Writes Python code   | `testgen` |
+| `testgen` | 9002 | Writes pytest tests  | `codegen` |
 | `quality` | 9003 | Reviews code quality | `codegen` |
 
 The collaboration graph:
@@ -196,30 +196,30 @@ python -m myapp start quality   # → 0.0.0.0:9003
 
 ```yaml
 services:
-  codegen-agent:
-    build: .
-    command: python -m myapp start codegen
-    ports:
-      - "9001:9001"
+    codegen-agent:
+        build: .
+        command: python -m myapp start codegen
+        ports:
+            - "9001:9001"
 
-  testgen-agent:
-    build: .
-    command: python -m myapp start testgen
-    ports:
-      - "9002:9002"
+    testgen-agent:
+        build: .
+        command: python -m myapp start testgen
+        ports:
+            - "9002:9002"
 
-  quality-agent:
-    build: .
-    command: python -m myapp start quality
-    ports:
-      - "9003:9003"
+    quality-agent:
+        build: .
+        command: python -m myapp start quality
+        ports:
+            - "9003:9003"
 
-  db:
-    image: postgres:17
-    environment:
-      POSTGRES_DB: ant_ai
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
+    db:
+        image: postgres:17
+        environment:
+            POSTGRES_DB: ant_ai
+            POSTGRES_USER: user
+            POSTGRES_PASSWORD: pass
 ```
 
 The `Colony` uses service names (`codegen-agent`, `testgen-agent`, `quality-agent`) as hostnames, matching the URLs in each `AgentCard.supported_interfaces`.
@@ -227,7 +227,7 @@ The `Colony` uses service names (`codegen-agent`, `testgen-agent`, `quality-agen
 ## How a request flows
 
 1. A client sends `"Write a function that sorts a list"` to the `codegen` agent.
-2. `codegen` runs `generate_code` → `validate_code`. In the process, it can optionally call `testgen` to generate tests.
-3. `testgen` receives the code from `codegen`, generates tests, validates them, and returns the result.
-4. `codegen` incorporates the test output and produces its final answer.
-5. Independently, `quality` can be called to review any code, and may in turn call `codegen` to fix issues it finds.
+1. `codegen` runs `generate_code` → `validate_code`. In the process, it can optionally call `testgen` to generate tests.
+1. `testgen` receives the code from `codegen`, generates tests, validates them, and returns the result.
+1. `codegen` incorporates the test output and produces its final answer.
+1. Independently, `quality` can be called to review any code, and may in turn call `codegen` to fix issues it finds.

@@ -11,6 +11,12 @@ title: Home
 
 ## Quick start
 
+```bash
+uv add ant-ai
+```
+
+Then try it out:
+
 ```python
 import asyncio
 
@@ -47,7 +53,7 @@ asyncio.run(main())
 
 ## Next steps
 
-- **[Install](docs/install/index.md)** — get `ant-ai` installed in your project.
+- **[Install](docs/install/index.md)** — optional extras, installing from source, and verifying your setup.
 - **[Single-agent guide](docs/single-agent/index.md)** — build an agent with tools.
 - **[Multi-agent guide](docs/multi-agent/index.md)** — connect agents in a Colony.
 - **[Architecture](docs/architecture/index.md)** — how events flow through the system.
