@@ -5,10 +5,11 @@
   <img alt="ANT AI" src="https://raw.githubusercontent.com/idea-idsia/ant-ai/main/docs/assets/ant_h_dark.png" height="100">
 </picture>
 
-![Python](https://img.shields.io/badge/python-3.14%2B-4584b6?logo=python&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-blue?logo=MIT&logoColor=white-lightgrey)
-[![Coverage](https://codecov.io/gh/idea-idsia/ant-ai/branch/main/graph/badge.svg)](https://codecov.io/gh/idea-idsia/ant-ai)
-[![Docs](https://img.shields.io/badge/docs-mkdocs-526cfe?logo=materialformkdocs&logoColor=white)](https://idea-idsia.github.io/ant-ai/)
+![Python](https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
+![PyPI - Version](https://img.shields.io/pypi/v/ant-ai?label=PyPI)
+[![Coverage](https://img.shields.io/codecov/c/github/idea-idsia/ant-ai?label=Coverage&logo=codecov)](https://codecov.io/gh/idea-idsia/ant-ai)
+[![Docs](https://img.shields.io/badge/Docs-mkdocs-526cfe?logo=materialformkdocs&logoColor=white)](https://idea-idsia.github.io/ant-ai/)
 
 **A lightweight Python framework for building tool-driven AI agents and multi-agent systems.**
 
@@ -20,13 +21,13 @@
 
 ## Why ANT AI
 
-**Multi-agent by design.** Agents communicate and delegate natively via the [A2A protocol](https://github.com/a2aproject/A2A) — build systems that grow without rewrites.
+**Multi-agent by design.** Agents communicate and delegate via the [A2A protocol](https://github.com/a2aproject/A2A) — no custom glue code required.
 
-**No lock-in.** Swap LLMs, tools, or observability backends in one line. Your logic stays untouched.
+**No lock-in.** Swap LLMs, tools, or observability backends without touching your agent logic.
 
-**Structured, not scripted.** Model complex behavior as graphs. Know exactly what runs, when, and why.
+**Structured, not scripted.** Model complex behavior as graphs — know exactly what runs, when, and why.
 
-**Production-ready out of the box.** Hooks, guardrails, and full observability via [Langfuse](https://langfuse.com/) and OpenTelemetry — without extra setup.
+**Observable from day one.** Built-in tracing via [Langfuse](https://langfuse.com/) and lifecycle hooks for guardrails.
 
 ## Installation
 
@@ -39,9 +40,9 @@ uv add ant-ai
 Or clone and sync for local development:
 
 ```sh
-git clone https://github.com/idea-idsia/ant-ai
+git clone git@github.com:idea-idsia/ant-ai.git
 cd ant-ai
-uv sync --all-extras
+uv sync --all-packages --all-groups --all-extras
 ```
 
 ## Quickstart

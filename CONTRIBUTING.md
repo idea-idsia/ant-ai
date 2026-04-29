@@ -43,25 +43,25 @@ The repository follows a trunk-based model: all work branches off `main` and mer
 
 ### Main branch
 
-| Branch | Description |
-|--------|-------------|
+| Branch | Description                                                  |
+| ------ | ------------------------------------------------------------ |
 | `main` | Stable, production-ready code. Protected and version-tagged. |
 
 ### Support branches (short-lived)
 
 Branch prefixes mirror [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) types so that branch names and commit messages stay consistent.
 
-| Branch | Origin | Description |
-|--------|--------|-------------|
-| `feat/*` | `main` | New features. |
-| `fix/*` | `main` | Bug fixes. |
-| `docs/*` | `main` | Documentation-only changes. |
+| Branch       | Origin | Description                                  |
+| ------------ | ------ | -------------------------------------------- |
+| `feat/*`     | `main` | New features.                                |
+| `fix/*`      | `main` | Bug fixes.                                   |
+| `docs/*`     | `main` | Documentation-only changes.                  |
 | `refactor/*` | `main` | Code restructuring with no behaviour change. |
-| `test/*` | `main` | Test additions or corrections. |
-| `chore/*` | `main` | Maintenance tasks (deps, config, tooling). |
-| `perf/*` | `main` | Performance improvements. |
-| `ci/*` | `main` | CI/CD pipeline changes. |
-| `junk/*` | `main` | Experimental work. **Never merged.** |
+| `test/*`     | `main` | Test additions or corrections.               |
+| `chore/*`    | `main` | Maintenance tasks (deps, config, tooling).   |
+| `perf/*`     | `main` | Performance improvements.                    |
+| `ci/*`       | `main` | CI/CD pipeline changes.                      |
+| `junk/*`     | `main` | Experimental work. **Never merged.**         |
 
 ### Workflow
 
@@ -106,13 +106,13 @@ Include the issue number before the description — GitHub will automatically li
 
 Use the GitHub issue templates — they enforce the required fields and apply the correct label automatically:
 
-| Template | CC label | Use when |
-|----------|----------|----------|
-| Bug report | `fix` | Something isn't working correctly |
-| Feature request | `feat` | Proposing new functionality |
-| Documentation | `docs` | Missing, outdated, or incorrect docs |
-| Task | `refactor` / `test` / `chore` / `perf` / `ci` | Maintenance or internal work |
-| Change request | `change-request` | Significant change needing approval first |
+| Template        | CC label                                      | Use when                                  |
+| --------------- | --------------------------------------------- | ----------------------------------------- |
+| Bug report      | `fix`                                         | Something isn't working correctly         |
+| Feature request | `feat`                                        | Proposing new functionality               |
+| Documentation   | `docs`                                        | Missing, outdated, or incorrect docs      |
+| Task            | `refactor` / `test` / `chore` / `perf` / `ci` | Maintenance or internal work              |
+| Change request  | `change-request`                              | Significant change needing approval first |
 
 Issue titles are pre-filled with the matching CC prefix (e.g. `fix: `, `feat: `) — keep that prefix so the title can be reused directly in a commit message.
 
@@ -122,12 +122,12 @@ Issue titles are pre-filled with the matching CC prefix (e.g. `fix: `, `feat: `)
 
 Every issue must carry exactly one priority label — set it after the template auto-applies the type label:
 
-| Label | When to use |
-|-------|-------------|
-| `priority:critical` | Production is broken |
-| `priority:high` | Major functionality affected |
-| `priority:medium` | Workaround exists |
-| `priority:low` | Cosmetic or minor impact |
+| Label               | When to use                  |
+| ------------------- | ---------------------------- |
+| `priority:critical` | Production is broken         |
+| `priority:high`     | Major functionality affected |
+| `priority:medium`   | Workaround exists            |
+| `priority:low`      | Cosmetic or minor impact     |
 
 ---
 
@@ -207,12 +207,12 @@ uv run mkdocs build   # static build
 ### Submitting
 
 1. Open the PR — GitHub will auto-populate the [PR template](.github/PULL_REQUEST_TEMPLATE.md).
-2. Fill in every section completely — incomplete PRs will be returned.
-3. Tick the correct **commit type** and apply the appropriate **bump label** (or confirm none is needed).
-4. Ensure all CI jobs pass (`lint`, `type-check`, `run-pytest`).
-5. Keep PRs focused: one concern per PR.
-6. Request at least **one review** from a project maintainer.
-7. Do not force-push once a review has started — add new commits instead.
+1. Fill in every section completely — incomplete PRs will be returned.
+1. Tick the correct **commit type** and apply the appropriate **bump label** (or confirm none is needed).
+1. Ensure all CI jobs pass (`lint`, `type-check`, `run-pytest`).
+1. Keep PRs focused: one concern per PR.
+1. Request at least **one review** from a project maintainer.
+1. Do not force-push once a review has started — add new commits instead.
 
 ### Review checklist
 
@@ -236,11 +236,11 @@ Releases are fully automated and triggered by a label on the merged PR.
 
 Apply exactly one of these labels before merging:
 
-| Label | Semver segment bumped | When to use |
-|-------|-----------------------|-------------|
-| `bump:patch` | `x.y.Z` | Backwards-compatible bug fixes |
-| `bump:minor` | `x.Y.0` | New backwards-compatible functionality |
-| `bump:major` | `X.0.0` | Breaking changes |
+| Label        | Semver segment bumped | When to use                            |
+| ------------ | --------------------- | -------------------------------------- |
+| `bump:patch` | `x.y.Z`               | Backwards-compatible bug fixes         |
+| `bump:minor` | `x.Y.0`               | New backwards-compatible functionality |
+| `bump:major` | `X.0.0`               | Breaking changes                       |
 
 PRs without a bump label are merged silently — no release is cut.
 
@@ -289,6 +289,7 @@ docs(workflow): document sequencing behaviour for parallel steps
 ```
 
 Rules:
+
 - Subject line ≤ 72 characters, imperative mood, no trailing period.
 - Use `!` after the type to signal urgent or breaking changes (e.g. `fix!:`, `feat!:`).
 - Reference related issues and PRs in the footer using `#<number>`.
