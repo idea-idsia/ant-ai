@@ -1,49 +1,30 @@
-## Summary
+## What & Why
 
-<!-- Describe what this PR does and why. Two to three sentences. -->
+<!-- What does this PR do and why? 2–3 sentences. -->
 
 ## Changes
 
-<!--
-List the concrete changes introduced. Be specific.
-Example:
-- Added retry logic to `ToolExecutor` with configurable backoff
-- Updated `Agent.run()` signature to accept timeout parameter
+<!-- Concrete list of what changed.
+- Added retry logic to `ToolExecutor` with exponential backoff
+- Updated `Agent.run()` to accept a `timeout` parameter
 -->
 
 -
 
-## Related
+## Closes
 
-<!-- Issues closed by this PR. Example: Closes #12, Closes #34 -->
+<!-- Link issues this PR resolves. -->
 
 Closes #
 
-## Commit type
-
-- [ ] `feat` — new feature
-- [ ] `fix` — bug fix
-- [ ] `docs` — documentation only
-- [ ] `refactor` — code restructuring, no behaviour change
-- [ ] `test` — adding or correcting tests
-- [ ] `chore` — maintenance, deps, config, tooling
-- [ ] `perf` — performance improvement
-- [ ] `ci` — CI/CD pipeline changes
-
 ## Release
 
-<!-- Apply exactly one bump label to this PR if it should trigger a release. Leave unchecked if no release is needed. -->
+<!-- Apply a bump label if this PR should cut a release, otherwise skip. -->
 
-- [ ] `bump:patch` applied — backwards-compatible bug fix
-- [ ] `bump:minor` applied — new backwards-compatible functionality
-- [ ] `bump:major` applied — breaking change (`!` in commit message)
-- [ ] No release needed
+- [ ] `bump:patch` — bug fix
+- [ ] `bump:minor` — new functionality
+- [ ] `bump:major` — breaking change
 
-## Review checklist
+## Docs
 
-- [ ] Code is clear and follows project conventions
-- [ ] No secrets or credentials introduced
-- [ ] New behaviour is covered by tests; existing tests pass
-- [ ] Public API changes are reflected in docstrings and docs
-- [ ] CI is green (`lint`, `type-check`, `run-pytest`)
-- [ ] Correct bump label applied (or confirmed not needed)
+<!-- If public APIs changed, briefly note what was updated or what still needs updating. Remove if not applicable. -->
