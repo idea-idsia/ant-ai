@@ -15,6 +15,7 @@ theme:
         - navigation.instant
         - navigation.tracking
         - navigation.sections
+        - navigation.indexes
         - content.code.copy
         - content.action.edit
 
@@ -42,8 +43,8 @@ theme:
 
 plugins:
     - search
-    - section-index
     - awesome-nav
+    - section-index
     - panzoom
 
     - gen-files:
