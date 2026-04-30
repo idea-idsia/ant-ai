@@ -1,5 +1,7 @@
 nav:
-    - Home: index.md
+    - Home:
+        - index.md
+        - Funding: funding.md
     - Docs: docs
     - Reference:
           - Overview: reference/
