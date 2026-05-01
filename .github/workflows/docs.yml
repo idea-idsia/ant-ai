@@ -34,7 +34,7 @@ jobs:
                   DOCS_REPO_URL: https://github.com/${{ github.repository }}
                   DOCS_REPO_NAME: ${{ github.repository }}
 
-            - uses: actions/upload-pages-artifact@v3
+            - uses: actions/upload-pages-artifact@v5
               with:
                   path: site/
 
