@@ -41,6 +41,7 @@ dependencies = [
 
 [project.optional-dependencies]
 langfuse = ["langfuse>=4.3.1"]
+mem0 = ["mem0ai>=0.1.0"]
 openai = ["openai>=2.24.0"]
 viz = ["graphviz>=0.20"]
 

@@ -10,6 +10,7 @@ from ant_ai.core import (
     StepResult,
     configure_logging,
 )
+from ant_ai.memory import Memory
 from ant_ai.observer import CompositeSink, ObservabilitySink, obs
 from ant_ai.tools import Tool, ToolRegistry
 from ant_ai.tools.tool import tool
@@ -19,6 +20,8 @@ __all__ = [
     # agent
     "Agent",
     "BaseAgent",
+    # memory
+    "Memory",
     # core
     "Message",
     "AnyMessage",

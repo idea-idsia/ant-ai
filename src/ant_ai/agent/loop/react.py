@@ -22,6 +22,7 @@ from ant_ai.core.result import (
 )
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks import WrapCall
+from ant_ai.memory.protocol import Memory
 from ant_ai.steps import LLMStep, ToolStep
 from ant_ai.tools.registry import ToolRegistry
 
@@ -43,6 +44,7 @@ class ReActLoop(BaseAgentLoop):
 
     reason_step: LLMStep
     act_step: ToolStep | None = None
+    memory: Memory | None = None
 
     async def stream(
         self,
@@ -61,8 +63,20 @@ class ReActLoop(BaseAgentLoop):
             response_schema if self.act_step is not None else None
         )
 
+        _trigger_msg: Message | None = next(
+            (
+                m
+                for m in reversed(state.messages)
+                if isinstance(m, Message) and m.role == "user"
+            ),
+            None,
+        )
+
         for loop_step in range(1, max_steps + 1):
             llm_result: StepResult | None = None
+
+            if loop_step == 1 and self.memory is not None:
+                await self._inject_memories(state, ctx)
 
             await self.hooks.run_before_model(state, ctx)
 
@@ -122,12 +136,19 @@ class ReActLoop(BaseAgentLoop):
                     final_event = await self._make_final_answer(
                         llm_result.output.raw, loop_step, coerce_schema, ctx
                     )
-                    state.add_message(
-                        Message(role="assistant", content=final_event.content)
+                    assistant_msg = Message(
+                        role="assistant", content=final_event.content
                     )
+                    state.add_message(assistant_msg)
                     yield final_event
+                    if self.memory is not None:
+                        await self._consolidate_memories(
+                            [_trigger_msg, assistant_msg], ctx
+                        )
                     return
 
+        if self.memory is not None:
+            await self._consolidate_memories([_trigger_msg], ctx)
         yield MaxStepsReachedEvent(
             origin=EventOrigin(layer="agent", run_step=max_steps),
         )
@@ -218,6 +239,35 @@ class ReActLoop(BaseAgentLoop):
                 f"Expected LLMOutput from structuring step, got {type(result.output).__name__}"
             )
         return result.output.raw
+
+    async def _inject_memories(
+        self, state: State, ctx: InvocationContext | None
+    ) -> None:
+        """Retrieve relevant memories and prepend them as Messages in state."""
+        user_query = next(
+            (m.content for m in reversed(state.messages) if m.role == "user"), ""
+        )
+        if not user_query:
+            return
+        if self.memory is None:
+            return
+        run_id = ctx.session_id if ctx else None
+        memory_msgs = await self.memory.retrieve(user_query, run_id=run_id)
+        state.messages[0:0] = memory_msgs
+
+    async def _consolidate_memories(
+        self,
+        messages: list[Message | None],
+        ctx: InvocationContext | None,
+    ) -> None:
+        """Persist the current-turn exchange to memory."""
+        to_store = [m for m in messages if m is not None and m.content]
+        if not to_store:
+            return
+        if self.memory is None:
+            return
+        run_id = ctx.session_id if ctx else None
+        await self.memory.update(to_store, run_id=run_id)
 
     def register_tool(self, registry: ToolRegistry) -> None:
         """Update internal steps to reflect a newly registered tool in registry."""
