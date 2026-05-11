@@ -22,7 +22,6 @@ from ant_ai.core.result import (
 )
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks import WrapCall
-from ant_ai.memory.protocol import Memory
 from ant_ai.steps import LLMStep, ToolStep
 from ant_ai.tools.registry import ToolRegistry
 
@@ -44,7 +43,6 @@ class ReActLoop(BaseAgentLoop):
 
     reason_step: LLMStep
     act_step: ToolStep | None = None
-    memory: Memory | None = None
 
     async def stream(
         self,
@@ -76,7 +74,7 @@ class ReActLoop(BaseAgentLoop):
             llm_result: StepResult | None = None
 
             if loop_step == 1 and self.memory is not None:
-                await self._inject_memories(state, ctx)
+                await self._retrieve_memories(state, ctx)
 
             await self.hooks.run_before_model(state, ctx)
 
@@ -239,33 +237,6 @@ class ReActLoop(BaseAgentLoop):
                 f"Expected LLMOutput from structuring step, got {type(result.output).__name__}"
             )
         return result.output.raw
-
-    async def _inject_memories(
-        self, state: State, ctx: InvocationContext | None
-    ) -> None:
-        """Retrieve relevant memories and prepend them as Messages in state."""
-        user_query: str | None = next(
-            (m.content for m in reversed(state.messages) if m.role == "user"), ""
-        )
-        if not user_query:
-            return
-        if self.memory is None:
-            return
-        memory_msgs: list[Message] = await self.memory.retrieve(user_query, ctx=ctx)
-        state.messages[0:0] = memory_msgs
-
-    async def _consolidate_memories(
-        self,
-        messages: list[Message | None],
-        ctx: InvocationContext | None,
-    ) -> None:
-        """Persist the current-turn exchange to memory."""
-        to_store: list[Message] = [m for m in messages if m is not None and m.content]
-        if not to_store:
-            return
-        if self.memory is None:
-            return
-        await self.memory.update(to_store, ctx=ctx)
 
     def register_tool(self, registry: ToolRegistry) -> None:
         """Update internal steps to reflect a newly registered tool in registry."""

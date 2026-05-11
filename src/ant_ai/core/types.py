@@ -15,6 +15,7 @@ class InvocationContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     session_id: str
+    user_id: str | None = Field(default=None)
     llm_settings: dict[str, Any] | None = Field(default=None)
     workflow_settings: dict[str, Any] | None = Field(default=None)
 

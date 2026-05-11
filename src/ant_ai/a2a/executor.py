@@ -99,6 +99,7 @@ class A2AExecutor(AgentExecutor):
     ) -> None:
         ctx = InvocationContext(
             session_id=task.context_id,
+            user_id=context.metadata.get("user_id", None),
             llm_settings=context.metadata.get("llm_settings", None),
             workflow_settings=context.metadata.get("workflow_settings", None),
         )

@@ -2,72 +2,75 @@ from __future__ import annotations
 
 from typing import Any
 
-from mem0 import AsyncMemory
-from pydantic import PrivateAttr
+from mem0 import AsyncMemoryClient
+from mem0.client.types import SearchMemoryOptions
+from pydantic import Field, PrivateAttr, model_validator
 
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext
 from ant_ai.memory.protocol import Memory
 
 
-def _extract_run_id(kwargs: dict[str, Any]) -> str | None:
-    """Pop ctx (or run_id) from kwargs and return the resolved run_id."""
+def _resolve_ctx(kwargs: dict[str, Any]) -> dict[str, str]:
+    """Pop ctx (or bare entity ids) from kwargs and return mem0 filters dict.
+
+    ctx.user_id  → user_id  (cross-session)
+    ctx.session_id → run_id (session-scoped fallback)
+    """
     ctx: InvocationContext | None = kwargs.pop("ctx", None)
     if ctx is not None:
-        return ctx.session_id
-    return kwargs.pop("run_id", None)
+        if ctx.user_id:
+            return {"user_id": ctx.user_id}
+        return {"run_id": ctx.session_id}
+    filters: dict[str, str] = {}
+    for key in ("user_id", "run_id", "agent_id", "app_id"):
+        val = kwargs.pop(key, None)
+        if val is not None:
+            filters[key] = val
+    return filters
 
 
 class Mem0Memory(Memory):
     """
-    mem0 backend for AgentMemory.
+    mem0 cloud backend for AgentMemory.
 
-    Entity identifiers (user_id, agent_id, run_id, app_id) are NOT stored
-    on the instance — pass them at call time via **kwargs, exactly as mem0's
-    own API expects.
+    Requires MEM0_API_KEY in the environment, or pass ``api_key`` explicitly.
 
     Example::
 
-        memory = Mem0Memory()
-        msgs = await memory.retrieve("user preferences", filters={"user_id": "alice"})
-        await memory.update(conversation, user_id="alice", run_id="session-42")
+        memory = Mem0Memory(api_key="m0-...")
+        msgs = await memory.retrieve("user preferences", user_id="alice")
+        await memory.update(conversation, user_id="alice")
     """
 
-    _client: Any = PrivateAttr(default=AsyncMemory)
+    api_key: str | None = Field(default=None)
+    _client: Any = PrivateAttr()
+
+    @model_validator(mode="after")
+    def _init_client(self) -> Mem0Memory:
+        self._client = (
+            AsyncMemoryClient(api_key=self.api_key)
+            if self.api_key
+            else AsyncMemoryClient()
+        )
+        return self
 
     async def retrieve(
         self, query: str, *, top_k: int = 5, **kwargs: Any
     ) -> list[Message]:
-        """
-        Search mem0 and return results as system Messages.
-
-        Pass entity filters via kwargs, e.g.::
-
-            await memory.retrieve(query, filters={"user_id": "alice"})
-        """
-        run_id: str | None = _extract_run_id(kwargs)
-        if run_id is not None:
-            kwargs["run_id"] = run_id
-        results: Any = await self._client.search(query, top_k=top_k, **kwargs)
+        filters = _resolve_ctx(kwargs)
+        options = SearchMemoryOptions(filters=filters or None, top_k=top_k)
+        results: Any = await self._client.search(query, options=options)
         return [
             Message(role="system", content=r["memory"])
             for r in results.get("results", [])
         ]
 
     async def update(self, messages: list[Message], **kwargs: Any) -> None:
-        """
-        Add the conversation to mem0 for memory extraction.
-
-        Pass entity identifiers via kwargs, e.g.::
-
-            await memory.update(messages, user_id="alice", run_id="session-42")
-        """
-        run_id: str | None = _extract_run_id(kwargs)
-        if run_id is not None:
-            kwargs["run_id"] = run_id
+        filters = _resolve_ctx(kwargs)
         msg_dicts: list[dict[str, str]] = [
             {"role": m.role, "content": m.content} for m in messages if m.content
         ]
         if not msg_dicts:
             return
-        await self._client.add(msg_dicts, **kwargs)
+        await self._client.add(msg_dicts, **filters)
