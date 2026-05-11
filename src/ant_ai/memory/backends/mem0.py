@@ -6,7 +6,16 @@ from mem0 import AsyncMemory
 from pydantic import PrivateAttr
 
 from ant_ai.core.message import Message
+from ant_ai.core.types import InvocationContext
 from ant_ai.memory.protocol import Memory
+
+
+def _extract_run_id(kwargs: dict[str, Any]) -> str | None:
+    """Pop ctx (or run_id) from kwargs and return the resolved run_id."""
+    ctx: InvocationContext | None = kwargs.pop("ctx", None)
+    if ctx is not None:
+        return ctx.session_id
+    return kwargs.pop("run_id", None)
 
 
 class Mem0Memory(Memory):
@@ -36,6 +45,9 @@ class Mem0Memory(Memory):
 
             await memory.retrieve(query, filters={"user_id": "alice"})
         """
+        run_id: str | None = _extract_run_id(kwargs)
+        if run_id is not None:
+            kwargs["run_id"] = run_id
         results: Any = await self._client.search(query, top_k=top_k, **kwargs)
         return [
             Message(role="system", content=r["memory"])
@@ -50,6 +62,9 @@ class Mem0Memory(Memory):
 
             await memory.update(messages, user_id="alice", run_id="session-42")
         """
+        run_id: str | None = _extract_run_id(kwargs)
+        if run_id is not None:
+            kwargs["run_id"] = run_id
         msg_dicts: list[dict[str, str]] = [
             {"role": m.role, "content": m.content} for m in messages if m.content
         ]

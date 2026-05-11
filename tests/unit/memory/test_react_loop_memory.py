@@ -198,8 +198,8 @@ async def test_kwargs_forwarded_to_retrieve_and_update(stub_memory):
 
     [_ async for _ in loop.stream(state, ctx=ctx)]
 
-    assert stub_memory.retrieve_calls[0].get("run_id") == "sess-123"
-    assert stub_memory.update_calls[0].get("run_id") == "sess-123"
+    assert stub_memory.retrieve_calls[0].get("ctx") is ctx
+    assert stub_memory.update_calls[0].get("ctx") is ctx
 
 
 @pytest.mark.unit

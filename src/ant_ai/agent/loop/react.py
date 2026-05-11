@@ -133,7 +133,7 @@ class ReActLoop(BaseAgentLoop):
                         )
 
                 case FinalResponse():
-                    final_event = await self._make_final_answer(
+                    final_event: FinalAnswerEvent = await self._make_final_answer(
                         llm_result.output.raw, loop_step, coerce_schema, ctx
                     )
                     assistant_msg = Message(
@@ -176,7 +176,7 @@ class ReActLoop(BaseAgentLoop):
     ) -> FinalAnswerEvent:
         final_text: str = text
         if response_schema is not None:
-            final_text = await self._coerce_to_schema(text, response_schema, ctx)
+            final_text: str = await self._coerce_to_schema(text, response_schema, ctx)
 
         return FinalAnswerEvent(
             origin=EventOrigin(layer="agent", run_step=loop_step),
@@ -244,15 +244,14 @@ class ReActLoop(BaseAgentLoop):
         self, state: State, ctx: InvocationContext | None
     ) -> None:
         """Retrieve relevant memories and prepend them as Messages in state."""
-        user_query = next(
+        user_query: str | None = next(
             (m.content for m in reversed(state.messages) if m.role == "user"), ""
         )
         if not user_query:
             return
         if self.memory is None:
             return
-        run_id = ctx.session_id if ctx else None
-        memory_msgs = await self.memory.retrieve(user_query, run_id=run_id)
+        memory_msgs: list[Message] = await self.memory.retrieve(user_query, ctx=ctx)
         state.messages[0:0] = memory_msgs
 
     async def _consolidate_memories(
@@ -261,16 +260,15 @@ class ReActLoop(BaseAgentLoop):
         ctx: InvocationContext | None,
     ) -> None:
         """Persist the current-turn exchange to memory."""
-        to_store = [m for m in messages if m is not None and m.content]
+        to_store: list[Message] = [m for m in messages if m is not None and m.content]
         if not to_store:
             return
         if self.memory is None:
             return
-        run_id = ctx.session_id if ctx else None
-        await self.memory.update(to_store, run_id=run_id)
+        await self.memory.update(to_store, ctx=ctx)
 
     def register_tool(self, registry: ToolRegistry) -> None:
         """Update internal steps to reflect a newly registered tool in registry."""
-        self.reason_step.serialized_tools = registry.to_serialized()
+        self.reason_step.serialized_tools: list[dict] = registry.to_serialized()
         if self.act_step is None:
             self.act_step = ToolStep(registry=registry)
