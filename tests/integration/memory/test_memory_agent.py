@@ -1,20 +1,3 @@
-"""
-End-to-end memory integration test.
-
-Starts a Colony server backed by Mem0Memory and fires two A2A turns:
-  1. Store a fact about the user.
-  2. New session, same user_id — agent must recall the fact.
-
-Note: mem0 user_id memory extraction is async on their end (~5-7 s to index).
-The test sleeps between turns to let indexing complete.
-
-Requires:
-    OPENAI_API_KEY and MEM0_API_KEY set in environment or .env
-
-Run:
-    uv run pytest tests/integration/memory/test_memory_agent.py -m "integration and mem0"
-"""
-
 from __future__ import annotations
 
 import asyncio

@@ -138,11 +138,11 @@ class ReActLoop(BaseAgentLoop):
                         role="assistant", content=final_event.content
                     )
                     state.add_message(assistant_msg)
-                    yield final_event
                     if self.memory is not None:
                         await self._consolidate_memories(
                             [_trigger_msg, assistant_msg], ctx
                         )
+                    yield final_event
                     return
 
         if self.memory is not None:

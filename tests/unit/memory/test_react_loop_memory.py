@@ -203,6 +203,48 @@ async def test_kwargs_forwarded_to_retrieve_and_update(stub_memory):
 
 
 @pytest.mark.unit
+async def test_update_called_when_consumer_breaks_after_final_event(stub_memory):
+    """update() must fire even if the caller stops iterating after FinalAnswerEvent."""
+    from ant_ai.core.events import FinalAnswerEvent
+
+    reason_step = FakeStep("llm", [make_llm_result("the answer")])
+    loop = make_loop(reason_step, memory=stub_memory)
+    state = State(messages=[Message(role="user", content="q")])
+
+    # Simulate a consumer that exits as soon as it sees FinalAnswerEvent —
+    # the regression was that memory.update() was placed after the yield,
+    # so an early-exit caller would never trigger it.
+    async for event in loop.stream(state, ctx=None):
+        if isinstance(event, FinalAnswerEvent):
+            break
+
+    assert len(stub_memory.update_calls) == 1, (
+        "update() must be called before FinalAnswerEvent is yielded so that "
+        "consumers that break early still persist memory"
+    )
+
+
+@pytest.mark.unit
+async def test_update_called_before_final_event_is_yielded(stub_memory):
+    """Memory consolidation happens before FinalAnswerEvent is emitted."""
+    from ant_ai.core.events import FinalAnswerEvent
+
+    update_call_count_at_event: list[int] = []
+
+    reason_step = FakeStep("llm", [make_llm_result("ans")])
+    loop = make_loop(reason_step, memory=stub_memory)
+    state = State(messages=[Message(role="user", content="q")])
+
+    async for event in loop.stream(state, ctx=None):
+        if isinstance(event, FinalAnswerEvent):
+            update_call_count_at_event.append(len(stub_memory.update_calls))
+
+    assert update_call_count_at_event == [1], (
+        "update() must have been called before FinalAnswerEvent reaches the consumer"
+    )
+
+
+@pytest.mark.unit
 async def test_retrieve_called_only_once_across_multiple_loop_steps(stub_memory):
     """retrieve() fires before the first model step only — not on subsequent steps."""
     from ant_ai.core.message import ToolCall, ToolFunction
