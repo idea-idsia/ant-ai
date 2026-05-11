@@ -61,8 +61,20 @@ class ReActLoop(BaseAgentLoop):
             response_schema if self.act_step is not None else None
         )
 
+        _trigger_msg: Message | None = next(
+            (
+                m
+                for m in reversed(state.messages)
+                if isinstance(m, Message) and m.role == "user"
+            ),
+            None,
+        )
+
         for loop_step in range(1, max_steps + 1):
             llm_result: StepResult | None = None
+
+            if loop_step == 1 and self.memory is not None:
+                await self._retrieve_memories(state, ctx)
 
             await self.hooks.run_before_model(state, ctx)
 
@@ -119,15 +131,22 @@ class ReActLoop(BaseAgentLoop):
                         )
 
                 case FinalResponse():
-                    final_event = await self._make_final_answer(
+                    final_event: FinalAnswerEvent = await self._make_final_answer(
                         llm_result.output.raw, loop_step, coerce_schema, ctx
                     )
-                    state.add_message(
-                        Message(role="assistant", content=final_event.content)
+                    assistant_msg = Message(
+                        role="assistant", content=final_event.content
                     )
+                    state.add_message(assistant_msg)
+                    if self.memory is not None:
+                        await self._consolidate_memories(
+                            [_trigger_msg, assistant_msg], ctx
+                        )
                     yield final_event
                     return
 
+        if self.memory is not None:
+            await self._consolidate_memories([_trigger_msg], ctx)
         yield MaxStepsReachedEvent(
             origin=EventOrigin(layer="agent", run_step=max_steps),
         )
@@ -155,7 +174,7 @@ class ReActLoop(BaseAgentLoop):
     ) -> FinalAnswerEvent:
         final_text: str = text
         if response_schema is not None:
-            final_text = await self._coerce_to_schema(text, response_schema, ctx)
+            final_text: str = await self._coerce_to_schema(text, response_schema, ctx)
 
         return FinalAnswerEvent(
             origin=EventOrigin(layer="agent", run_step=loop_step),
@@ -221,6 +240,6 @@ class ReActLoop(BaseAgentLoop):
 
     def register_tool(self, registry: ToolRegistry) -> None:
         """Update internal steps to reflect a newly registered tool in registry."""
-        self.reason_step.serialized_tools = registry.to_serialized()
+        self.reason_step.serialized_tools: list[dict] = registry.to_serialized()
         if self.act_step is None:
             self.act_step = ToolStep(registry=registry)

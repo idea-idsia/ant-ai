@@ -9,6 +9,7 @@ nav:
           - Agent: reference/agent/
           - Tools: reference/tools/
           - LLM: reference/llm/
+          - Memory: reference/memory/
           - Workflow: reference/workflow/
           - A2A: reference/a2a/
           - Hooks: reference/hooks/

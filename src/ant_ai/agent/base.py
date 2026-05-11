@@ -21,6 +21,7 @@ from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks.layer import HookLayer
 from ant_ai.hooks.protocol import AgentHook
 from ant_ai.llm.protocol import ChatLLM
+from ant_ai.memory.protocol import Memory
 from ant_ai.observer import obs
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import Tool
@@ -52,6 +53,10 @@ class BaseAgent(BaseModel):
     hooks: list[AgentHook] = Field(
         default_factory=list,
         description="Lifecycle hooks for the agent.",
+    )
+    memory: Memory | None = Field(
+        default=None,
+        description="Pluggable memory backend for cross-session context.",
     )
     max_retries: int = Field(
         default=3,
