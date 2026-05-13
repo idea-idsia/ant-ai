@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-05-11T18:47:29.009514Z"
 exclude-newer-span = "P2D"
 
 [[package]]
@@ -169,6 +169,7 @@ dependencies = [
     { name = "loguru" },
     { name = "mcp" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]
@@ -220,6 +221,7 @@ requires-dist = [
     { name = "mem0ai", marker = "extra == 'mem0'", specifier = ">=0.1.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.24.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "starlette", specifier = ">=1.0.0" },
     { name = "uvicorn", specifier = ">=0.44.0" },
 ]
