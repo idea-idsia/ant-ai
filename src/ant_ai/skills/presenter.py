@@ -14,6 +14,8 @@ _HOW_TO_USE = """\
 
 
 class SkillPresenter(Protocol):
+    """Protocol for formatting skills into an agent's system prompt."""
+
     def system_prompt(self, skills: list[AgentSkill]) -> str: ...
 
 
