@@ -8,6 +8,7 @@ nav:
           - Core: reference/core/
           - Agent: reference/agent/
           - Tools: reference/tools/
+          - Skills: reference/skills/
           - LLM: reference/llm/
           - Memory: reference/memory/
           - Workflow: reference/workflow/

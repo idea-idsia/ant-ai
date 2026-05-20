@@ -23,7 +23,7 @@ from ant_ai.hooks.protocol import AgentHook
 from ant_ai.llm.protocol import ChatLLM
 from ant_ai.memory.protocol import Memory
 from ant_ai.observer import obs
-from ant_ai.skills.loader import make_use_skill_tool
+from ant_ai.skills.presenter import MarkdownSkillPresenter, SkillPresenter
 from ant_ai.skills.protocol import AgentSkill
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import Tool
@@ -64,6 +64,10 @@ class BaseAgent(BaseModel):
         default_factory=list,
         description="Agent Skills available to this agent (agentskills.io standard).",
     )
+    skill_presenter: Annotated[SkillPresenter, SkipValidation] = Field(
+        default_factory=MarkdownSkillPresenter,
+        description="Controls how skills are injected into the system prompt.",
+    )
     max_retries: int = Field(
         default=3,
         ge=1,
@@ -80,9 +84,7 @@ class BaseAgent(BaseModel):
     def _build(self) -> BaseAgent:
         self._registry = ToolRegistry(self.tools)
         self._hook_layer = HookLayer(hooks=self.hooks)
-        if self.skills:
-            self._registry.register(make_use_skill_tool(self.skills))
-        self._loop = self._make_loop()
+        self._loop: BaseAgentLoop = self._make_loop()
         return self
 
     @abstractmethod
@@ -95,18 +97,9 @@ class BaseAgent(BaseModel):
         """Return this agent's system message, with skill discovery appended if present."""
         if not self.skills:
             return Message(role="system", content=self.system_prompt)
-        lines = [
-            self.system_prompt,
-            "",
-            "## Available Skills",
-            "",
-            "You have access to the following skills. "
-            'Call `use_skill(skill_name="<name>")` to load its full instructions before using it.',
-            "",
-        ]
-        for skill in self.skills:
-            lines.append(f"- **{skill.name}**: {skill.description}")
-        return Message(role="system", content="\n".join(lines))
+        skills_block: str = self.skill_presenter.system_prompt(self.skills)
+        content: str = "\n\n".join([self.system_prompt, skills_block])
+        return Message(role="system", content=content)
 
     async def stream(
         self,

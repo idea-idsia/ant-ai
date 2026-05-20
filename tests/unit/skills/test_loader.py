@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ant_ai.skills.loader import SkillLoader, make_use_skill_tool
+from ant_ai.skills.loader import SkillLoader
 
 DATA_DIR = Path(__file__).parent / "data" / "skills"
 
@@ -76,6 +76,15 @@ def test_load_skips_skill_with_invalid_name(tmp_path):
     _write_skill_md(
         tmp_path / "bad-name-skill",
         "---\nname: Bad--Name\ndescription: A skill.\n---\n\nInstructions.",
+    )
+    assert SkillLoader(tmp_path).load() == []
+
+
+@pytest.mark.unit
+def test_load_skips_skill_when_name_does_not_match_directory(tmp_path):
+    _write_skill_md(
+        tmp_path / "actual-dir",
+        "---\nname: different-name\ndescription: A skill.\n---\n\nInstructions.",
     )
     assert SkillLoader(tmp_path).load() == []
 
@@ -158,35 +167,6 @@ def test_load_allowed_tools_space_separated(tmp_path):
         "Bash(jq:*)",
         "Read",
     ]
-
-
-@pytest.mark.unit
-def test_use_skill_tool_name(make_skill):
-    tool = make_use_skill_tool([make_skill()])
-    assert tool.name == "use_skill"
-
-
-@pytest.mark.unit
-def test_use_skill_tool_returns_instructions_for_known_skill(make_skill):
-    skill = make_skill(name="pdf-tool", instructions="Step 1: open the PDF.")
-    tool = make_use_skill_tool([skill])
-    assert tool.invoke(skill_name="pdf-tool") == "Step 1: open the PDF."
-
-
-@pytest.mark.unit
-def test_use_skill_tool_returns_error_for_unknown_skill(make_skill):
-    skill = make_skill(name="known-skill")
-    tool = make_use_skill_tool([skill])
-    result = tool.invoke(skill_name="unknown")
-    assert "unknown" in result
-    assert "known-skill" in result
-
-
-@pytest.mark.unit
-def test_use_skill_tool_description_mentions_skill_names(make_skill):
-    skill = make_skill(name="summarize-text")
-    tool = make_use_skill_tool([skill])
-    assert "summarize-text" in (tool.description or "")
 
 
 @pytest.mark.unit
