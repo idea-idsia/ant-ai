@@ -26,11 +26,11 @@ class SkillLoader:
         skills_dir: Path (or list of paths) to directories that contain skill sub-folders.
     """
 
-    def __init__(self, skills_dir: str | Path | list[str | Path]) -> None:
+    def __init__(self, skills_dir: str | Path | list[str | Path] | list[Path]) -> None:
         if isinstance(skills_dir, list):
             self._skills_dirs: list[Path] = [Path(d).resolve() for d in skills_dir]
         else:
-            self._skills_dirs = [Path(skills_dir).resolve()]
+            self._skills_dirs: list[Path] = [Path(skills_dir).resolve()]
 
     def load(self) -> list[AgentSkill]:
         """
