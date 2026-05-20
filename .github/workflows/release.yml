@@ -4,14 +4,26 @@ on:
     pull_request:
         types: [closed]
         branches: [main]
+    workflow_dispatch:
+        inputs:
+            bump_type:
+                description: "Version bump type"
+                required: true
+                type: choice
+                options:
+                    - patch
+                    - minor
+                    - major
 
 jobs:
     release:
         if: >-
-            github.event.pull_request.merged == true && (
-              contains(github.event.pull_request.labels.*.name, 'bump:patch') ||
-              contains(github.event.pull_request.labels.*.name, 'bump:minor') ||
-              contains(github.event.pull_request.labels.*.name, 'bump:major')
+            github.event_name == 'workflow_dispatch' || (
+              github.event.pull_request.merged == true && (
+                contains(github.event.pull_request.labels.*.name, 'bump:patch') ||
+                contains(github.event.pull_request.labels.*.name, 'bump:minor') ||
+                contains(github.event.pull_request.labels.*.name, 'bump:major')
+              )
             )
         runs-on: ubuntu-latest
         permissions:
@@ -31,7 +43,9 @@ jobs:
             - name: Determine bump type
               id: bump
               run: |
-                  if ${{ contains(github.event.pull_request.labels.*.name, 'bump:major') }}; then
+                  if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+                    echo "type=${{ github.event.inputs.bump_type }}" >> $GITHUB_OUTPUT
+                  elif ${{ contains(github.event.pull_request.labels.*.name, 'bump:major') }}; then
                     echo "type=major" >> $GITHUB_OUTPUT
                   elif ${{ contains(github.event.pull_request.labels.*.name, 'bump:minor') }}; then
                     echo "type=minor" >> $GITHUB_OUTPUT
