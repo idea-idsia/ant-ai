@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import (
@@ -23,6 +24,9 @@ from ant_ai.hooks.protocol import AgentHook
 from ant_ai.llm.protocol import ChatLLM
 from ant_ai.memory.protocol import Memory
 from ant_ai.observer import obs
+from ant_ai.skills.loader import SkillLoader
+from ant_ai.skills.presenter import MarkdownSkillPresenter, SkillPresenter
+from ant_ai.skills.protocol import AgentSkill
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import Tool
 
@@ -58,6 +62,14 @@ class BaseAgent(BaseModel):
         default=None,
         description="Pluggable memory backend for cross-session context.",
     )
+    skills: Path | list[Path] | None = Field(
+        default=None,
+        description="Path (or list of paths) to skills directories (agentskills.io standard).",
+    )
+    skill_presenter: Annotated[SkillPresenter, SkipValidation] = Field(
+        default_factory=MarkdownSkillPresenter,
+        description="Controls how skills are injected into the system prompt.",
+    )
     max_retries: int = Field(
         default=3,
         ge=1,
@@ -67,6 +79,7 @@ class BaseAgent(BaseModel):
     _registry: ToolRegistry = PrivateAttr()
     _loop: BaseAgentLoop = PrivateAttr()
     _hook_layer: HookLayer = PrivateAttr()
+    _skills: list[AgentSkill] = PrivateAttr(default_factory=list)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -74,7 +87,10 @@ class BaseAgent(BaseModel):
     def _build(self) -> BaseAgent:
         self._registry = ToolRegistry(self.tools)
         self._hook_layer = HookLayer(hooks=self.hooks)
-        self._loop = self._make_loop()
+        self._skills = (
+            SkillLoader(self.skills).load() if self.skills is not None else []
+        )
+        self._loop: BaseAgentLoop = self._make_loop()
         return self
 
     @abstractmethod
@@ -84,8 +100,12 @@ class BaseAgent(BaseModel):
 
     @property
     def system_message(self) -> Message:
-        """Return this agent's system message."""
-        return Message(role="system", content=self.system_prompt)
+        """Return this agent's system message, with skill discovery appended if present."""
+        if not self._skills:
+            return Message(role="system", content=self.system_prompt)
+        skills_block: str = self.skill_presenter.system_prompt(self._skills)
+        content: str = "\n\n".join([self.system_prompt, skills_block])
+        return Message(role="system", content=content)
 
     async def stream(
         self,

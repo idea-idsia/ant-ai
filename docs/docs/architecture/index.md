@@ -12,6 +12,9 @@ title: Architecture
 | <nobr>`ant_ai.workflow`</nobr> | [`Workflow`][ant_ai.workflow.workflow.Workflow]                                                     | Directed graph of nodes (actions) connected by static edges or conditional routers. Orchestrates what the agent does and in what order.                                   |
 | <nobr>`ant_ai.tools`</nobr>    | [`Tool`][ant_ai.tools.tool.Tool]                                                                    | Callables exposed to the LLM via JSON schema. Defined with the `@tool` decorator or as a `Tool` subclass for grouped namespaces.                                          |
 |                                | [`ToolRegistry`][ant_ai.tools.registry.ToolRegistry]                                                | Built automatically from the agent's tool list. Expands namespace tools into individually callable entries.                                                               |
+| <nobr>`ant_ai.skills`</nobr>   | [`AgentSkill`][ant_ai.skills.protocol.AgentSkill] / [`SkillLoader`][ant_ai.skills.loader.SkillLoader] / [`SkillPresenter`][ant_ai.skills.presenter.SkillPresenter] | Skills following the [agentskills.io](https://agentskills.io) spec. Loaded from disk via `SkillLoader`; `SkillPresenter` (default: `MarkdownSkillPresenter`) formats them into the agent's system prompt with each skill's `SKILL.md` path. The agent activates a skill by reading that file directly via its file tool (progressive disclosure). |
+| <nobr>`ant_ai.memory`</nobr>   | [`Memory`][ant_ai.memory.protocol.Memory]                                                           | Pluggable memory backend. Relevant memories are retrieved before each LLM call and injected into the agent's state; new knowledge is persisted after the session via `update`. |
+| <nobr>`ant_ai.hooks`</nobr>    | [`AgentHook`][ant_ai.hooks.protocol.AgentHook] / [`HookLayer`][ant_ai.hooks.layer.HookLayer]       | Lifecycle hooks invoked around each model call and agent turn. [`GuardrailsAIHook`][ant_ai.hooks.adapters.guardrails_ai.GuardrailsAIHook] wraps a `guardrails.Guard` to validate LLM output and trigger automatic retries on failure. |
 | <nobr>`ant_ai.a2a`</nobr>      | [`Colony`][ant_ai.a2a.colony.Colony]                                                                | Multi-agent coordinator. Registers agents with their workflows and A2A cards, wires collaboration edges, and produces ASGI apps for deployment.                           |
 |                                | [`A2AExecutor`][ant_ai.a2a.executor.A2AExecutor]                                                    | ASGI request handler. Receives incoming A2A requests, initialises `InvocationContext` and `State`, drives `Workflow.stream()`, and translates events to A2A task updates. |
 |                                | [`A2AAgentTool`][ant_ai.a2a.agent.A2AAgentTool]                                                     | A `Tool` that calls a remote agent over HTTP. Added to source agents automatically by `Colony.collab()`.                                                                  |
@@ -36,6 +39,7 @@ flowchart TD
         A2AS["A2AServer"]
         Exec["A2AExecutor"]
         Agent["Agent"]
+        Memory["Memory"]
 
         subgraph reg["ToolRegistry"]
             Tool["Tool"]
@@ -51,12 +55,26 @@ flowchart TD
             N3 --> E
         end
 
+        subgraph skills["ant_ai.skills"]
+            direction LR
+            SkillLoader["SkillLoader"] --> AgentSkill["AgentSkill"]
+            AgentSkill --> SkillPresenter["SkillPresenter"]
+        end
+
+        subgraph hooks_sub["ant_ai.hooks"]
+            HookLayer["HookLayer"]
+            GuardrailsHook["GuardrailsAIHook"]
+        end
+
         Colony -.->|"wires & deploys"| A2AS
         Colony -.->|"wires & deploys"| Agent
         A2AS --> Exec
         Exec --> wf
         wf --> Agent
         Agent --> reg
+        SkillPresenter -.->|"system prompt"| Agent
+        Agent <-->|"retrieve / update"| Memory
+        Agent -.->|"before/after model"| hooks_sub
     end
 
     subgraph ext_a2a["a2a SDK"]
