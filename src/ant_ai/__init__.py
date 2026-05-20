@@ -12,7 +12,7 @@ from ant_ai.core import (
 )
 from ant_ai.memory import Memory
 from ant_ai.observer import CompositeSink, ObservabilitySink, obs
-from ant_ai.skills import AgentSkill, SkillLoader
+from ant_ai.skills import AgentSkill
 from ant_ai.tools import Tool, ToolRegistry
 from ant_ai.tools.tool import tool
 from ant_ai.workflow import BaseAction, Workflow
@@ -46,5 +46,4 @@ __all__ = [
     "BaseAction",
     # skills
     "AgentSkill",
-    "SkillLoader",
 ]

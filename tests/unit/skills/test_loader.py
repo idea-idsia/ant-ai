@@ -170,6 +170,16 @@ def test_load_allowed_tools_space_separated(tmp_path):
 
 
 @pytest.mark.unit
+def test_load_list_of_paths_merges_skills(tmp_path):
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    _write_skill_md(dir_a / "alpha-skill", _minimal_skill_md(name="alpha-skill"))
+    _write_skill_md(dir_b / "beta-skill", _minimal_skill_md(name="beta-skill"))
+    skills = SkillLoader([dir_a, dir_b]).load()
+    assert [s.name for s in skills] == ["alpha-skill", "beta-skill"]
+
+
+@pytest.mark.unit
 def test_fixture_skill_loads_with_scripts():
     """End-to-end: load the csv-to-markdown fixture from disk and verify scripts are collected."""
     skills = SkillLoader(DATA_DIR).load()

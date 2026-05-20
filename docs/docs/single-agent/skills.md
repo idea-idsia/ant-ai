@@ -24,24 +24,21 @@ This downloads the skill into a local `.agents/skills/` folder and records it in
 
 ## Loading skills into an agent
 
-Use [`SkillLoader`][ant_ai.skills.loader.SkillLoader] to read every valid skill from the `.agents/skills/` directory and pass the result to [`Agent`][ant_ai.agent.agent.Agent]:
+Pass the path (or a list of paths) to your skills directories directly to [`Agent`][ant_ai.agent.agent.Agent] via the `skills` parameter:
 
 ```python
 from ant_ai import Agent
 from ant_ai.llm.integrations import LiteLLMChat
-from ant_ai.skills.loader import SkillLoader
-
-skills = SkillLoader(".agents/skills").load()
 
 agent = Agent(
     name="Assistant",
     system_prompt="You are a helpful assistant.",
     llm=LiteLLMChat("gpt-5-nano"),
-    skills=skills,
+    skills=[".agents/skills"],
 )
 ```
 
-`SkillLoader` silently skips any folder that is missing a `SKILL.md`, has invalid frontmatter, or fails validation — so partial or corrupted installs never crash the agent.
+The agent loads skills from all listed directories on startup, silently skipping any folder that is missing a `SKILL.md`, has invalid frontmatter, or fails validation — so partial or corrupted installs never crash the agent.
 
 ## How it works
 
@@ -144,7 +141,6 @@ import subprocess
 
 from ant_ai import Agent, Message, State, InvocationContext, tool
 from ant_ai.llm.integrations import LiteLLMChat
-from ant_ai.skills.loader import SkillLoader
 from ant_ai.core import FinalAnswerEvent, ToolCallingEvent
 
 
@@ -155,14 +151,12 @@ def run_command(command: str) -> str:
     return result.stdout or result.stderr
 
 
-skills = SkillLoader(".agents/skills").load()
-
 agent = Agent(
     name="Assistant",
     system_prompt="You are a helpful assistant.",
     llm=LiteLLMChat("gpt-5-nano"),
     tools=[run_command],
-    skills=skills,
+    skills=[".agents/skills"],
 )
 
 

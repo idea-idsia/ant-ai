@@ -23,7 +23,7 @@ def test_no_skills_system_message_unchanged(make_agent):
         ):
             return DummyResponse(Message(role="assistant", content="ok"))
 
-    agent = make_agent(skills=[], llm=NoopLLM())
+    agent = make_agent(skills=None, llm=NoopLLM())
     assert agent.system_message.content == "You are a helpful agent."
 
 
@@ -35,8 +35,8 @@ def test_skills_present_appends_discovery_section(make_skill, make_agent):
         ):
             return DummyResponse(Message(role="assistant", content="ok"))
 
-    skill = make_skill(name="pdf-tool", description="Handles PDFs.")
-    agent = make_agent(skills=[skill], llm=NoopLLM())
+    skills_path = make_skill(name="pdf-tool", description="Handles PDFs.")
+    agent = make_agent(skills=skills_path, llm=NoopLLM())
     content = agent.system_message.content
     assert "## Skills System" in content
     assert "pdf-tool" in content
@@ -52,7 +52,8 @@ def test_system_prompt_field_unchanged_by_skills(make_skill, make_agent):
         ):
             return DummyResponse(Message(role="assistant", content="ok"))
 
-    agent = make_agent(skills=[make_skill()], llm=NoopLLM())
+    skills_path = make_skill()
+    agent = make_agent(skills=skills_path, llm=NoopLLM())
     assert agent.system_prompt == "You are a helpful agent."
 
 
@@ -68,8 +69,8 @@ async def test_llm_receives_skills_in_system_message(make_skill, make_agent):
             received.extend(messages)
             return DummyResponse(Message(role="assistant", content="ok"))
 
-    skill = make_skill(name="pdf-tool", description="Handles PDFs.")
-    agent = make_agent(skills=[skill], llm=RecordingLLM())
+    skills_path = make_skill(name="pdf-tool", description="Handles PDFs.")
+    agent = make_agent(skills=skills_path, llm=RecordingLLM())
     state = State(messages=[Message(role="user", content="go")])
     [_ async for _ in agent.stream(state, max_steps=1)]
 
@@ -87,18 +88,13 @@ def test_skill_allowed_tools_shown_in_system_message(make_skill, make_agent):
         ):
             return DummyResponse(Message(role="assistant", content="ok"))
 
-    from pathlib import Path
-
-    from ant_ai.skills.protocol import AgentSkill
-
-    skill = AgentSkill(
+    skills_path = make_skill(
         name="git-tool",
         description="Git operations.",
         instructions="Use git.",
-        skill_dir=Path("/tmp/git-tool"),
         allowed_tools=["Bash(git:*)", "Read"],
     )
-    agent = make_agent(skills=[skill], llm=NoopLLM())
+    agent = make_agent(skills=skills_path, llm=NoopLLM())
     content = agent.system_message.content
     assert "Bash(git:*)" in content
     assert "Read" in content

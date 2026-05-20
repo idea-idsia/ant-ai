@@ -13,7 +13,7 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)", re.DOTALL)
 
 class SkillLoader:
     """
-    Loads Agent Skills from a directory of skill folders.
+    Loads Agent Skills from one or more directories of skill folders.
 
     Each skill must be a sub-directory containing at least a ``SKILL.md`` file
     with YAML frontmatter providing ``name`` and ``description`` fields, followed
@@ -23,24 +23,33 @@ class SkillLoader:
     spec validation are silently skipped.
 
     Args:
-        skills_dir: Path to the directory that contains skill sub-folders.
+        skills_dir: Path (or list of paths) to directories that contain skill sub-folders.
     """
 
-    def __init__(self, skills_dir: str | Path) -> None:
-        self._skills_dir: Path = Path(skills_dir).resolve()
+    def __init__(self, skills_dir: str | Path | list[str | Path]) -> None:
+        if isinstance(skills_dir, list):
+            self._skills_dirs: list[Path] = [Path(d).resolve() for d in skills_dir]
+        else:
+            self._skills_dirs = [Path(skills_dir).resolve()]
 
     def load(self) -> list[AgentSkill]:
         """
-        Walk the skills directory and parse each valid skill folder.
+        Walk each skills directory and parse every valid skill folder.
 
         Returns:
-            A list of `AgentSkill` instances, one per valid skill folder found. Results are sorted by folder name.
+            A list of `AgentSkill` instances across all directories, sorted by folder name within each directory.
         """
         skills: list[AgentSkill] = []
-        if not self._skills_dir.is_dir():
+        for skills_dir in self._skills_dirs:
+            skills.extend(self._load_dir(skills_dir))
+        return skills
+
+    def _load_dir(self, skills_dir: Path) -> list[AgentSkill]:
+        skills: list[AgentSkill] = []
+        if not skills_dir.is_dir():
             return skills
 
-        for entry in sorted(self._skills_dir.iterdir()):
+        for entry in sorted(skills_dir.iterdir()):
             if not entry.is_dir():
                 continue
             skill_md: Path = entry / "SKILL.md"
