@@ -31,6 +31,9 @@ class GuardrailsAIHook(AgentHook, BaseModel):
         hook = GuardrailsAIHook(guard=Guard().use(ValidJson))
         agent = Agent(..., hooks=[hook])
         ```
+
+    See ``examples/guardrails_agent.py`` for a full safety pipeline using
+    ``ToxicLanguage`` and ``DetectPII`` validators.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
