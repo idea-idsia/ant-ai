@@ -110,9 +110,11 @@ class HVEventToA2A:
     )
     async def _agent_message(self, event: Event, updater: TaskUpdater) -> None:
         metadata: dict[str, Any] = A2AMetadata(event=event).model_dump()
+        msg = updater.new_agent_message(parts=[Part(text=event.content)])
+        msg.metadata.update(metadata)
         await updater.update_status(
             state=TaskState.TASK_STATE_WORKING,
-            message=updater.new_agent_message(parts=[Part(text=event.content)]),
+            message=msg,
             metadata=metadata,
         )
 

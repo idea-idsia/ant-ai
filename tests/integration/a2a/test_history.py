@@ -5,14 +5,23 @@ from uuid import uuid4
 import pytest
 
 from ant_ai.a2a.client import A2AClient
+from ant_ai.a2a.colony import Colony
 from ant_ai.a2a.config import A2AConfig
+from ant_ai.agent.agent import Agent
 from ant_ai.core.events import Event
+from ant_ai.llm.integrations.lite_llm import LiteLLMChat
+from ant_ai.tools.tool import tool
 from tests.integration.a2a.conftest import (
+    STICKY_AGENT_SYS,
+    _bound_socket,
     _drain_loop,
+    _make_agent_card,
     _make_colony,
     _start_server,
     _stop_server,
+    build_single_node_workflow,
     make_text_response,
+    make_tool_response,
 )
 
 
@@ -455,4 +464,83 @@ async def test_postgres_history_survives_server_restart(
         "Turn-1 question not found after server restart — "
         "DatabaseTaskStore did not persist the task.\n"
         f"Phase-2 messages: {phase2_messages[0]}"
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.a2a
+async def test_tool_call_structure_preserved_in_history(scripted_llm):
+    """After a tool-calling turn, the next turn receives ToolCallMessage and
+    ToolCallResultMessage in history — not flat assistant text.
+
+    Verifies that _convert_history reconstructs structured messages from the
+    A2A event metadata rather than flattening everything to plain text.
+    """
+
+    @tool
+    def echo(message: str) -> str:
+        """Echo the message back."""
+        return f"echoed: {message}"
+
+    sock = _bound_socket()
+    port = sock.getsockname()[1]
+    agent = Agent(
+        name="sticky",
+        llm=LiteLLMChat("test-model"),
+        system_prompt=STICKY_AGENT_SYS,
+        description="Tool history test agent",
+        tools=[echo],
+    )
+    colony = Colony()
+    colony.agent(
+        "sticky",
+        agent=agent,
+        workflow=build_single_node_workflow(),
+        card=_make_agent_card(port),
+    )
+    server, srv_task = await _start_server(colony.asgi(agent_name="sticky"), sock)
+
+    try:
+        # Turn 1: LLM calls echo, tool executes, LLM gives final answer
+        turn1_call = 0
+
+        async def dispatch_turn1(*, messages, **_):
+            nonlocal turn1_call
+            turn1_call += 1
+            if turn1_call == 1:
+                return make_tool_response("echo", '{"message": "hello"}', "tc-1")
+            return make_text_response("Echo done.")
+
+        scripted_llm.install(dispatch_turn1)
+        client = _client(port)
+        _, task_1_id = await _send_turn(
+            client, "Call the echo tool.", context_id=str(uuid4())
+        )
+
+        # Turn 2: reference turn 1 and capture the messages the LLM receives
+        turn2_messages: list[dict] = []
+
+        async def dispatch_turn2(*, messages, **_):
+            turn2_messages.extend(messages)
+            return make_text_response("Got it.")
+
+        scripted_llm.install(dispatch_turn2)
+        await _send_turn(
+            client,
+            "What happened?",
+            context_id=str(uuid4()),
+            reference_task_ids=[task_1_id],
+        )
+        await client.aclose()
+    finally:
+        await _stop_server(server, srv_task)
+
+    roles = [m.get("role") for m in turn2_messages]
+    assert "tool" in roles, (
+        f"ToolCallResultMessage missing from history — _convert_history may be "
+        f"flattening tool results to plain text. Roles seen: {roles}"
+    )
+    assert any(m.get("tool_calls") for m in turn2_messages), (
+        f"ToolCallMessage missing from history — _convert_history may be "
+        f"flattening tool call requests to plain text. Messages: {turn2_messages}"
     )

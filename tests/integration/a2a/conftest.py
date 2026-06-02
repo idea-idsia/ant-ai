@@ -94,6 +94,18 @@ class _FakeMessage:
         return self._content if key == "content" else default
 
 
+class _FakeToolFunction:
+    def __init__(self, name: str, arguments: str) -> None:
+        self.name = name
+        self.arguments = arguments
+
+
+class _FakeToolCall:
+    def __init__(self, call_id: str, name: str, arguments: str) -> None:
+        self.id = call_id
+        self.function = _FakeToolFunction(name, arguments)
+
+
 class _FakeChoice:
     def __init__(self, message: _FakeMessage) -> None:
         self.message = message
@@ -108,6 +120,14 @@ class _FakeResponse:
 def make_text_response(content: str) -> _FakeResponse:
     """LLM returns a plain-text final answer (no tool calls)."""
     return _FakeResponse(_FakeMessage(content))
+
+
+def make_tool_response(
+    tool_name: str, arguments: str, call_id: str = "tc-1"
+) -> _FakeResponse:
+    """LLM returns a tool-call response requesting one tool invocation."""
+    tc = _FakeToolCall(call_id=call_id, name=tool_name, arguments=arguments)
+    return _FakeResponse(_FakeMessage(content="", tool_calls=[tc]))
 
 
 def _free_port() -> int:

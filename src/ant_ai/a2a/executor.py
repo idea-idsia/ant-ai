@@ -157,6 +157,12 @@ class A2AExecutor(AgentExecutor):
                 )
             elif isinstance(event, FinalAnswerEvent):
                 result.append(Message(role="assistant", content=event.content))
-            elif msg.role != Role.ROLE_AGENT:
+            elif event is not None:
+                pass  # known event type that carries no conversation content (e.g. ReasoningEvent)
+            elif msg.role == Role.ROLE_AGENT:
+                text = get_message_text(msg)
+                if text:
+                    result.append(Message(role="assistant", content=text))
+            else:
                 result.append(Message(role="user", content=get_message_text(msg)))
         return result
