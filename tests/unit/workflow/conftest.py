@@ -12,8 +12,9 @@ class DummyAgent:
 
 
 class DummyMsg:
-    def __init__(self, content: str):
+    def __init__(self, content: str, role: str = "user"):
         self.content = content
+        self.role = role
 
 
 @pytest.fixture
