@@ -14,10 +14,26 @@ uv add ant-ai
 
 ### Optional extras
 
-`ant-ai` ships an optional extra for the OpenAI client integration:
+Install all optional extras at once:
+
+```bash
+uv add "ant-ai[all]"
+```
+
+Or pick individual extras:
+
+| Extra | What it adds |
+|-------|-------------|
+| `openai` | OpenAI client integration |
+| `langfuse` | Observability via [Langfuse](https://langfuse.com/) |
+| `mem0` | Long-term memory via [mem0](https://mem0.ai/) |
+| `viz` | Workflow graph visualization |
 
 ```bash
 uv add "ant-ai[openai]"
+uv add "ant-ai[langfuse]"
+uv add "ant-ai[mem0]"
+uv add "ant-ai[viz]"
 ```
 
 ## From the repository
