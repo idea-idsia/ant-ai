@@ -232,7 +232,9 @@ class Workflow(BaseModel):
                 "workflow.start",
                 agent_name=agent.name,
                 session_id=ctx.session_id if ctx else None,
-                input=run.state.last_message.content,
+                input=[
+                    {"role": m.role, "content": m.content} for m in run.state.messages
+                ],
                 start_at=start_at,
                 max_steps=self.max_steps,
             )
