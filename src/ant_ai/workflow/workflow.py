@@ -15,6 +15,7 @@ from ant_ai.core.events import (
     StartEvent,
     UpdateEvent,
 )
+from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.observer import obs
 
@@ -27,24 +28,24 @@ type NodeYield = Event | State
 type NodeResult = AsyncIterator[NodeYield]
 """What a node can yield when it is awaited"""
 
-type NodeAction = Callable[
-    [BaseAgent, State, InvocationContext | None],
+type NodeAction[S: State] = Callable[
+    [BaseAgent, S, InvocationContext | None],
     NodeResult | Awaitable[NodeResult],
 ]
 """Interface for the nodes in the Workflow"""
 
-type RouterAction = Callable[
-    [BaseAgent, State, InvocationContext | None],
+type RouterAction[S: State] = Callable[
+    [BaseAgent, S, InvocationContext | None],
     str | Awaitable[str],
 ]
 """Interface for a conditional edge in the Workflow"""
 
 
 @dataclass
-class _RunState:
+class _RunState[S: State]:
     """Mutable execution context for a single workflow run."""
 
-    state: State
+    state: S
     step: int = 0
 
 
@@ -58,25 +59,51 @@ async def _maybe_await(x: Any) -> Any:
     return x
 
 
-class Workflow(BaseModel):
-    """
-    Graph that orchestrates agent behaviour across a sequence of nodes.
+class Workflow[StateT: State = State](BaseModel):
+    """Graph that orchestrates agent behaviour across a sequence of nodes.
 
-    Iterates over nodes, passing State, Agent, and InvocationContext
-    between them. Supports static edges and conditional (router) edges.
+    State, Agent, and `InvocationContext` flow between nodes on each step.
+    Supports static edges and conditional (router) edges.
+
+    Example:
+        Define a custom state and wire a simple counter graph:
+
+        ```python
+        from ant_ai.core.types import State
+        from ant_ai.workflow import END, START, Workflow
+
+        class CountState(State):
+            count: int = 0
+
+        async def increment(agent, state: CountState, ctx):
+            state.count += 1
+            yield state
+
+        wf = (
+            Workflow(state=CountState)
+            .add_node("increment", increment)
+            .add_edge(START, "increment")
+            .add_edge("increment", END)
+        )
+
+        result: CountState = await wf.ainvoke(agent)
+        print(result.count)  # 1
+        ```
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    nodes: dict[str, NodeAction] = Field(default_factory=dict)
+    state: type[StateT] = Field(
+        default=State, description="The type of the state for this workflow."
+    )  # type: ignore
+    nodes: dict[str, NodeAction[StateT]] = Field(default_factory=dict)
     edges: dict[str, str] = Field(default_factory=dict)
-    conditional_edges: dict[str, RouterAction] = Field(default_factory=dict)
+    conditional_edges: dict[str, RouterAction[StateT]] = Field(default_factory=dict)
     max_steps: int = Field(
         default=100,
         description="Hard cap on graph traversal steps.",
     )
 
-    def add_node(self, name: str, action: NodeAction) -> Workflow:
+    def add_node(self, name: str, action: NodeAction[StateT]) -> Workflow[StateT]:
         if name.upper() in (START, END):
             raise ValueError(f"'{name}' is reserved.")
         if name in self.nodes:
@@ -86,7 +113,7 @@ class Workflow(BaseModel):
         self.nodes[name] = action
         return self
 
-    def add_edge(self, src: str, dst: str) -> Workflow:
+    def add_edge(self, src: str, dst: str) -> Workflow[StateT]:
         if src in self.conditional_edges:
             raise ValueError("Cannot mix static and conditional edges.")
 
@@ -96,7 +123,9 @@ class Workflow(BaseModel):
         self.edges[src] = dst
         return self
 
-    def add_conditional_edge(self, src: str, router: RouterAction) -> Workflow:
+    def add_conditional_edge(
+        self, src: str, router: RouterAction[StateT]
+    ) -> Workflow[StateT]:
         if not callable(router):
             raise TypeError("Router must be callable.")
         if src in self.edges:
@@ -120,14 +149,54 @@ class Workflow(BaseModel):
         if name != END and name not in self.nodes:
             raise ValueError(f"Unknown node '{name}'.")
 
-    def _validate_graph(self) -> None:
+    def check(self) -> None:
+        """Validate the workflow graph structure.
+
+        Raises ValueError listing all structural problems found.
+        Call this after constructing the graph to catch mistakes before the
+        first invocation.
+        """
+        errors: list[str] = []
+
         if START not in self.edges and START not in self.conditional_edges:
-            raise ValueError("START must have an outgoing edge.")
+            errors.append("START must have an outgoing edge.")
+
+        for name in self.nodes:
+            if name not in self.edges and name not in self.conditional_edges:
+                errors.append(f"Node '{name}' has no outgoing edge (dead end).")
+
+        if END not in self.edges.values() and not self.conditional_edges:
+            errors.append("END is unreachable; no edge leads to it.")
+
+        reachable = self._reachable_nodes()
+        for name in self.nodes:
+            if name not in reachable:
+                errors.append(f"Node '{name}' is unreachable from START.")
+
+        if errors:
+            raise ValueError(
+                "Invalid workflow graph:\n" + "\n".join(f"  - {e}" for e in errors)
+            )
+
+    def _reachable_nodes(self) -> set[str]:
+        visited: set[str] = set()
+        queue: list[str] = [START]
+        while queue:
+            current = queue.pop()
+            if current in visited or current == END:
+                continue
+            visited.add(current)
+            if current in self.edges:
+                queue.append(self.edges[current])
+            elif current in self.conditional_edges:
+                # Router can return any registered node at runtime.
+                queue.extend(self.nodes)
+        return visited
 
     async def _next(
         self,
         agent: BaseAgent,
-        state: State,
+        state: StateT,
         ctx: InvocationContext | None,
         current: str,
         run_step: int = 0,
@@ -157,11 +226,11 @@ class Workflow(BaseModel):
     async def _run_node(
         self,
         agent: BaseAgent,
-        run: _RunState,
+        run: _RunState[StateT],
         ctx: InvocationContext | None,
         node: str,
     ) -> AsyncGenerator[Event]:
-        action: NodeAction | None = self.nodes.get(node)
+        action: NodeAction[StateT] | None = self.nodes.get(node)
         if action is None:
             raise RuntimeError(f"Unknown node '{node}'.")
 
@@ -187,12 +256,12 @@ class Workflow(BaseModel):
                             if item.origin.node is None:
                                 item.origin.node = node
                             yield item
-                        elif isinstance(item, State):
+                        elif isinstance(item, self.state):
                             run.state = item
                         else:
                             raise RuntimeError(f"Invalid yield from node '{node}'.")
                 else:
-                    if result is not None and not isinstance(result, State):
+                    if result is not None and not isinstance(result, self.state):
                         raise RuntimeError(f"Invalid return from node '{node}'.")
                     if result is not None:
                         run.state = result
@@ -217,9 +286,9 @@ class Workflow(BaseModel):
         *,
         ctx: InvocationContext | None,
         start_at: str,
-        run: _RunState,
+        run: _RunState[StateT],
     ) -> AsyncGenerator[Event]:
-        self._validate_graph()
+        self.check()
 
         current: str = start_at
 
@@ -284,9 +353,9 @@ class Workflow(BaseModel):
         *,
         ctx: InvocationContext | None = None,
         start_at: str = START,
-        state: State | None = None,
-    ) -> State:
-        run = _RunState(state=state or State())
+        state: StateT | None = None,
+    ) -> StateT:
+        run = _RunState(state=state or self.state())
         async for _ in self._arun(agent, ctx=ctx, start_at=start_at, run=run):
             pass
         return run.state
@@ -297,7 +366,10 @@ class Workflow(BaseModel):
         *,
         ctx: InvocationContext | None = None,
         start_at: str = START,
-        state: State | None = None,
+        state: StateT | None = None,
     ) -> AsyncIterator[Event]:
-        run = _RunState(state=state or State())
+        run = _RunState(state=state or self.state())
         return self._arun(agent, ctx=ctx, start_at=start_at, run=run)
+
+    def create_state(self, *, messages: list[Message] | None = None) -> StateT:
+        return self.state(messages=messages or [])

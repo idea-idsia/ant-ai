@@ -201,7 +201,7 @@ async def test_max_steps_event_emitted(spy_sink: SpySink, agent, seeded_state):
 
     w.add_node("A", noop)
     w.add_edge(START, "A")
-    w.add_edge("A", "A")  # infinite loop
+    w.add_conditional_edge("A", lambda a, s, c: "A")  # always loops back
 
     ctx = InvocationContext(session_id="s1")
 
