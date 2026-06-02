@@ -37,6 +37,16 @@ Requires Python 3.14+. Install with [uv](https://docs.astral.sh/uv/):
 uv add ant-ai
 ```
 
+Or install with optional extras:
+
+```sh
+uv add "ant-ai[all]"
+uv add "ant-ai[openai]"
+uv add "ant-ai[langfuse]"
+uv add "ant-ai[mem0]"
+uv add "ant-ai[viz]"
+```
+
 Or clone and sync for local development:
 
 ```sh

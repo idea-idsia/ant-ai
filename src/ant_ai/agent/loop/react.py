@@ -240,6 +240,6 @@ class ReActLoop(BaseAgentLoop):
 
     def register_tool(self, registry: ToolRegistry) -> None:
         """Update internal steps to reflect a newly registered tool in registry."""
-        self.reason_step.serialized_tools: list[dict] = registry.to_serialized()
+        self.reason_step.serialized_tools = registry.to_serialized()
         if self.act_step is None:
             self.act_step = ToolStep(registry=registry)

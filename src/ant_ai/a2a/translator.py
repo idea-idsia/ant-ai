@@ -43,7 +43,7 @@ def handler(*event_types: type[Event]):
     """
 
     def decorator(fn: UnboundHandler):
-        fn._event_types: tuple[type[Event], ...] = event_types
+        fn._event_types = event_types  # ty:ignore[unresolved-attribute]
         return fn
 
     return decorator
