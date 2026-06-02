@@ -3,7 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 
 from ant_ai.core.events import FinalAnswerEvent, ReasoningEvent, ToolCallingEvent
-from ant_ai.core.message import Message, ToolCall, ToolCallMessage
+from ant_ai.core.message import Message, ToolCall
 from ant_ai.core.response import ChatLLMResponse
 from ant_ai.core.result import (
     LLMOutput,
@@ -88,7 +88,7 @@ class LLMStep(BaseModel):
             transition = Transition(action=TransitionAction.CONTINUE, next_step="tool")
             event = ToolCallingEvent(
                 content=raw,
-                message=ToolCallMessage(tool_calls=tool_calls),
+                tool_calls=tuple(tool_calls),
             )
         else:
             transition = Transition(action=TransitionAction.END)

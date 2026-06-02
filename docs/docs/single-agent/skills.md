@@ -169,7 +169,7 @@ async def main():
 
     async for event in agent.stream(state, ctx=ctx):
         if isinstance(event, ToolCallingEvent):
-            for tc in event.message.tool_calls:
+            for tc in event.tool_calls:
                 print(f"[tool] {tc.function.name} {tc.function.arguments}")
         elif isinstance(event, FinalAnswerEvent):
             print(f"\n{event.content}")

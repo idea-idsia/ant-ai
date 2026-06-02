@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from ant_ai.core.message import AnyMessage
+from ant_ai.core.message import AnyMessage, ToolCall
 
 type EventSource = Literal["agent", "action", "workflow"]
 """Sources where events are generated during a run."""
@@ -118,6 +118,10 @@ class ToolCallingEvent(AgentEvent):
     """Emitted when the agent decides to call one or more tools."""
 
     kind: Literal["tool_calling"] = "tool_calling"
+    tool_calls: tuple[ToolCall, ...] = Field(
+        default=(),
+        description="The tool calls requested by the model.",
+    )
 
 
 class ToolResultEvent(AgentEvent):

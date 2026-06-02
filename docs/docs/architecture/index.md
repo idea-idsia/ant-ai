@@ -169,7 +169,7 @@ Emitted by the agent's ReAct loop during LLM calls and tool execution.
 | Class                                                                     | `kind`                | When emitted                                                                                                   |
 | ------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------- |
 | [`ReasoningEvent`][ant_ai.core.events.ReasoningEvent]                     | `"reasoning"`         | Model produced extended thinking / reasoning text (before the answer)                                          |
-| [`ToolCallingEvent`][ant_ai.core.events.ToolCallingEvent]                 | `"tool_calling"`      | LLM response contains tool calls; `message` holds the [`ToolCallMessage`][ant_ai.core.message.ToolCallMessage] |
+| [`ToolCallingEvent`][ant_ai.core.events.ToolCallingEvent]                 | `"tool_calling"`      | LLM response contains tool calls; `tool_calls` holds the requested [`ToolCall`][ant_ai.core.message.ToolCall] items |
 | [`ToolResultEvent`][ant_ai.core.events.ToolResultEvent]                   | `"tool_result"`       | One tool call completed; `content` holds the result                                                            |
 | [`FinalAnswerEvent`][ant_ai.core.events.FinalAnswerEvent]                 | `"final_answer"`      | LLM produced a plain-text response (no tool calls); ends the ReAct loop                                        |
 | [`MaxStepsReachedEvent`][ant_ai.core.events.MaxStepsReachedEvent]         | `"max_steps_reached"` | Agent exhausted its maximum allowed ReAct steps                                                                |
@@ -193,7 +193,7 @@ async for event in workflow.stream(agent, ctx=ctx, state=state):
         case ReasoningEvent():
             print("thinking:", event.content)
         case ToolCallingEvent():
-            print("calling tools:", event.message)
+            print("calling tools:", event.tool_calls)
         case ToolResultEvent():
             print("tool result:", event.content)
         case FinalAnswerEvent():
