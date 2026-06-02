@@ -112,7 +112,7 @@ class A2AExecutor(AgentExecutor):
 
         await obs.event("a2a.history", history_messages=len(history))
 
-        state = State(messages=history)
+        state: State = self.workflow.create_state(messages=history)
         token: Token[str] = current_session_id.set(ctx.session_id)
 
         await obs.event("a2a.workflow.start")
