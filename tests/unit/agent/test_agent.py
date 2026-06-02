@@ -267,7 +267,7 @@ async def test_tool_step_executes_multiple_tools_concurrently(monkeypatch):
         if isinstance(item, StepResult):
             result = item
         else:
-            event_ids.append(item.message.tool_call_id)
+            event_ids.append(item.tool_call_id)
     dt = time.perf_counter() - t0
 
     assert result is not None

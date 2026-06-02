@@ -9,10 +9,15 @@ from a2a.server.tasks import TaskUpdater
 from a2a.types import InternalError, Message as A2AMessage, Role, Task
 
 from ant_ai.a2a.session import current_session_id
-from ant_ai.a2a.translator import HVEventToA2A
+from ant_ai.a2a.translator import A2AToHVEvent, HVEventToA2A
 from ant_ai.agent.agent import Agent
-from ant_ai.core.events import Event
-from ant_ai.core.message import Message
+from ant_ai.core.events import (
+    Event,
+    FinalAnswerEvent,
+    ToolCallingEvent,
+    ToolResultEvent,
+)
+from ant_ai.core.message import Message, ToolCallMessage, ToolCallResultMessage
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.observer import obs
 from ant_ai.workflow.workflow import Workflow
@@ -36,6 +41,7 @@ class A2AExecutor(AgentExecutor):
         self.workflow: Workflow = workflow
         self.agent: Agent = agent
         self._translator: HVEventToA2A = HVEventToA2A()
+        self._a2a_to_hv: A2AToHVEvent = A2AToHVEvent()
         self.running_tasks: set[str] = set()
 
     async def execute(
@@ -136,11 +142,21 @@ class A2AExecutor(AgentExecutor):
         await self._translator.apply(event=event, updater=updater)
 
     def _convert_history(self, a2a_history: list[A2AMessage]) -> list[Message]:
-        return [
-            Message(
-                role="assistant" if msg.role == Role.ROLE_AGENT else "user",
-                content=get_message_text(msg),
-                metadata=dict(msg.metadata) if msg.metadata else {},
-            )
-            for msg in a2a_history
-        ]
+        result: list[Message] = []
+        for msg in a2a_history:
+            event = self._a2a_to_hv.translate(msg)
+            if isinstance(event, ToolCallingEvent):
+                result.append(ToolCallMessage(tool_calls=list(event.tool_calls)))
+            elif isinstance(event, ToolResultEvent):
+                result.append(
+                    ToolCallResultMessage(
+                        name=event.name,
+                        tool_call_id=event.tool_call_id,
+                        content=event.content,
+                    )
+                )
+            elif isinstance(event, FinalAnswerEvent):
+                result.append(Message(role="assistant", content=event.content))
+            elif msg.role != Role.ROLE_AGENT:
+                result.append(Message(role="user", content=get_message_text(msg)))
+        return result

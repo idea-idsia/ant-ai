@@ -128,6 +128,14 @@ class ToolResultEvent(AgentEvent):
     """Emitted when a tool call completes and its result is available."""
 
     kind: Literal["tool_result"] = "tool_result"
+    tool_call_id: str = Field(
+        default="",
+        description="ID of the tool call this result corresponds to.",
+    )
+    name: str = Field(
+        default="",
+        description="Name of the tool that was called.",
+    )
 
 
 class ReasoningEvent(AgentEvent):

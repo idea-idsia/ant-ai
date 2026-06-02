@@ -93,7 +93,8 @@ class ToolStep(BaseModel):
                 )
                 yield ToolResultEvent(
                     content=msg.content or "",
-                    message=msg,
+                    tool_call_id=msg.tool_call_id,
+                    name=msg.name,
                 )
         finally:
             await asyncio.gather(*tasks, return_exceptions=True)
