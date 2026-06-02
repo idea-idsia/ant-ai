@@ -22,13 +22,15 @@ class GuardrailsAIHook(AgentHook, BaseModel):
     Only overrides ``after_model`` — validates the LLM output text and
     returns ``PostModelRetry`` if validation fails.
 
-    Example::
+    Example:
 
+        ```python
         from guardrails import Guard
         from guardrails.hub import ValidJson
 
         hook = GuardrailsAIHook(guard=Guard().use(ValidJson))
         agent = Agent(..., hooks=[hook])
+        ```
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

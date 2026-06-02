@@ -71,6 +71,8 @@ class AgentHook:
                 return PostModelPass(result=result)
     """
 
+    name: str = "hook"
+
     async def before_agent(self, state: State, ctx: InvocationContext | None) -> None:
         """Called once before the agent starts processing.
 
