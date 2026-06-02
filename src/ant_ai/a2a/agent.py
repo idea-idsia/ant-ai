@@ -36,7 +36,7 @@ class A2AAgentTool(Tool):
     def _ensure_a2a(self) -> None:
         if self._a2a is None:
             self._a2a = A2AClient(config=self.config)
-            self._a2a._agent_card: AgentCard | None = self._agent_card
+            self._a2a._agent_card = self._agent_card
 
     def _init_metadata(self, agent_card: AgentCard) -> None:
         """Set Tool metadata exactly once from an AgentCard."""
@@ -135,7 +135,7 @@ class A2AAgentTool(Tool):
         tool: A2AAgentTool = cls(name=None, description=None, config=config)
 
         if agent_card is not None:
-            tool._agent_card: AgentCard = agent_card
+            tool._agent_card = agent_card
             tool._ensure_a2a()
             tool._init_metadata(agent_card)
             tool._attach_func()
