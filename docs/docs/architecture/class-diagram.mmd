@@ -1,0 +1,52 @@
+---
+title: Class Diagram
+config:
+  themeVariables:
+    background: '#ffffff'
+    primaryColor: '#E9E1FF'
+    primaryTextColor: '#222222'
+    primaryBorderColor: '#8B6DFF'
+    lineColor: '#666666'
+    secondaryColor: '#F5F2FF'
+    tertiaryColor: '#FBFAFF'
+    clusterBkg: '#F3F3F3'
+    clusterBorder: '#CFCFCF'
+    fontSize: '18px'
+---
+classDiagram
+    direction TB
+    class BaseAgent { <<abstract>> }
+    class ChatLLM { <<interface>> }
+    class Tool { <<interface>> }
+    class Memory { <<interface>> }
+    class AgentHook { <<interface>> }
+    class SkillPresenter { <<interface>> }
+    class ObservabilitySink { <<interface>> }
+    class TaskStore { <<interface>> }
+    Colony --> AgentSpec : registers
+    Colony --> A2AServer : builds on asgi
+    AgentSpec --> Workflow : wraps
+    A2AServer --> TaskStore : owns
+    A2AServer --> Agent : serves
+    Workflow --> BaseAgent : orchestrates
+    BaseAgent <|-- Agent : extends
+    BaseAgent --> HookLayer : owns
+    BaseAgent --> Memory : uses
+    BaseAgent --> SkillPresenter : uses
+    Agent --> ReActLoop : creates
+    ReActLoop --> LLMStep : owns
+    ReActLoop --> ToolStep : owns
+    LLMStep --> ChatLLM : calls
+    ToolStep --> ToolRegistry : looks up via
+    ToolRegistry --> Tool : resolves
+    HookLayer --> AgentHook : orchestrates
+    AgentHook <|.. GuardrailsAIHook : implements
+    SkillPresenter --> AgentSkill : renders
+    SkillPresenter <|.. MarkdownSkillPresenter : implements
+    Tool <|-- A2AAgentTool : extends
+    A2AAgentTool --> A2AClient : delegates to
+    A2AAgentTool --> A2AConfig : configured by
+    ChatLLM <|.. LiteLLMChat : implements
+    Memory <|.. Mem0Memory : implements
+    ObservabilitySink <|.. CompositeSink : implements
+    ObservabilitySink <|.. LangfuseSink : implements

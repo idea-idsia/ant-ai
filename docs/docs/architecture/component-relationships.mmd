@@ -1,0 +1,77 @@
+---
+title: Component relationships
+config:
+  theme: base
+  themeVariables:
+    background: '#ffffff'
+    primaryColor: '#E9E1FF'
+    primaryTextColor: '#222222'
+    primaryBorderColor: '#8B6DFF'
+    lineColor: '#666666'
+    secondaryColor: '#F5F2FF'
+    tertiaryColor: '#FBFAFF'
+    clusterBkg: '#F3F3F3'
+    clusterBorder: '#CFCFCF'
+    fontFamily: 'Inter, Arial, sans-serif'
+    fontSize: '24px'
+---
+flowchart TD
+    Client(["Client"])
+    Remote(["Remote agent"])
+
+    subgraph ext_llm["LLM provider"]
+        LLM["LiteLLM / OpenAI"]
+    end
+
+    subgraph hm["ant_ai"]
+        Colony["Colony"]
+        A2AS["A2AServer"]
+        Exec["A2AExecutor"]
+        Agent["Agent"]
+        Memory["Memory"]
+
+        subgraph reg["ToolRegistry"]
+            Tool["Tool"]
+            A2AT["A2AAgentTool"]
+        end
+
+        subgraph wf["Workflow"]
+            direction LR
+            S(("START")) --> N1["Node"]
+            N1 -->|router| N2["Node"]
+            N1 -->|router| N3["Node"]
+            N2 --> E(("END"))
+            N3 --> E
+        end
+
+        subgraph skills["ant_ai.skills"]
+            direction LR
+            SkillLoader["SkillLoader"] --> AgentSkill["AgentSkill"]
+            AgentSkill --> SkillPresenter["SkillPresenter"]
+        end
+
+        subgraph hooks_sub["ant_ai.hooks"]
+            HookLayer["HookLayer"]
+            GuardrailsHook["GuardrailsAIHook"]
+        end
+
+        Colony -.->|"wires & deploys"| A2AS
+        Colony -.->|"wires & deploys"| Agent
+        A2AS --> Exec
+        Exec --> wf
+        wf --> Agent
+        Agent --> reg
+        SkillPresenter -.->|"system prompt"| Agent
+        Agent <-->|"retrieve / update"| Memory
+        Agent -.->|"before/after model"| hooks_sub
+    end
+
+    subgraph ext_a2a["a2a SDK"]
+        SDK["RequestHandler"]
+    end
+
+    Client -->|"A2A request"| A2AS
+    Exec -.->|"extends"| SDK
+    Agent -.->|"LLM calls"| LLM
+    A2AT -->|"A2A call"| Remote
+    Exec -->|"streamed updates"| Client
