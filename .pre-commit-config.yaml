@@ -22,7 +22,7 @@ repos:
             args: [--fix]
           - id: ruff-format
 
-    - repo: https://github.com/gitleaks/gitleaks
-      rev: v8.30.0
+    - repo: https://github.com/betterleaks/betterleaks
+      rev: v1.4.0
       hooks:
-          - id: gitleaks
+          - id: betterleaks
