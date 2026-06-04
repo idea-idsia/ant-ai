@@ -94,7 +94,6 @@ class LLMStep(BaseModel):
             transition = Transition(action=TransitionAction.END)
             event = FinalAnswerEvent(
                 content=raw,
-                message=response.message,
             )
 
         yield event

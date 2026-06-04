@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from contextvars import Token
 
-from a2a.helpers import get_message_text, new_task_from_user_message
+from a2a.helpers import new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import InternalError, Message as A2AMessage, Role, Task
+from a2a.types import InternalError, Message as A2AMessage, Task
 
 from ant_ai.a2a.session import current_session_id
-from ant_ai.a2a.translator import HVEventToA2A
+from ant_ai.a2a.translator import A2AToHVEvent, HVEventToA2A
 from ant_ai.agent.agent import Agent
 from ant_ai.core.events import Event
 from ant_ai.core.message import Message
@@ -36,6 +36,7 @@ class A2AExecutor(AgentExecutor):
         self.workflow: Workflow = workflow
         self.agent: Agent = agent
         self._translator: HVEventToA2A = HVEventToA2A()
+        self._a2a_to_hv: A2AToHVEvent = A2AToHVEvent()
         self.running_tasks: set[str] = set()
 
     async def execute(
@@ -137,10 +138,7 @@ class A2AExecutor(AgentExecutor):
 
     def _convert_history(self, a2a_history: list[A2AMessage]) -> list[Message]:
         return [
-            Message(
-                role="assistant" if msg.role == Role.ROLE_AGENT else "user",
-                content=get_message_text(msg),
-                metadata=dict(msg.metadata) if msg.metadata else {},
-            )
+            m
             for msg in a2a_history
+            if (m := self._a2a_to_hv.to_history_message(msg)) is not None
         ]

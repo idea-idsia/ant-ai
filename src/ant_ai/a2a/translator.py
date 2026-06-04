@@ -30,6 +30,12 @@ from ant_ai.core.events import (
     ToolResultEvent,
     UpdateEvent,
 )
+from ant_ai.core.message import (
+    AnyMessage,
+    Message,
+    ToolCallMessage,
+    ToolCallResultMessage,
+)
 
 type Handler = Callable[[Event, TaskUpdater], Awaitable[None]]
 type UnboundHandler = Callable[[HVEventToA2A, Event, TaskUpdater], Awaitable[None]]
@@ -110,9 +116,11 @@ class HVEventToA2A:
     )
     async def _agent_message(self, event: Event, updater: TaskUpdater) -> None:
         metadata: dict[str, Any] = A2AMetadata(event=event).model_dump()
+        msg = updater.new_agent_message(parts=[Part(text=event.content)])
+        msg.metadata.update(metadata)
         await updater.update_status(
             state=TaskState.TASK_STATE_WORKING,
-            message=updater.new_agent_message(parts=[Part(text=event.content)]),
+            message=msg,
             metadata=metadata,
         )
 
@@ -177,3 +185,32 @@ class A2AToHVEvent:
         event["task_id"] = raw.id
         event["session_id"] = raw.context_id
         return _any_event_adapter.validate_python(event)
+
+    def to_history_message(self, raw: A2AMessage) -> AnyMessage | None:
+        """Convert an A2A history message to the appropriate internal message type.
+
+        Uses embedded event metadata when available to reconstruct structured
+        messages (ToolCallMessage, ToolCallResultMessage). Falls back to plain
+        text when no metadata is present. Returns None for non-conversation
+        events (ReasoningEvent, UpdateEvent, etc.) that carry no LLM context.
+        """
+        from a2a.helpers import get_message_text
+        from a2a.types import Role
+
+        event = self.translate(raw)
+        if event is None:
+            text = get_message_text(raw)
+            if raw.role != Role.ROLE_AGENT:
+                return Message(role="user", content=text)
+            return Message(role="assistant", content=text) if text else None
+        if isinstance(event, ToolCallingEvent):
+            return ToolCallMessage(tool_calls=list(event.tool_calls))
+        if isinstance(event, ToolResultEvent):
+            return ToolCallResultMessage(
+                name=event.name,
+                tool_call_id=event.tool_call_id,
+                content=event.content,
+            )
+        if isinstance(event, FinalAnswerEvent):
+            return Message(role="assistant", content=event.content)
+        return None  # non-conversation event (ReasoningEvent, UpdateEvent, etc.)
