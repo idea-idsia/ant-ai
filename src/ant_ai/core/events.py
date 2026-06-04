@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from ant_ai.core.message import AnyMessage, ToolCall
+from ant_ai.core.message import ToolCall
 
 type EventSource = Literal["agent", "action", "workflow"]
 """Sources where events are generated during a run."""
@@ -41,10 +41,6 @@ class Event(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional information relevant to the event.",
-    )
-    message: AnyMessage | None = Field(
-        default=None,
-        description="Message associated with the event. Only set for events tied to conversation messages.",
     )
     kind: Literal["event"] = "event"
     task_id: str | None = Field(
