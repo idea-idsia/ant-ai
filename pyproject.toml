@@ -74,8 +74,8 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://idea-idsia.github.io/ant-ai/"
-Documentation = "https://idea-idsia.github.io/ant-ai/"
+Homepage = "https://idea.idsia.ch/ant-ai/"
+Documentation = "https://idea.idsia.ch/ant-ai/"
 Repository = "https://github.com/idea-idsia/ant-ai"
 
 [tool.uv]
