@@ -6,12 +6,6 @@ import pytest
 from a2a.types import Message as A2AMessage, Role
 
 from ant_ai.a2a.executor import A2AExecutor
-from ant_ai.core.events import (
-    FinalAnswerEvent,
-    ReasoningEvent,
-    ToolCallingEvent,
-    ToolResultEvent,
-)
 from ant_ai.core.message import (
     Message,
     ToolCall,
@@ -45,65 +39,36 @@ def _tool_call(call_id: str = "id-1", name: str = "my_tool") -> ToolCall:
 
 
 @pytest.mark.unit
-def test_convert_history_tool_calling_event():
-    """ToolCallingEvent in history becomes ToolCallMessage."""
+def test_convert_history_passes_through_non_none():
+    """_convert_history returns whatever to_history_message produces, filtering None."""
     executor = _make_executor()
     tc = _tool_call()
-    event = ToolCallingEvent(tool_calls=(tc,))
-    msg = _a2a_msg()
+    messages = [
+        ToolCallMessage(tool_calls=[tc]),
+        ToolCallResultMessage(tool_call_id="id-1", name="my_tool", content="42"),
+        Message(role="assistant", content="done"),
+    ]
+    msgs = [_a2a_msg() for _ in messages]
 
-    with patch.object(executor._a2a_to_hv, "translate", return_value=event):
-        result = executor._convert_history([msg])
+    with patch.object(executor._a2a_to_hv, "to_history_message", side_effect=messages):
+        result = executor._convert_history(msgs)
 
-    assert len(result) == 1
-    assert isinstance(result[0], ToolCallMessage)
-    assert result[0].tool_calls == [tc]
-
-
-@pytest.mark.unit
-def test_convert_history_tool_result_event():
-    """ToolResultEvent in history becomes ToolCallResultMessage with correct fields."""
-    executor = _make_executor()
-    event = ToolResultEvent(content="42", tool_call_id="id-1", name="my_tool")
-    msg = _a2a_msg()
-
-    with patch.object(executor._a2a_to_hv, "translate", return_value=event):
-        result = executor._convert_history([msg])
-
-    assert len(result) == 1
-    assert isinstance(result[0], ToolCallResultMessage)
-    assert result[0].tool_call_id == "id-1"
-    assert result[0].name == "my_tool"
-    assert result[0].content == "42"
+    assert result == messages
 
 
 @pytest.mark.unit
-def test_convert_history_final_answer_event():
-    """FinalAnswerEvent in history becomes an assistant Message."""
+def test_convert_history_filters_none():
+    """None values from to_history_message are excluded from the result."""
     executor = _make_executor()
-    event = FinalAnswerEvent(content="done")
-    msg = _a2a_msg()
+    kept = Message(role="assistant", content="done")
+    msgs = [_a2a_msg(), _a2a_msg()]
 
-    with patch.object(executor._a2a_to_hv, "translate", return_value=event):
-        result = executor._convert_history([msg])
+    with patch.object(
+        executor._a2a_to_hv, "to_history_message", side_effect=[None, kept]
+    ):
+        result = executor._convert_history(msgs)
 
-    assert len(result) == 1
-    assert isinstance(result[0], Message)
-    assert result[0].role == "assistant"
-    assert result[0].content == "done"
-
-
-@pytest.mark.unit
-def test_convert_history_reasoning_event_skipped():
-    """ReasoningEvent and other non-conversation events are skipped."""
-    executor = _make_executor()
-    event = ReasoningEvent(content="thinking...")
-    msg = _a2a_msg()
-
-    with patch.object(executor._a2a_to_hv, "translate", return_value=event):
-        result = executor._convert_history([msg])
-
-    assert result == []
+    assert result == [kept]
 
 
 @pytest.mark.unit
@@ -111,11 +76,9 @@ def test_convert_history_agent_message_no_metadata_fallback():
     """Agent messages with no event metadata fall back to plain assistant Message."""
     executor = _make_executor()
     msg = _a2a_msg(role=Role.ROLE_AGENT)
+    fallback = Message(role="assistant", content="fallback text")
 
-    with (
-        patch.object(executor._a2a_to_hv, "translate", return_value=None),
-        patch("ant_ai.a2a.executor.get_message_text", return_value="fallback text"),
-    ):
+    with patch.object(executor._a2a_to_hv, "to_history_message", return_value=fallback):
         result = executor._convert_history([msg])
 
     assert len(result) == 1
@@ -130,10 +93,7 @@ def test_convert_history_agent_message_no_metadata_empty_text_skipped():
     executor = _make_executor()
     msg = _a2a_msg(role=Role.ROLE_AGENT)
 
-    with (
-        patch.object(executor._a2a_to_hv, "translate", return_value=None),
-        patch("ant_ai.a2a.executor.get_message_text", return_value=""),
-    ):
+    with patch.object(executor._a2a_to_hv, "to_history_message", return_value=None):
         result = executor._convert_history([msg])
 
     assert result == []
@@ -144,11 +104,9 @@ def test_convert_history_user_message():
     """User-role messages always become user Messages."""
     executor = _make_executor()
     msg = _a2a_msg(role=Role.ROLE_USER)
+    user_msg = Message(role="user", content="user input")
 
-    with (
-        patch.object(executor._a2a_to_hv, "translate", return_value=None),
-        patch("ant_ai.a2a.executor.get_message_text", return_value="user input"),
-    ):
+    with patch.object(executor._a2a_to_hv, "to_history_message", return_value=user_msg):
         result = executor._convert_history([msg])
 
     assert len(result) == 1
@@ -162,14 +120,16 @@ def test_convert_history_mixed_sequence():
     """Full tool round-trip sequence reconstructs correctly."""
     executor = _make_executor()
     tc = _tool_call()
-    events = [
-        ToolCallingEvent(tool_calls=(tc,)),
-        ToolResultEvent(content="result", tool_call_id="id-1", name="my_tool"),
-        FinalAnswerEvent(content="answer"),
+    history_messages = [
+        ToolCallMessage(tool_calls=[tc]),
+        ToolCallResultMessage(tool_call_id="id-1", name="my_tool", content="result"),
+        Message(role="assistant", content="answer"),
     ]
-    msgs = [_a2a_msg() for _ in events]
+    msgs = [_a2a_msg() for _ in history_messages]
 
-    with patch.object(executor._a2a_to_hv, "translate", side_effect=events):
+    with patch.object(
+        executor._a2a_to_hv, "to_history_message", side_effect=history_messages
+    ):
         result = executor._convert_history(msgs)
 
     assert len(result) == 3
