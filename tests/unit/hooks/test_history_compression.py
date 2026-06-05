@@ -36,9 +36,6 @@ def _state(*contents: str) -> State:
     return s
 
 
-# ── validation ───────────────────────────────────────────────────────────────
-
-
 @pytest.mark.unit
 def test_raises_when_no_threshold_set():
     with pytest.raises(ValidationError, match="max_messages or max_token_ratio"):
@@ -63,9 +60,6 @@ def test_valid_with_token_ratio_and_context_window():
         llm=_CapturingLLM(), max_token_ratio=0.75, context_window=128_000
     )
     assert hook.max_token_ratio == 0.75
-
-
-# ── max_messages threshold ───────────────────────────────────────────────────
 
 
 @pytest.mark.unit
@@ -107,9 +101,6 @@ async def test_compresses_at_exact_max_messages_boundary():
     assert llm.calls
 
 
-# ── max_token_ratio threshold ────────────────────────────────────────────────
-
-
 @pytest.mark.unit
 async def test_compresses_when_token_ratio_exceeded():
     llm = _CapturingLLM("token summary")
@@ -142,9 +133,6 @@ async def test_no_compression_when_token_ratio_below_threshold():
     assert not llm.calls
 
 
-# ── keep_last invariant ──────────────────────────────────────────────────────
-
-
 @pytest.mark.unit
 async def test_keeps_last_n_messages_verbatim():
     llm = _CapturingLLM("summary")
@@ -169,9 +157,6 @@ async def test_keeps_last_n_messages_after_compression():
     assert llm.calls
     kept = [m.content for m in state.messages[1:]]
     assert kept == ["recent1", "recent2", "recent3"]
-
-
-# ── summary injection ────────────────────────────────────────────────────────
 
 
 @pytest.mark.unit
@@ -202,3 +187,53 @@ async def test_llm_receives_messages_to_compress():
     # kept messages should NOT be sent to the summariser
     assert "kept1" not in prompt_content
     assert "kept2" not in prompt_content
+
+
+@pytest.mark.unit
+async def test_compression_context_set_when_compressed():
+    """state._compression_context holds the baseline after compression fires."""
+    llm = _CapturingLLM("summary text")
+    hook = HistoryCompressionHook(llm=llm, max_messages=4, keep_last=2)
+
+    # 4 messages: compressed1, compressed2, kept1, user_N (last = "current user msg")
+    state = _state("compressed1", "compressed2", "kept1", "user_N")
+    await hook.before_model(state, ctx=None)
+
+    assert llm.calls, "LLM should have been called"
+    # Baseline = state.messages[:-1] = [summary, kept1]  (excludes user_N)
+    assert state._compression_context is not None
+    assert len(state._compression_context) == 2
+    assert state._compression_context[0].role == "system"
+    assert _SUMMARY_PREFIX in (state._compression_context[0].content or "")
+    assert state._compression_context[1].content == "kept1"
+
+
+@pytest.mark.unit
+async def test_compression_context_none_when_no_compression():
+    """state._compression_context is None when compression does not fire."""
+    llm = _CapturingLLM()
+    hook = HistoryCompressionHook(llm=llm, max_messages=10, keep_last=2)
+
+    state = _state("m1", "m2", "m3")
+    await hook.before_model(state, ctx=None)
+
+    assert not llm.calls
+    assert state._compression_context is None
+
+
+@pytest.mark.unit
+async def test_compression_context_excludes_current_user_message():
+    """The last message (current user turn) is excluded from the context baseline."""
+    llm = _CapturingLLM("summary")
+    hook = HistoryCompressionHook(llm=llm, max_messages=5, keep_last=3)
+
+    # 5 messages, keep_last=3 → keep = ["keep2", "keep3", "user_N"]
+    # Baseline should be [summary, "keep2", "keep3"] (user_N excluded)
+    state = _state("old", "keep1", "keep2", "keep3", "user_N")
+    await hook.before_model(state, ctx=None)
+
+    assert state._compression_context is not None
+    contents = [m.content for m in state._compression_context]
+    assert "user_N" not in contents
+    assert "keep2" in contents
+    assert "keep3" in contents

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Self
+from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation, model_validator
 
@@ -42,7 +42,7 @@ class HistoryCompressionHook(AgentHook, BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    name: str = "history_compression"
+    name: ClassVar[str] = "history_compression"
     llm: SkipValidation[Any] = Field(
         description="Language model used to produce the history summary.",
     )
@@ -116,3 +116,6 @@ class HistoryCompressionHook(AgentHook, BaseModel):
             Message(role="system", content=f"{_SUMMARY_PREFIX}{summary}"),
             *keep,
         ]
+        # Record the compressed baseline (everything before the current user message)
+        # so transport layers can persist it for durability across turns.
+        state._compression_context = list(state.messages[:-1])

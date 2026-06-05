@@ -8,10 +8,15 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import InternalError, Message as A2AMessage, Task
 
+from ant_ai.a2a.compression import (
+    find_compression_checkpoint,
+    is_checkpoint_message,
+    persist_compression_checkpoint,
+)
 from ant_ai.a2a.session import current_session_id
 from ant_ai.a2a.translator import A2AToHVEvent, HVEventToA2A
 from ant_ai.agent.agent import Agent
-from ant_ai.core.events import Event
+from ant_ai.core.events import CompletedEvent, Event
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.observer import obs
@@ -37,7 +42,6 @@ class A2AExecutor(AgentExecutor):
         self.agent: Agent = agent
         self._translator: HVEventToA2A = HVEventToA2A()
         self._a2a_to_hv: A2AToHVEvent = A2AToHVEvent()
-        self.running_tasks: set[str] = set()
 
     async def execute(
         self,
@@ -56,7 +60,6 @@ class A2AExecutor(AgentExecutor):
 
         task: Task = context.current_task or new_task_from_user_message(context.message)
         if not context.current_task:
-            # self.running_tasks.add(task.id)
             await event_queue.enqueue_event(task)
 
         updater = TaskUpdater(event_queue, task.id, task.context_id)
@@ -74,22 +77,6 @@ class A2AExecutor(AgentExecutor):
                 raise InternalError() from exc
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        # """Cancels a task."""
-        # task_id: str | None = context.task_id
-        # context_id: str | None = context.context_id
-
-        # if not task_id or not context_id:
-        #     return
-
-        # if task_id in self.running_tasks:
-        #     self.running_tasks.remove(task_id)
-
-        # updater = TaskUpdater(
-        #     event_queue=event_queue,
-        #     task_id=task_id,
-        #     context_id=context_id,
-        # )
-        # await updater.cancel()
         raise Exception("Task cancel not supported yet.")
 
     async def _execute(
@@ -105,11 +92,7 @@ class A2AExecutor(AgentExecutor):
             workflow_settings=context.metadata.get("workflow_settings", None),
         )
 
-        a2a_history: list[A2AMessage] = [
-            m for r_task in context.related_tasks for m in r_task.history or []
-        ]
-        history: list[Message] = self._convert_history(a2a_history)
-        history.append(Message(role="user", content=context.get_user_input()))
+        history = self._build_history(context.related_tasks, context.get_user_input())
 
         await obs.event("a2a.history", history_messages=len(history))
 
@@ -127,6 +110,8 @@ class A2AExecutor(AgentExecutor):
                     node=getattr(event.origin, "node", "-"),
                     step=getattr(event.origin, "run_step", "-"),
                 )
+                if isinstance(event, CompletedEvent):
+                    await persist_compression_checkpoint(state, updater)
                 await self.process_event(event, updater)
         finally:
             current_session_id.reset(token)
@@ -135,6 +120,25 @@ class A2AExecutor(AgentExecutor):
 
     async def process_event(self, event: Event, updater: TaskUpdater) -> None:
         await self._translator.apply(event=event, updater=updater)
+
+    def _build_history(
+        self, related_tasks: list[Task], user_input: str
+    ) -> list[Message]:
+        checkpoint, cp_idx = find_compression_checkpoint(related_tasks)
+        if checkpoint is not None:
+            post_a2a = [
+                m
+                for r_task in related_tasks[cp_idx:]
+                for m in r_task.history or []
+                if not is_checkpoint_message(m)
+            ]
+            history = list(checkpoint) + self._convert_history(post_a2a)
+        else:
+            history = self._convert_history(
+                [m for r_task in related_tasks for m in r_task.history or []]
+            )
+        history.append(Message(role="user", content=user_input))
+        return history
 
     def _convert_history(self, a2a_history: list[A2AMessage]) -> list[Message]:
         return [

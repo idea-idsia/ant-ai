@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from ant_ai.core.message import Message
+from ant_ai.core.message import AnyMessage, Message
 
 
 class InvocationContext(BaseModel):
@@ -31,6 +31,7 @@ class State(BaseModel):
 
     messages: list[Message] = Field(default_factory=list)
     artefacts: list[Any] = Field(default_factory=list)
+    _compression_context: list[AnyMessage] | None = PrivateAttr(default=None)
 
     @property
     def last_message(self) -> Message:

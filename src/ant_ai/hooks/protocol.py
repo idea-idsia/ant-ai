@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass
+from typing import ClassVar
 
 from ant_ai.core.result import StepResult
 from ant_ai.core.types import InvocationContext, State
@@ -71,7 +72,7 @@ class AgentHook:
                 return PostModelPass(result=result)
     """
 
-    name: str = "hook"
+    name: ClassVar[str] = "hook"
 
     async def before_agent(self, state: State, ctx: InvocationContext | None) -> None:
         """Called once before the agent starts processing.
