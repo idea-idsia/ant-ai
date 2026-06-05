@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, SkipValidation
 
@@ -35,7 +35,7 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    name: str = "guardrails_ai"
+    name: ClassVar[str] = "guardrails_ai"
     guard: SkipValidation[Any]  # guardrails.Guard
 
     async def after_model(
