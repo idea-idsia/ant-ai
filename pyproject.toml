@@ -41,13 +41,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-guardrails-ai = ["guardrails-ai>=0.5"]
+guardrails-ai = ["guardrails-ai>=0.5", "tokenizers>=0.22.0,<0.23.1"]
 langfuse = ["langfuse>=4.7.1"]
 mem0 = ["mem0ai>=2.0.4"]
 openai = ["openai>=2.38.0"]
 viz = ["graphviz>=0.21"]
 all = [
     "guardrails-ai>=0.5",
+    "tokenizers>=0.22.0,<0.23.1",
     "langfuse>=4.7.1",
     "mem0ai>=2.0.4",
     "openai>=2.38.0",
@@ -81,4 +82,4 @@ Documentation = "https://idea.idsia.ch/ant-ai/"
 Repository = "https://github.com/idea-idsia/ant-ai"
 
 [tool.uv]
-exclude-newer = "P2D" # Wait for the package to be up for at least 2 days before updating to it.
+# exclude-newer = "P2D" # Wait for the package to be up for at least 2 days before updating to it.

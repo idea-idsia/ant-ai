@@ -5,14 +5,7 @@ import pytest
 pytest.importorskip("guardrails", reason="guardrails-ai not installed; install with: pip install 'ant-ai[guardrails-ai]'")
 
 from guardrails import Guard
-from validator.main import DetectPII  # imported directly: guardrails hub install unavailable (PyPI quarantine)
-
-# ToxicLanguage: skip if not available via hub
-try:
-    from guardrails.hub import ToxicLanguage
-    _toxic_language_available = True
-except (ImportError, AttributeError):
-    _toxic_language_available = False
+from guardrails.hub import DetectPII, ToxicLanguage
 
 from ant_ai.agent.agent import Agent
 from ant_ai.core.exceptions import HookMaxRetriesError
@@ -41,7 +34,6 @@ def _safe_agent(guard: Guard) -> Agent:
 
 
 @pytest.mark.external
-@pytest.mark.skipif(not _toxic_language_available, reason="ToxicLanguage not available via guardrails hub (PyPI quarantine)")
 async def test_toxic_language_validator_self_corrects():
     guard = Guard().use(
         ToxicLanguage(threshold=0.5, validation_method="sentence", on_fail="reask")

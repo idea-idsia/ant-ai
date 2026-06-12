@@ -1,50 +1,52 @@
 """
-Example: safety pipeline with GuardrailsAI (DetectPII).
+Example: safety pipeline with GuardrailsAI (ToxicLanguage + DetectPII).
 
 Requires:
     uv pip install "ant-ai[guardrails-ai]"
-    guardrails hub install hub://guardrails/detect_pii
-
-Note: ToxicLanguage validator will be added once guardrails-ai is restored on PyPI.
+    guardrails hub install hub://guardrails/toxic_language hub://guardrails/detect_pii
 
 Run:
     uv run python examples/guardrails_agent.py
 """
+
 from __future__ import annotations
 
 import asyncio
 
 from guardrails import Guard
-from validator.main import DetectPII  # imported directly: guardrails hub install unavailable (PyPI quarantine)
+from guardrails.hub import DetectPII, ToxicLanguage
 
-from ant_ai.agent.agent import Agent
-from ant_ai.core.message import Message
-from ant_ai.core.types import State
+from ant_ai import Agent, Message, State
 from ant_ai.hooks.adapters import GuardrailsAIHook
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat
 
+guard = (
+    Guard()
+    .use(ToxicLanguage(threshold=0.5, validation_method="sentence", on_fail="reask"))
+    .use(DetectPII(pii_entities=["EMAIL_ADDRESS", "PHONE_NUMBER"], on_fail="reask"))
+)
 
-def build_agent() -> Agent:
-    # When validation fails, guardrails injects a critique into the state and
-    # the ReAct loop retries the LLM call (up to Agent.max_retries times).
-    guard = Guard().use(
-        DetectPII(pii_entities=["EMAIL_ADDRESS", "PHONE_NUMBER"], on_fail="reask")
-    )
-    return Agent(
-        name="safe-agent",
-        system_prompt=(
-            "You are a helpful assistant. "
-            "Never share personal information such as email addresses or phone numbers."
-        ),
-        llm=LiteLLMChat(model="openai/gpt-4o-mini"),
-        hooks=[GuardrailsAIHook(guard=guard)],
-    )
+hook = GuardrailsAIHook(guard=guard)
+
+agent = Agent(
+    name="safe-agent",
+    system_prompt=(
+        "You are a helpful assistant. "
+        "Never use toxic language and never share personal information."
+    ),
+    llm=LiteLLMChat(model="openai/gpt-4o-mini"),
+    hooks=[hook],
+)
 
 
 async def main() -> None:
-    agent = build_agent()
     state = State()
-    state.add_message(Message(role="user", content="Explain why collaboration matters in teams."))
+    state.add_message(
+        Message(
+            role="user",
+            content="Create a sample contact card for a fictional person, including their email address and phone number.",
+        )
+    )
     answer = await agent.ainvoke(state)
     print(answer)
 
