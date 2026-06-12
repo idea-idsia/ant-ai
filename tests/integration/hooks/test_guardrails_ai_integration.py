@@ -8,7 +8,15 @@ pytest.importorskip(
 )
 
 from guardrails import Guard
-from guardrails.hub import DetectPII, ToxicLanguage
+
+try:
+    from guardrails.hub import DetectPII, ToxicLanguage
+except ImportError:
+    pytest.skip(
+        "guardrails hub validators not installed; run: "
+        "guardrails hub install hub://guardrails/detect_pii hub://guardrails/toxic_language",
+        allow_module_level=True,
+    )
 
 from ant_ai.agent.agent import Agent
 from ant_ai.core.exceptions import HookMaxRetriesError
