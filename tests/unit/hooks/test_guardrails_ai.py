@@ -4,7 +4,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ant_ai.core.result import LLMOutput, StepResult, Transition, TransitionAction, ToolOutput
+from ant_ai.core.result import (
+    LLMOutput,
+    StepResult,
+    ToolOutput,
+    Transition,
+    TransitionAction,
+)
 from ant_ai.hooks.adapters.guardrails_ai import GuardrailsAIHook
 from ant_ai.hooks.protocol import PostModelPass, PostModelRetry
 
@@ -41,7 +47,9 @@ async def test_pass_when_validation_succeeds():
 
 @pytest.mark.unit
 async def test_retry_when_validation_fails():
-    hook = GuardrailsAIHook(guard=_make_guard(passed=False, error="toxic content detected"))
+    hook = GuardrailsAIHook(
+        guard=_make_guard(passed=False, error="toxic content detected")
+    )
     decision = await hook.after_model(_llm_result("bad output"), ctx=None)
     assert isinstance(decision, PostModelRetry)
     assert "toxic content detected" in decision.reason

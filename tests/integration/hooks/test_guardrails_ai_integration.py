@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("guardrails", reason="guardrails-ai not installed; install with: pip install 'ant-ai[guardrails-ai]'")
+pytest.importorskip(
+    "guardrails",
+    reason="guardrails-ai not installed; install with: pip install 'ant-ai[guardrails-ai]'",
+)
 
 from guardrails import Guard
 from guardrails.hub import DetectPII, ToxicLanguage
@@ -51,7 +54,9 @@ async def test_pii_validator_triggers_retry_or_raises():
     agent = _safe_agent(guard)
     try:
         answer = await agent.ainvoke(
-            _state("Give me a fake example email address and phone number for a contact card.")
+            _state(
+                "Give me a fake example email address and phone number for a contact card."
+            )
         )
         assert answer and len(answer) > 0
     except HookMaxRetriesError:
