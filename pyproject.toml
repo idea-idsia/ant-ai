@@ -82,4 +82,4 @@ Documentation = "https://idea.idsia.ch/ant-ai/"
 Repository = "https://github.com/idea-idsia/ant-ai"
 
 [tool.uv]
-# exclude-newer = "P2D" # Wait for the package to be up for at least 2 days before updating to it.
+exclude-newer = "P2D" # Wait for the package to be up for at least 2 days before updating to it.
