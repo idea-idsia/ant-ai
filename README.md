@@ -45,7 +45,17 @@ uv add "ant-ai[openai]"
 uv add "ant-ai[langfuse]"
 uv add "ant-ai[mem0]"
 uv add "ant-ai[viz]"
+uv add "ant-ai[guardrails-ai]"
 ```
+
+The `guardrails-ai` extra installs the core library. Validators (e.g. `ToxicLanguage`, `DetectPII`) are distributed via the [Guardrails Hub](https://hub.guardrailsai.com/) and must be installed separately after running `guardrails configure`:
+
+```sh
+guardrails hub install hub://guardrails/toxic_language
+guardrails hub install hub://guardrails/detect_pii
+```
+
+> **Note:** hub validators are installed outside of uv's lockfile and must be reinstalled after `uv sync`.
 
 Or clone and sync for local development:
 

@@ -39,6 +39,7 @@ def _make_guard(passed: bool, error: str = "") -> MagicMock:
 
 
 @pytest.mark.unit
+@pytest.mark.guardrailsai
 async def test_pass_when_validation_succeeds():
     hook = GuardrailsAIHook(guard=_make_guard(passed=True))
     decision = await hook.after_model(_llm_result("clean output"), ctx=None)
@@ -46,6 +47,7 @@ async def test_pass_when_validation_succeeds():
 
 
 @pytest.mark.unit
+@pytest.mark.guardrailsai
 async def test_retry_when_validation_fails():
     hook = GuardrailsAIHook(
         guard=_make_guard(passed=False, error="toxic content detected")
@@ -56,6 +58,7 @@ async def test_retry_when_validation_fails():
 
 
 @pytest.mark.unit
+@pytest.mark.guardrailsai
 async def test_skips_non_llm_output():
     guard = _make_guard(passed=True)
     hook = GuardrailsAIHook(guard=guard)

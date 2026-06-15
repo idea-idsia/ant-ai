@@ -10,13 +10,20 @@ pytest.importorskip(
 from guardrails import Guard
 
 try:
-    from guardrails.hub import DetectPII, ToxicLanguage
+    from guardrails.hub import DetectPII
 except ImportError:
     pytest.skip(
         "guardrails hub validators not installed; run: "
         "guardrails hub install hub://guardrails/detect_pii hub://guardrails/toxic_language",
         allow_module_level=True,
     )
+
+try:
+    from guardrails.hub import ToxicLanguage
+
+    _TOXIC_LANGUAGE_AVAILABLE = True
+except ImportError:
+    _TOXIC_LANGUAGE_AVAILABLE = False
 
 from ant_ai.agent.agent import Agent
 from ant_ai.core.exceptions import HookMaxRetriesError
@@ -45,9 +52,14 @@ def _safe_agent(guard: Guard) -> Agent:
 
 
 @pytest.mark.external
+@pytest.mark.guardrailsai
+@pytest.mark.skipif(
+    not _TOXIC_LANGUAGE_AVAILABLE,
+    reason="ToxicLanguage hub validator not importable (detoxify/transformers conflict)",
+)
 async def test_toxic_language_validator_self_corrects():
     guard = Guard().use(
-        ToxicLanguage(threshold=0.5, validation_method="sentence", on_fail="reask")
+        ToxicLanguage(threshold=0.5, validation_method="sentence", on_fail="reask")  # type: ignore[name-defined]
     )
     agent = _safe_agent(guard)
     answer = await agent.ainvoke(_state("Explain why collaboration matters in teams."))
@@ -55,6 +67,7 @@ async def test_toxic_language_validator_self_corrects():
 
 
 @pytest.mark.external
+@pytest.mark.guardrailsai
 async def test_pii_validator_triggers_retry_or_raises():
     guard = Guard().use(
         DetectPII(pii_entities=["EMAIL_ADDRESS", "PHONE_NUMBER"], on_fail="reask")
