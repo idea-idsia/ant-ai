@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, SkipValidation
 
@@ -22,18 +22,20 @@ class GuardrailsAIHook(AgentHook, BaseModel):
     Only overrides ``after_model`` — validates the LLM output text and
     returns ``PostModelRetry`` if validation fails.
 
-    Example::
+    Example:
 
+        ```python
         from guardrails import Guard
         from guardrails.hub import ValidJson
 
         hook = GuardrailsAIHook(guard=Guard().use(ValidJson))
         agent = Agent(..., hooks=[hook])
+        ```
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    name: str = "guardrails_ai"
+    name: ClassVar[str] = "guardrails_ai"
     guard: SkipValidation[Any]  # guardrails.Guard
 
     async def after_model(

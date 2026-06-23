@@ -8,6 +8,10 @@ from ant_ai.core.message import Message
 from ant_ai.core.result import LLMOutput, StepResult, Transition, TransitionAction
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks import HookLayer
+from ant_ai.hooks.builtins.history_compression import (
+    _SUMMARY_PREFIX,
+    HistoryCompressionHook,
+)
 from ant_ai.memory.protocol import Memory
 
 
@@ -292,3 +296,147 @@ async def test_retrieve_called_only_once_across_multiple_loop_steps(stub_memory)
     [_ async for _ in loop.stream(state, ctx=None)]
 
     assert len(stub_memory.retrieve_calls) == 1
+
+
+# ── History compression + memory together ────────────────────────────────────
+
+
+class _CapturingLLM:
+    """Minimal async LLM used to drive HistoryCompressionHook in unit tests."""
+
+    def __init__(self, summary: str = "summary"):
+        self.calls: list[list[Message]] = []
+        self._summary = summary
+
+    async def ainvoke(self, messages, **_):
+        self.calls.append(list(messages))
+
+        class _R:
+            pass
+
+        r = _R()
+        r.message = Message(role="assistant", content=self._summary)
+        return r
+
+
+def _make_loop_with_compression(
+    reason_step,
+    *,
+    memory,
+    max_messages: int,
+    keep_last: int,
+    summary: str = "SUMMARY",
+) -> tuple[ReActLoop, _CapturingLLM]:
+    """Build a ReActLoop that has both a HistoryCompressionHook and a Memory."""
+    cap = _CapturingLLM(summary)
+    hook = HistoryCompressionHook(
+        llm=cap, max_messages=max_messages, keep_last=keep_last
+    )
+    loop = ReActLoop.model_construct(
+        reason_step=reason_step,
+        act_step=None,
+        hooks=HookLayer(hooks=[hook]),
+        max_retries=3,
+        memory=memory,
+    )
+    return loop, cap
+
+
+@pytest.mark.unit
+async def test_retrieved_memories_count_toward_compression_threshold(stub_memory):
+    """Memory messages injected by retrieve() push the total over the threshold.
+
+    retrieve() prepends messages to state *before* before_model fires.
+    If those messages cause len(state.messages) >= max_messages, compression
+    should fire even though the initial state alone was below the threshold.
+    """
+    reason_step = FakeStep("llm", [make_llm_result("answer")])
+    stub_memory.set_entries(
+        [
+            Message(role="system", content="MEMORY_A"),
+            Message(role="system", content="MEMORY_B"),
+        ]
+    )
+
+    # State has 1 user message; memory adds 2 → total 3 = max_messages → trigger
+    loop, cap = _make_loop_with_compression(
+        reason_step, memory=stub_memory, max_messages=3, keep_last=1
+    )
+    state = State(messages=[Message(role="user", content="question")])
+    [_ async for _ in loop.stream(state, ctx=None)]
+
+    assert cap.calls, "Compression LLM should have been called after memory inject"
+    assert state.messages[0].role == "system"
+    assert (state.messages[0].content or "").startswith(_SUMMARY_PREFIX)
+
+
+@pytest.mark.unit
+async def test_memory_update_called_correctly_when_compression_fires(stub_memory):
+    """memory.update() still receives the current turn's messages after compression.
+
+    Compression rewrites state.messages, but update() is called with the
+    pre-identified trigger message and the new assistant reply — the two
+    messages that represent this turn's exchange.
+    """
+    reason_step = FakeStep("llm", [make_llm_result("my reply")])
+    stub_memory.set_entries(
+        [
+            Message(role="system", content="M1"),
+            Message(role="system", content="M2"),
+        ]
+    )
+
+    loop, _ = _make_loop_with_compression(
+        reason_step, memory=stub_memory, max_messages=3, keep_last=1
+    )
+    state = State(messages=[Message(role="user", content="current question")])
+    [_ async for _ in loop.stream(state, ctx=None)]
+
+    assert len(stub_memory.update_calls) == 1
+    stored = stub_memory.update_calls[0]["messages"]
+    roles = [m.role for m in stored if m is not None]
+    assert "user" in roles, "update() must include the trigger user message"
+    assert "assistant" in roles, "update() must include the assistant reply"
+
+
+@pytest.mark.unit
+async def test_no_compression_when_below_threshold_with_memory(stub_memory):
+    """No compression when retrieved memories + history stay below max_messages."""
+    reason_step = FakeStep("llm", [make_llm_result("answer")])
+    stub_memory.set_entries([Message(role="system", content="one memory")])
+
+    loop, cap = _make_loop_with_compression(
+        reason_step, memory=stub_memory, max_messages=10, keep_last=2
+    )
+    state = State(messages=[Message(role="user", content="hello")])
+    [_ async for _ in loop.stream(state, ctx=None)]
+
+    assert not cap.calls, "Compression should not fire when below the threshold"
+    assert state._compression_context is None
+
+
+@pytest.mark.unit
+async def test_compression_context_set_when_memory_triggers_compression(stub_memory):
+    """_compression_context is populated when memory injection causes compression."""
+    reason_step = FakeStep("llm", [make_llm_result("done")])
+    stub_memory.set_entries(
+        [
+            Message(role="system", content="M1"),
+            Message(role="system", content="M2"),
+        ]
+    )
+
+    loop, _ = _make_loop_with_compression(
+        reason_step,
+        memory=stub_memory,
+        max_messages=3,
+        keep_last=1,
+        summary="COMPRESSED",
+    )
+    state = State(messages=[Message(role="user", content="q")])
+    [_ async for _ in loop.stream(state, ctx=None)]
+
+    # _compression_context holds the baseline for durable A2A persistence
+    assert state._compression_context is not None
+    summary_content = state._compression_context[0].content or ""
+    assert "COMPRESSED" in summary_content

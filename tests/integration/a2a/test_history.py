@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from uuid import uuid4
 
 import pytest
@@ -9,6 +10,7 @@ from ant_ai.a2a.colony import Colony
 from ant_ai.a2a.config import A2AConfig
 from ant_ai.agent.agent import Agent
 from ant_ai.core.events import Event
+from ant_ai.hooks.builtins.history_compression import HistoryCompressionHook
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat
 from ant_ai.tools.tool import tool
 from tests.integration.a2a.conftest import (
@@ -458,7 +460,6 @@ async def test_postgres_history_survives_server_restart(
     await colony2.aclose()
     await _drain_loop()  # flush asyncpg cleanup in this event loop
 
-    # ── Assert ─────────────────────────────────────────────────────────────
     assert phase2_messages, "Phase-2 dispatch was never called"
     assert "Persistent question?" in _all_text(phase2_messages[0]), (
         "Turn-1 question not found after server restart — "
@@ -543,4 +544,142 @@ async def test_tool_call_structure_preserved_in_history(scripted_llm):
     assert any(m.get("tool_calls") for m in turn2_messages), (
         f"ToolCallMessage missing from history — _convert_history may be "
         f"flattening tool call requests to plain text. Messages: {turn2_messages}"
+    )
+
+
+def _make_compression_colony(
+    summarise_fn,
+) -> tuple[Colony, socket.socket]:
+    """Build a colony whose agent has a HistoryCompressionHook installed."""
+    sock = _bound_socket()
+    port = sock.getsockname()[1]
+
+    class _SummaryLLM:
+        async def ainvoke(self, messages, **_):
+            from ant_ai.core.message import Message as _Msg
+
+            class _R:
+                message = _Msg(role="assistant", content=summarise_fn(messages))
+
+            return _R()
+
+    hook = HistoryCompressionHook(
+        llm=_SummaryLLM(),
+        max_messages=4,
+        keep_last=2,
+    )
+    agent = Agent(
+        name="sticky",
+        llm=LiteLLMChat("test-model"),
+        system_prompt=STICKY_AGENT_SYS,
+        description="Compression test agent",
+        hooks=[hook],
+    )
+    colony = Colony()
+    colony.agent(
+        "sticky",
+        agent=agent,
+        workflow=build_single_node_workflow(),
+        card=_make_agent_card(port),
+    )
+    return colony, sock
+
+
+@pytest.mark.integration
+@pytest.mark.a2a
+async def test_compression_bounds_message_count_across_turns(scripted_llm):
+    """History compression is durable across A2A turns.
+
+    With max_messages=4 and keep_last=2, the LLM must never see more than
+    keep_last + 2 messages (summary + kept + current-turn pair), regardless
+    of how many turns have passed.  Without durable checkpoints, the count
+    would grow linearly.
+    """
+    counts: list[int] = []
+
+    async def dispatch(*, messages, **_):
+        counts.append(len(messages))
+        return make_text_response(f"Reply {len(counts)}.")
+
+    scripted_llm.install(dispatch)
+
+    colony, sock = _make_compression_colony(lambda _: "COMPRESSED_SUMMARY")
+    port = sock.getsockname()[1]
+    server, srv_task = await _start_server(
+        colony.asgi(agent_name="sticky", use_fastapi=True), sock
+    )
+    client = _client(port)
+
+    try:
+        ctx = str(uuid4())
+        _, t1 = await _send_turn(client, "Turn one.", context_id=ctx)
+        _, t2 = await _send_turn(
+            client, "Turn two.", context_id=ctx, reference_task_ids=[t1]
+        )
+        _, t3 = await _send_turn(
+            client, "Turn three.", context_id=ctx, reference_task_ids=[t2]
+        )
+        _, t4 = await _send_turn(
+            client, "Turn four.", context_id=ctx, reference_task_ids=[t3]
+        )
+        await client.aclose()
+    finally:
+        await _stop_server(server, srv_task)
+
+    # Turn 3 or 4 should trigger compression (max_messages=4).
+    # After compression, message count must stay bounded — not grow to 8, 10, …
+    max_seen = max(counts)
+    assert max_seen <= 6, (
+        f"Message count grew to {max_seen} — compression checkpoint is not "
+        f"durable across A2A turns.  Without the fix, count grows linearly.\n"
+        f"Counts per turn: {counts}"
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.a2a
+async def test_compression_checkpoint_supersedes_older_checkpoints(scripted_llm):
+    """When compression fires multiple times, the newest checkpoint wins.
+
+    If the message count remained bounded after turn 4 but started growing
+    again in later turns, an older checkpoint is being reused instead of
+    the newer one.
+    """
+    counts: list[int] = []
+
+    async def dispatch(*, messages, **_):
+        counts.append(len(messages))
+        return make_text_response(f"Reply {len(counts)}.")
+
+    scripted_llm.install(dispatch)
+
+    colony, sock = _make_compression_colony(lambda _: "SUMMARY")
+    port = sock.getsockname()[1]
+    server, srv_task = await _start_server(
+        colony.asgi(agent_name="sticky", use_fastapi=True), sock
+    )
+    client = _client(port)
+
+    try:
+        ctx = str(uuid4())
+        task_id = None
+        for _ in range(8):
+            _, task_id = await _send_turn(
+                client,
+                "Next turn.",
+                context_id=ctx,
+                reference_task_ids=[task_id] if task_id else None,
+            )
+        await client.aclose()
+    finally:
+        await _stop_server(server, srv_task)
+
+    # After the initial growth, message count must stay bounded.
+    # Allow a short ramp-up window (first 3 turns), then check the tail.
+    tail = counts[3:]
+    assert tail, "Expected at least 4 turns to run"
+    max_tail = max(tail)
+    assert max_tail <= 6, (
+        f"Message count in later turns grew to {max_tail} — the newest "
+        f"checkpoint is not superseding the older one.\nAll counts: {counts}"
     )
