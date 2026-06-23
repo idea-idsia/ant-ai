@@ -51,11 +51,12 @@ uv add "ant-ai[guardrails-ai]"
 The `guardrails-ai` extra installs the core library. Validators (e.g. `ToxicLanguage`, `DetectPII`) are distributed via the [Guardrails Hub](https://hub.guardrailsai.com/) and must be installed separately after running `guardrails configure`:
 
 ```sh
-guardrails hub install hub://guardrails/toxic_language
-guardrails hub install hub://guardrails/detect_pii
+# Run from outside the project directory so uv doesn't pick up exclude-newer
+(cd /tmp && guardrails hub install hub://guardrails/toxic_language hub://guardrails/detect_pii)
 ```
 
 > **Note:** hub validators are installed outside of uv's lockfile and must be reinstalled after `uv sync`.
+> The `cd /tmp` wrapper is required because these packages ship without upload dates, which conflicts with the project's `exclude-newer = "P2D"` supply-chain setting. Running from `/tmp` (where no `pyproject.toml` exists) lets uv install them without that constraint while still targeting the active virtualenv.
 
 Or clone and sync for local development:
 

@@ -13,8 +13,8 @@ try:
     from guardrails.hub import DetectPII
 except ImportError:
     pytest.skip(
-        "guardrails hub validators not installed; run: "
-        "guardrails hub install hub://guardrails/detect_pii hub://guardrails/toxic_language",
+        "guardrails hub validators not installed; run from outside the project: "
+        "(cd /tmp && guardrails hub install hub://guardrails/detect_pii hub://guardrails/toxic_language)",
         allow_module_level=True,
     )
 
@@ -58,6 +58,8 @@ def _safe_agent(guard: Guard) -> Agent:
     reason="ToxicLanguage hub validator not importable (detoxify/transformers conflict)",
 )
 async def test_toxic_language_validator_self_corrects():
+    # on_fail="reask" returns a failing ValidationOutcome without internal LLM
+    # calls (no llm_api passed to validate()). ant-ai's retry loop takes over.
     guard = Guard().use(
         ToxicLanguage(threshold=0.5, validation_method="sentence", on_fail="reask")  # type: ignore[name-defined]
     )
@@ -70,6 +72,8 @@ async def test_toxic_language_validator_self_corrects():
 @pytest.mark.guardrailsai
 async def test_pii_validator_triggers_retry_or_raises():
     guard = Guard().use(
+        # on_fail="reask": guardrails returns a failing outcome (no internal LLM
+        # reask since validate() has no llm_api); ant-ai's retry loop takes over.
         DetectPII(pii_entities=["EMAIL_ADDRESS", "PHONE_NUMBER"], on_fail="reask")
     )
     agent = _safe_agent(guard)

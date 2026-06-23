@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,17 +23,34 @@ def _llm_result(raw: str) -> StepResult:
     )
 
 
+@dataclass
+class _MockSummary:
+    validator_name: str
+    failure_reason: str | None
+
+
+@dataclass
+class _MockOutcome:
+    validation_passed: bool
+    validation_summaries: list = field(default_factory=list)
+
+
 def _tool_result() -> StepResult:
     return StepResult(
-        output=ToolOutput(tool_call_id="c1", name="my_tool", result="ok"),
+        output=ToolOutput(
+            results=({"tool_call_id": "c1", "name": "my_tool", "content": "ok"},)
+        ),
         transition=Transition(action=TransitionAction.CONTINUE),
     )
 
 
-def _make_guard(passed: bool, error: str = "") -> MagicMock:
-    outcome = MagicMock()
-    outcome.validation_passed = passed
-    outcome.error = error
+def _make_guard(passed: bool, failure_reason: str = "") -> MagicMock:
+    summaries = []
+    if not passed and failure_reason:
+        summaries.append(
+            _MockSummary(validator_name="test", failure_reason=failure_reason)
+        )
+    outcome = _MockOutcome(validation_passed=passed, validation_summaries=summaries)
     guard = MagicMock()
     guard.validate.return_value = outcome
     return guard
@@ -50,11 +68,20 @@ async def test_pass_when_validation_succeeds():
 @pytest.mark.guardrailsai
 async def test_retry_when_validation_fails():
     hook = GuardrailsAIHook(
-        guard=_make_guard(passed=False, error="toxic content detected")
+        guard=_make_guard(passed=False, failure_reason="toxic content detected")
     )
     decision = await hook.after_model(_llm_result("bad output"), ctx=None)
     assert isinstance(decision, PostModelRetry)
     assert "toxic content detected" in decision.reason
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
+async def test_retry_reason_falls_back_when_no_summaries():
+    hook = GuardrailsAIHook(guard=_make_guard(passed=False))
+    decision = await hook.after_model(_llm_result("bad output"), ctx=None)
+    assert isinstance(decision, PostModelRetry)
+    assert decision.reason == "validation failed"
 
 
 @pytest.mark.unit

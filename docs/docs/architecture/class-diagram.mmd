@@ -23,6 +23,9 @@ classDiagram
     class SkillPresenter { <<interface>> }
     class ObservabilitySink { <<interface>> }
     class TaskStore { <<interface>> }
+    class InvocationContext
+    A2AServer --> InvocationContext : creates
+    Workflow --> InvocationContext : propagates
     Colony --> AgentSpec : registers
     Colony --> A2AServer : builds on asgi
     AgentSpec --> Workflow : wraps
