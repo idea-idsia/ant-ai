@@ -53,12 +53,12 @@ jobs:
 
             - run: uv run pytest -m "not vllm and not external" --cov --cov-report=term --cov-report=xml --junitxml=junit.xml
 
-            - uses: codecov/codecov-action@v6
+            - uses: codecov/codecov-action@v7
               with:
                   files: coverage.xml
                   token: ${{ secrets.CODECOV_TOKEN }}
 
-            - uses: codecov/codecov-action@v6
+            - uses: codecov/codecov-action@v7
               if: ${{ !cancelled() }}
               with:
                   files: junit.xml
@@ -101,7 +101,7 @@ jobs:
               env:
                   POSTGRES_TEST_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/tasks"
 
-            - uses: codecov/codecov-action@v6
+            - uses: codecov/codecov-action@v7
               if: ${{ !cancelled() }}
               with:
                   files: report-postgres.xml
