@@ -9,7 +9,7 @@
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![PyPI - Version](https://img.shields.io/pypi/v/ant-ai?label=PyPI)
 [![Coverage](https://img.shields.io/codecov/c/github/idea-idsia/ant-ai?label=Coverage&logo=codecov)](https://codecov.io/gh/idea-idsia/ant-ai)
-[![Docs](https://img.shields.io/badge/Docs-mkdocs-526cfe?logo=materialformkdocs&logoColor=white)](https://idea-idsia.github.io/ant-ai/)
+[![Docs](https://img.shields.io/badge/Docs-mkdocs-526cfe?logo=materialformkdocs&logoColor=white)](https://idea.idsia.ch/ant-ai/)
 
 **A lightweight Python framework for building tool-driven AI agents and multi-agent systems.**
 
