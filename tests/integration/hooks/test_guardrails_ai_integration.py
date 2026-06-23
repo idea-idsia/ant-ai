@@ -29,7 +29,7 @@ from ant_ai.agent.agent import Agent
 from ant_ai.core.exceptions import HookMaxRetriesError
 from ant_ai.core.message import Message
 from ant_ai.core.types import State
-from ant_ai.hooks.adapters import GuardrailsAIHook
+from ant_ai.hooks.integrations import GuardrailsAIHook
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat
 
 

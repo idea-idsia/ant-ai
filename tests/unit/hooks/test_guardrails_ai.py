@@ -12,7 +12,7 @@ from ant_ai.core.result import (
     Transition,
     TransitionAction,
 )
-from ant_ai.hooks.adapters.guardrails_ai import GuardrailsAIHook
+from ant_ai.hooks.integrations.guardrails_ai import GuardrailsAIHook
 from ant_ai.hooks.protocol import PostModelPass, PostModelRetry
 
 
