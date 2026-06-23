@@ -16,62 +16,64 @@ config:
     fontSize: '24px'
 ---
 flowchart TD
-    Client(["Client"])
-    Remote(["Remote agent"])
+    Client([Client])
+    Remote([Remote agent])
 
-    subgraph ext_llm["LLM provider"]
-        LLM["LiteLLM / OpenAI"]
+    subgraph ext_llm[LLM provider]
+        LLM[LiteLLM / OpenAI]
     end
 
-    subgraph hm["ant_ai"]
-        Colony["Colony"]
-        A2AS["A2AServer"]
-        Exec["A2AExecutor"]
-        Agent["Agent"]
-        Memory["Memory"]
+    subgraph hm[ant_ai]
+        Colony[Colony]
+        A2AS[A2AServer]
+        Exec[A2AExecutor]
+        Agent[Agent]
+        Memory[Memory]
 
-        subgraph reg["ToolRegistry"]
-            Tool["Tool"]
-            A2AT["A2AAgentTool"]
+        subgraph reg[ToolRegistry]
+            Tool[Tool]
+            A2AT[A2AAgentTool]
         end
 
-        subgraph wf["Workflow"]
+        subgraph wf[Workflow]
             direction LR
-            S(("START")) --> N1["Node"]
-            N1 -->|router| N2["Node"]
-            N1 -->|router| N3["Node"]
-            N2 --> E(("END"))
+            S((START)) --> N1[Node]
+            N1 -->|router| N2[Node]
+            N1 -->|router| N3[Node]
+            N2 --> E((END))
             N3 --> E
         end
 
-        subgraph skills["ant_ai.skills"]
+        subgraph skills[ant_ai.skills]
             direction LR
-            SkillLoader["SkillLoader"] --> AgentSkill["AgentSkill"]
-            AgentSkill --> SkillPresenter["SkillPresenter"]
+            SkillLoader[SkillLoader] --> AgentSkill[AgentSkill]
+            AgentSkill --> SkillPresenter[SkillPresenter]
         end
 
-        subgraph hooks_sub["ant_ai.hooks"]
-            HookLayer["HookLayer"]
-            GuardrailsHook["GuardrailsAIHook"]
+        subgraph hooks_sub[ant_ai.hooks]
+            HookLayer[HookLayer]
+            GuardrailsHook[GuardrailsAIHook]
         end
 
-        Colony -.->|"wires & deploys"| A2AS
-        Colony -.->|"wires & deploys"| Agent
-        A2AS --> Exec
-        Exec --> wf
-        wf --> Agent
-        Agent --> reg
-        SkillPresenter -.->|"system prompt"| Agent
-        Agent <-->|"retrieve / update"| Memory
-        Agent -.->|"before/after model"| hooks_sub
+        Colony -.->|creates A2AServer| A2AS
+        Colony -.->|registers Agent| Agent
+
+        A2AS -->|delegates to A2AExecutor| Exec
+        Exec -->|executes Workflow| wf
+        wf -->|invokes Agent| Agent
+
+        Agent -->|uses ToolRegistry| reg
+        SkillPresenter -.->|provides system prompt to Agent| Agent
+        Agent <-->|reads and writes Memory| Memory
+        Agent -.->|invokes HookLayer hooks| hooks_sub
     end
 
-    subgraph ext_a2a["a2a SDK"]
-        SDK["RequestHandler"]
+    subgraph ext_a2a[a2a SDK]
+        SDK[RequestHandler]
     end
 
-    Client -->|"A2A request"| A2AS
-    Exec -.->|"extends"| SDK
-    Agent -.->|"LLM calls"| LLM
-    A2AT -->|"A2A call"| Remote
-    Exec -->|"streamed updates"| Client
+    Client -->|sends A2A request to A2AServer| A2AS
+    Exec -.->|extends RequestHandler| SDK
+    Agent -.->|calls LLM provider| LLM
+    A2AT -->|sends request to remote agent| Remote
+    Exec -->|streams updates to Client| Client
