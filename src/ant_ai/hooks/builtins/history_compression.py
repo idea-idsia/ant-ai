@@ -99,8 +99,24 @@ class HistoryCompressionHook(AgentHook, BaseModel):
         if len(messages) <= self.keep_last or not self._should_compress(messages):
             return
 
-        to_compress: list[Message] = messages[: -self.keep_last]
-        keep: list[Message] = messages[-self.keep_last :]
+        # messages[:-0] is [] in Python, so handle keep_last=0 ("compress all") explicitly.
+        keep_from: int = (
+            len(messages) - self.keep_last if self.keep_last > 0 else len(messages)
+        )
+
+        # Never orphan a ToolCallResultMessage: a `tool` role message must always be
+        # preceded by an assistant message with tool_calls. Slide the boundary left
+        # until it no longer points inside a tool-call/result group.
+        while 0 < keep_from < len(messages) and messages[keep_from].role == "tool":
+            keep_from -= 1
+
+        to_compress: list[Message] = messages[:keep_from]
+        keep: list[Message] = messages[keep_from:]
+
+        # Nothing compressible after boundary adjustment (e.g. history starts with a
+        # tool-call group that would be broken by any split).
+        if not to_compress:
+            return
 
         history_text: str = "\n".join(
             f"{m.role}: {m.content or ''}" for m in to_compress
