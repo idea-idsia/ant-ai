@@ -4,7 +4,7 @@ from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation, model_validator
 
-from ant_ai.core.message import Message
+from ant_ai.core.message import Message, ToolCallMessage
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks.protocol import AgentHook
 
@@ -104,11 +104,29 @@ class HistoryCompressionHook(AgentHook, BaseModel):
             len(messages) - self.keep_last if self.keep_last > 0 else len(messages)
         )
 
-        # Never orphan a ToolCallResultMessage: a `tool` role message must always be
-        # preceded by an assistant message with tool_calls. Slide the boundary left
-        # until it no longer points inside a tool-call/result group.
+        # Slide left: never orphan a ToolCallResultMessage at the head of `keep`.
+        # A `tool` role message must always be preceded by an assistant message with
+        # tool_calls; slide left until the boundary no longer bisects such a group.
         while 0 < keep_from < len(messages) and messages[keep_from].role == "tool":
             keep_from -= 1
+
+        # Slide right: if the boundary lands on a ToolCallMessage whose results are
+        # absent or incomplete (e.g. broken A2A history or partial parallel calls),
+        # absorb the whole group into `to_compress` so it is summarised away instead
+        # of producing an invalid call.  For parallel tool calls, ALL N results must
+        # immediately follow — so compare the consecutive result count against the
+        # number of tool_calls in the message.
+        while keep_from < len(messages) and isinstance(
+            messages[keep_from], ToolCallMessage
+        ):
+            n_calls = len(messages[keep_from].tool_calls)
+            j = keep_from + 1
+            while j < len(messages) and messages[j].role == "tool":
+                j += 1
+            n_results = j - (keep_from + 1)
+            if n_results >= n_calls:
+                break  # Enough results follow — valid group, keep it.
+            keep_from = j  # Partial or absent results → absorb group into to_compress.
 
         to_compress: list[Message] = messages[:keep_from]
         keep: list[Message] = messages[keep_from:]
