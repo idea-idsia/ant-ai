@@ -1,4 +1,16 @@
-"""Simple ACP agent example — connect from VSCode or any ACP-compatible editor.
+"""ACP agent example — connect from VSCode, Zed, Gemini CLI, or any ACP-compatible editor.
+
+Features demonstrated
+---------------------
+- **Filesystem tools** – read and write files in the IDE via ``acp_fs_read_file`` /
+  ``acp_fs_write_file`` (requires the client to advertise ``clientCapabilities.fs``).
+- **Terminal tools** – run shell commands in the IDE terminal via ``acp_terminal_run``
+  (requires ``clientCapabilities.terminal``).
+- **Plan updates** – push a plan to the IDE UI via ``acp_send_plan``.
+- **Slash commands** – ``/read-file`` and ``/run`` are advertised to the IDE on the
+  first prompt of each session.
+- **Per-session MCP servers** – HTTP or SSE MCP servers passed by the client in
+  ``session/new`` are automatically loaded and made available as tools.
 
 Usage
 -----
@@ -23,8 +35,7 @@ Usage
     stdin/stdout.  No port needed.
 
 **WebSocket (browser / custom client)**
-    Run with ``--ws`` to serve over WebSocket at ``ws://127.0.0.1:9001/acp/ws``
-    instead:
+    Run with ``--ws`` to serve over WebSocket at ``ws://127.0.0.1:9001/acp/ws``:
 
     .. code-block:: bash
 
@@ -43,7 +54,15 @@ import os
 import sys
 from datetime import UTC, datetime
 
-from ant_ai.acp import ACPServer
+from acp.schema import AvailableCommand, AvailableCommandInput
+
+from ant_ai.acp import (
+    ACP_FILESYSTEM_TOOLS,
+    ACP_PLAN_TOOLS,
+    ACP_SESSION_TOOLS,
+    ACP_TERMINAL_TOOLS,
+    ACPServer,
+)
 from ant_ai.agent.agent import Agent
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat
@@ -77,22 +96,6 @@ def calculate(expression: str) -> str:
     return str(result)
 
 
-@tool
-def get_weather(city: str) -> str:
-    """Return a mock current weather report for a city (for testing purposes).
-
-    Args:
-        city: Name of the city, e.g. "London".
-    """
-    mock_data: dict[str, str] = {
-        "london": "Overcast, 14°C, wind 20 km/h from the SW.",
-        "new york": "Partly cloudy, 22°C, wind 15 km/h from the NE.",
-        "tokyo": "Sunny, 28°C, humidity 60%, wind 10 km/h from the S.",
-        "sydney": "Clear skies, 19°C, wind 25 km/h from the SE.",
-    }
-    return mock_data.get(city.lower(), f"No weather data available for '{city}'.")
-
-
 async def _run_agent(agent, state: State, ctx: InvocationContext | None):
     async for event in agent.stream(state, ctx=ctx):
         yield event
@@ -114,12 +117,45 @@ def main() -> None:
         name="ant-ai",
         description="A helpful AI assistant powered by ant-ai.",
         llm=LiteLLMChat(model),
-        system_prompt="You are a helpful AI assistant. Use the available tools when relevant.",
-        tools=[get_current_time, calculate, get_weather],
+        system_prompt=(
+            "You are a helpful AI assistant with access to the IDE's filesystem and terminal.\n"
+            "Use acp_fs_read_file / acp_fs_write_file to read and write files — relative paths are resolved against the session working directory automatically.\n"
+            "If you need to know the current working directory, call acp_get_cwd() once.\n"
+            "Use acp_terminal_run to execute shell commands in the IDE terminal.\n"
+            "Use acp_send_plan to share your plan with the user before starting complex tasks.\n"
+            "When the user provides @-mentioned files they appear as [File: ...] in the message."
+        ),
+        tools=[
+            get_current_time,
+            calculate,
+            *ACP_SESSION_TOOLS,
+            *ACP_FILESYSTEM_TOOLS,
+            *ACP_TERMINAL_TOOLS,
+            *ACP_PLAN_TOOLS,
+        ],
     )
     workflow: Workflow[State] = _build_workflow()
 
-    server = ACPServer(agent=agent, workflow=workflow)
+    server = ACPServer(
+        agent=agent,
+        workflow=workflow,
+        slash_commands=[
+            AvailableCommand(
+                name="read-file",
+                description="Read a file from the IDE filesystem",
+                input=AvailableCommandInput(hint="path/to/file.txt"),
+            ),
+            AvailableCommand(
+                name="run",
+                description="Run a shell command in the IDE terminal",
+                input=AvailableCommandInput(hint="ls -la"),
+            ),
+            AvailableCommand(
+                name="plan",
+                description="Ask the agent to create a plan before acting",
+            ),
+        ],
+    )
 
     if "--ws" in sys.argv:
         server.serve()

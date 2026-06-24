@@ -4,6 +4,7 @@ import asyncio
 import socket
 from typing import Annotated
 
+from acp.schema import AvailableCommand
 from fastapi import FastAPI
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation
@@ -16,9 +17,14 @@ from ant_ai.agent.agent import Agent
 from ant_ai.workflow.workflow import Workflow
 
 
-def build_acp_ws_route(agent: Agent, workflow: Workflow) -> WebSocketRoute:
+def build_acp_ws_route(
+    agent: Agent,
+    workflow: Workflow,
+    *,
+    slash_commands: list[AvailableCommand] | None = None,
+) -> WebSocketRoute:
     """Return a Starlette WebSocketRoute that bridges ACP over WebSocket at ``/acp/ws``."""
-    adapter = ACPAdapter(agent, workflow)
+    adapter = ACPAdapter(agent, workflow, slash_commands=slash_commands)
 
     async def _handle_ws(websocket: WebSocket) -> None:
         from acp.agent.connection import AgentSideConnection
@@ -101,11 +107,16 @@ class ACPServer(BaseModel):
     workflow: Annotated[Workflow, SkipValidation]
     host: str = Field(default="127.0.0.1")
     port: int = Field(default=9001)
+    slash_commands: list[AvailableCommand] = Field(default_factory=list)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def build_routes(self) -> list:
-        return [build_acp_ws_route(self.agent, self.workflow)]
+        return [
+            build_acp_ws_route(
+                self.agent, self.workflow, slash_commands=self.slash_commands or None
+            )
+        ]
 
     def starlette_app(self) -> Starlette:
         """Create a Starlette application serving ACP over WebSocket."""
@@ -142,5 +153,7 @@ class ACPServer(BaseModel):
         from acp import run_agent
 
         logger.info(f"Starting ACP stdio agent '{self.agent.name}'...")
-        adapter = ACPAdapter(self.agent, self.workflow)
+        adapter = ACPAdapter(
+            self.agent, self.workflow, slash_commands=self.slash_commands or None
+        )
         asyncio.run(run_agent(adapter))

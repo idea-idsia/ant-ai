@@ -1,7 +1,41 @@
 from ant_ai.acp.adapter import ACPAdapter
 from ant_ai.acp.server import ACPServer
+from ant_ai.acp.tools import (
+    ACP_ALL_TOOLS,
+    ACP_FILESYSTEM_TOOLS,
+    ACP_PLAN_TOOLS,
+    ACP_SESSION_TOOLS,
+    ACP_TERMINAL_TOOLS,
+    acp_fs_read_file,
+    acp_fs_write_file,
+    acp_get_cwd,
+    acp_list_directory,
+    acp_send_plan,
+    acp_terminal_create,
+    acp_terminal_kill,
+    acp_terminal_output,
+    acp_terminal_release,
+    acp_terminal_run,
+    acp_terminal_wait_for_exit,
+)
 
 __all__ = [
     "ACPAdapter",
     "ACPServer",
+    "ACP_ALL_TOOLS",
+    "ACP_FILESYSTEM_TOOLS",
+    "ACP_PLAN_TOOLS",
+    "ACP_SESSION_TOOLS",
+    "ACP_TERMINAL_TOOLS",
+    "acp_fs_read_file",
+    "acp_fs_write_file",
+    "acp_get_cwd",
+    "acp_list_directory",
+    "acp_send_plan",
+    "acp_terminal_create",
+    "acp_terminal_kill",
+    "acp_terminal_output",
+    "acp_terminal_release",
+    "acp_terminal_run",
+    "acp_terminal_wait_for_exit",
 ]
