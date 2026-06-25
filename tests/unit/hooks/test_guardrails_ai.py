@@ -123,6 +123,20 @@ async def test_retry_when_validation_passed_true_but_summaries_show_failure():
 
 @pytest.mark.unit
 @pytest.mark.guardrailsai
+async def test_skips_empty_raw():
+    guard = _make_guard(passed=False, failure_reason="should not be called")
+    hook = GuardrailsAIHook(guard=guard)
+    result = StepResult(
+        output=LLMOutput(raw=""),
+        transition=Transition(action=TransitionAction.CONTINUE),
+    )
+    decision = await hook.after_model(result, ctx=None)
+    assert isinstance(decision, PostModelPass)
+    guard.validate.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
 async def test_skips_non_llm_output():
     guard = _make_guard(passed=True)
     hook = GuardrailsAIHook(guard=guard)

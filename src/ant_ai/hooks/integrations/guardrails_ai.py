@@ -61,6 +61,8 @@ class GuardrailsAIHook(AgentHook, BaseModel):
         # reask counter). Serialize via _lock so concurrent callers sharing
         # this hook instance do not race on that state.
         raw = result.output.raw
+        if not raw or not raw.strip():
+            return PostModelPass(result=result)
 
         def _validate() -> Any:
             with self._lock:
