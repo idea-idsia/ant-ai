@@ -73,7 +73,7 @@ class GuardrailsAIHook(AgentHook, BaseModel):
         # Guard.validate is synchronous and mutates internal state (history,
         # reask counter). Serialize via _lock so concurrent callers sharing
         # this hook instance do not race on that state.
-        raw = result.output.raw
+        raw: str = result.output.raw
 
         def _validate() -> Any:
             with self._lock:
@@ -84,10 +84,15 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
         outcome = await asyncio.to_thread(_validate)
 
-        if outcome.validation_passed:
+        reason: str = _failure_reason(outcome.validation_summaries)
+
+        if outcome.validation_passed and reason == _FALLBACK_REASON:
             return PostModelPass(result=result)
 
-        return PostModelRetry(reason=_failure_reason(outcome.validation_summaries))
+        return PostModelRetry(reason=reason)
+
+
+_FALLBACK_REASON = "validation failed"
 
 
 def _failure_reason(summaries: list | None) -> str:
@@ -96,9 +101,9 @@ def _failure_reason(summaries: list | None) -> str:
     outcome.error is only populated when validate() raises an exception;
     for normal FailResult failures the details live in validation_summaries.
     """
-    parts = [
+    parts: list[str] = [
         f"{s.validator_name}: {s.failure_reason}"
         for s in (summaries or [])
         if s.failure_reason
     ]
-    return "; ".join(parts) if parts else "validation failed"
+    return "; ".join(parts) if parts else _FALLBACK_REASON
