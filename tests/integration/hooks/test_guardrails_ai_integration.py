@@ -115,6 +115,29 @@ async def test_failure_reason_present_with_on_fail_noop():
 
 @pytest.mark.integration
 @pytest.mark.guardrailsai
+async def test_failure_reason_falls_back_to_history_when_summaries_empty():
+    """Validators that return FailResult(error_message='') are filtered out by
+    guardrails' from_validator_logs_only_fails, leaving validation_summaries=[].
+    The hook must fall back to guard history logs so the retry reason names the
+    failing validator rather than returning the generic 'validation failed'."""
+
+    @register_validator(name="empty_error_msg", data_type="string")
+    class EmptyErrorMsg(Validator):
+        def validate(self, value, metadata):
+            return FailResult(error_message="")
+
+    guard = Guard().use(EmptyErrorMsg(on_fail=OnFailAction.NOOP))
+    hook = GuardrailsAIHook(guard=guard)
+
+    decision = await hook.after_model(_llm_result("any text"), ctx=None)
+
+    assert isinstance(decision, PostModelRetry)
+    assert "EmptyErrorMsg" in decision.reason
+    assert decision.reason != "validation failed"
+
+
+@pytest.mark.integration
+@pytest.mark.guardrailsai
 async def test_failure_reason_present_with_on_fail_reask():
     """on_fail='reask' causes guardrails to set validation_passed=True when
     num_reasks=0 (unresolved FieldReAsk is not propagated through fixed_output).

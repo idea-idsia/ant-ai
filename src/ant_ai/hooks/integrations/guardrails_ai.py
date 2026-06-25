@@ -84,8 +84,14 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
         outcome = await asyncio.to_thread(_validate)
 
-        reason: str = _failure_reason(outcome.validation_summaries)
+        reason: str = _failure_reason(
+            outcome.validation_summaries, self.guard.history.last
+        )
 
+        # validation_passed can be True even on failure (guardrails reask bug: an
+        # unresolved FieldReAsk is not propagated through fixed_output when
+        # num_reasks=0). Treat non-empty summaries as authoritative — only pass when
+        # validation_passed is True AND there is nothing in the summaries.
         if outcome.validation_passed and reason == _FALLBACK_REASON:
             return PostModelPass(result=result)
 
@@ -95,15 +101,35 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 _FALLBACK_REASON = "validation failed"
 
 
-def _failure_reason(summaries: list | None) -> str:
+def _failure_reason(summaries: list | None, history_call: Any = None) -> str:
     """Build a retry critique from guardrails ValidationSummary objects.
 
     outcome.error is only populated when validate() raises an exception;
     for normal FailResult failures the details live in validation_summaries.
+    When summaries are empty (e.g. validators that return FailResult with an
+    empty error_message are filtered out by guardrails), fall back to the
+    guard history to at least surface which validators failed.
     """
     parts: list[str] = [
         f"{s.validator_name}: {s.failure_reason}"
         for s in (summaries or [])
         if s.failure_reason
     ]
-    return "; ".join(parts) if parts else _FALLBACK_REASON
+    if parts:
+        return "; ".join(parts)
+
+    if history_call is not None:
+        it = history_call.iterations.last
+        history_parts: list[str] = []
+        for log in (it.validator_logs if it else []) or []:
+            vr = log.validation_result
+            if getattr(vr, "outcome", None) is None or vr.outcome.value != "fail":
+                continue
+            msg: str = getattr(vr, "error_message", "") or ""
+            history_parts.append(
+                f"{log.validator_name}: {msg}" if msg else log.validator_name
+            )
+        if history_parts:
+            return "; ".join(history_parts)
+
+    return _FALLBACK_REASON
