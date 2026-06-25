@@ -53,10 +53,13 @@ The `guardrails-ai` extra installs the core library. Validators (e.g. `ToxicLang
 ```sh
 # Run from outside the project directory so uv doesn't pick up exclude-newer
 (cd /tmp && guardrails hub install hub://guardrails/toxic_language hub://guardrails/detect_pii)
+# Copy the registry into the project root so imports resolve from here
+cp /tmp/.guardrails/hub_registry.json .guardrails/
 ```
 
 > **Note:** hub validators are installed outside of uv's lockfile and must be reinstalled after `uv sync`.
 > The `cd /tmp` wrapper is required because these packages ship without upload dates, which conflicts with the project's `exclude-newer = "P2D"` supply-chain setting. Running from `/tmp` (where no `pyproject.toml` exists) lets uv install them without that constraint while still targeting the active virtualenv.
+> The `hub_registry.json` copy is needed because guardrails resolves hub imports from a `.guardrails/hub_registry.json` file relative to the current working directory.
 
 Or clone and sync for local development:
 
