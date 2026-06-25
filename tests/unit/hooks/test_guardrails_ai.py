@@ -66,13 +66,36 @@ async def test_pass_when_validation_succeeds():
 
 @pytest.mark.unit
 @pytest.mark.guardrailsai
-async def test_retry_when_validation_fails():
+async def test_retry_reason_format():
     hook = GuardrailsAIHook(
         guard=_make_guard(passed=False, failure_reason="toxic content detected")
     )
     decision = await hook.after_model(_llm_result("bad output"), ctx=None)
     assert isinstance(decision, PostModelRetry)
-    assert "toxic content detected" in decision.reason
+    assert decision.reason == "test: toxic content detected"
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
+async def test_retry_reason_multiple_validators():
+    summaries = [
+        _MockSummary(
+            validator_name="detect_pii", failure_reason="EMAIL_ADDRESS detected"
+        ),
+        _MockSummary(
+            validator_name="toxic_language", failure_reason="toxicity score 0.92"
+        ),
+    ]
+    outcome = _MockOutcome(validation_passed=False, validation_summaries=summaries)
+    guard = MagicMock()
+    guard.validate.return_value = outcome
+    hook = GuardrailsAIHook(guard=guard)
+    decision = await hook.after_model(_llm_result("bad output"), ctx=None)
+    assert isinstance(decision, PostModelRetry)
+    assert (
+        decision.reason
+        == "detect_pii: EMAIL_ADDRESS detected; toxic_language: toxicity score 0.92"
+    )
 
 
 @pytest.mark.unit
@@ -82,6 +105,45 @@ async def test_retry_reason_falls_back_when_no_summaries():
     decision = await hook.after_model(_llm_result("bad output"), ctx=None)
     assert isinstance(decision, PostModelRetry)
     assert decision.reason == "validation failed"
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
+async def test_validate_called_with_num_reasks_zero():
+    guard = _make_guard(passed=True)
+    hook = GuardrailsAIHook(guard=guard)
+    await hook.after_model(_llm_result("clean output"), ctx=None)
+    guard.validate.assert_called_once_with("clean output", num_reasks=0)
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
+async def test_validate_called_with_custom_num_reasks():
+    guard = _make_guard(passed=True)
+    hook = GuardrailsAIHook(guard=guard, num_reasks=2)
+    await hook.after_model(_llm_result("clean output"), ctx=None)
+    guard.validate.assert_called_once_with("clean output", num_reasks=2)
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
+async def test_validate_forwards_api_key():
+    guard = _make_guard(passed=True)
+    hook = GuardrailsAIHook(guard=guard, api_key="sk-test")
+    await hook.after_model(_llm_result("clean output"), ctx=None)
+    guard.validate.assert_called_once_with(
+        "clean output", num_reasks=0, api_key="sk-test"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
+async def test_validate_no_api_key_kwarg_when_none():
+    guard = _make_guard(passed=True)
+    hook = GuardrailsAIHook(guard=guard)
+    await hook.after_model(_llm_result("clean output"), ctx=None)
+    _, kwargs = guard.validate.call_args
+    assert "api_key" not in kwargs
 
 
 @pytest.mark.unit

@@ -4,7 +4,7 @@ import asyncio
 import threading
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, PrivateAttr, SkipValidation
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SkipValidation
 
 from ant_ai.core.result import LLMOutput, StepResult
 from ant_ai.core.types import InvocationContext
@@ -22,6 +22,17 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
     Only overrides ``after_model`` — validates the LLM output text and
     returns ``PostModelRetry`` if validation fails.
+
+    Args:
+        guard: A configured ``guardrails.Guard`` instance.
+        num_reasks: How many times guardrails may internally call an LLM to
+            fix invalid output before handing control back to ant-ai.  The
+            default (``0``) disables guardrails' own reask loop so ant-ai's
+            retry mechanism stays in control.  Set to a positive value only
+            when the guard has an ``llm_api`` configured and you want
+            guardrails to attempt self-correction before ant-ai retries.
+        api_key: API key forwarded to the LLM used by guardrails during
+            internal reasks.  Only relevant when ``num_reasks > 0``.
 
     .. note::
         ``Guard`` is not thread-safe. Validation calls on a shared hook
@@ -47,6 +58,8 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
     name: ClassVar[str] = "guardrails_ai"
     guard: SkipValidation[Any]  # guardrails.Guard
+    num_reasks: int = Field(default=0, ge=0)
+    api_key: str | None = None
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     async def after_model(
@@ -64,7 +77,10 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
         def _validate() -> Any:
             with self._lock:
-                return self.guard.validate(raw)
+                kwargs: dict[str, Any] = {}
+                if self.api_key is not None:
+                    kwargs["api_key"] = self.api_key
+                return self.guard.validate(raw, num_reasks=self.num_reasks, **kwargs)
 
         outcome = await asyncio.to_thread(_validate)
 

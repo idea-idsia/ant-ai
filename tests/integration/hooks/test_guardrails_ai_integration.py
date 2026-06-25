@@ -8,15 +8,16 @@ pytest.importorskip(
 )
 
 from guardrails import Guard
+from guardrails.classes import FailResult
+from guardrails.types import OnFailAction
+from guardrails.validator_base import Validator, register_validator
 
 try:
     from guardrails.hub import DetectPII
+
+    _DETECT_PII_AVAILABLE = True
 except ImportError:
-    pytest.skip(
-        "guardrails hub validators not installed; run from outside the project: "
-        "(cd /tmp && guardrails hub install hub://guardrails/detect_pii hub://guardrails/toxic_language)",
-        allow_module_level=True,
-    )
+    _DETECT_PII_AVAILABLE = False
 
 try:
     from guardrails.hub import ToxicLanguage
@@ -28,9 +29,68 @@ except ImportError:
 from ant_ai.agent.agent import Agent
 from ant_ai.core.exceptions import HookMaxRetriesError
 from ant_ai.core.message import Message
+from ant_ai.core.result import LLMOutput, StepResult, Transition, TransitionAction
 from ant_ai.core.types import State
 from ant_ai.hooks.integrations import GuardrailsAIHook
+from ant_ai.hooks.protocol import PostModelRetry
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat
+
+
+def _llm_result(raw: str) -> StepResult:
+    return StepResult(
+        output=LLMOutput(raw=raw),
+        transition=Transition(action=TransitionAction.END),
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.guardrailsai
+async def test_failure_reason_is_present_in_retry():
+    """Real Guard + real validator — no mocks, no external LLM.
+
+    Verifies that PostModelRetry.reason contains the validator name and the
+    specific error message returned by the validator, in the expected
+    ``"validator_name: error_message"`` format.
+    """
+
+    @register_validator(name="always_fails", data_type="string")
+    class AlwaysFails(Validator):
+        def validate(self, value, metadata):
+            return FailResult(error_message="forbidden content detected")
+
+    guard = Guard().use(AlwaysFails(on_fail=OnFailAction.NOOP))
+    hook = GuardrailsAIHook(guard=guard)
+
+    decision = await hook.after_model(_llm_result("any text"), ctx=None)
+
+    assert isinstance(decision, PostModelRetry)
+    assert decision.reason == "AlwaysFails: forbidden content detected"
+
+
+@pytest.mark.integration
+@pytest.mark.guardrailsai
+async def test_failure_reason_multiple_validators():
+    """Two real validators — reason must join both with ``'; '``."""
+
+    @register_validator(name="check_a", data_type="string")
+    class CheckA(Validator):
+        def validate(self, value, metadata):
+            return FailResult(error_message="issue A")
+
+    @register_validator(name="check_b", data_type="string")
+    class CheckB(Validator):
+        def validate(self, value, metadata):
+            return FailResult(error_message="issue B")
+
+    guard = Guard().use(
+        CheckA(on_fail=OnFailAction.NOOP), CheckB(on_fail=OnFailAction.NOOP)
+    )
+    hook = GuardrailsAIHook(guard=guard)
+
+    decision = await hook.after_model(_llm_result("any text"), ctx=None)
+
+    assert isinstance(decision, PostModelRetry)
+    assert decision.reason == "CheckA: issue A; CheckB: issue B"
 
 
 def _state(content: str) -> State:
@@ -55,7 +115,7 @@ def _safe_agent(guard: Guard) -> Agent:
 @pytest.mark.guardrailsai
 @pytest.mark.skipif(
     not _TOXIC_LANGUAGE_AVAILABLE,
-    reason="ToxicLanguage hub validator not importable (detoxify/transformers conflict)",
+    reason="ToxicLanguage hub validator not installed",
 )
 async def test_toxic_language_validator_self_corrects():
     # on_fail="reask" returns a failing ValidationOutcome without internal LLM
@@ -70,11 +130,15 @@ async def test_toxic_language_validator_self_corrects():
 
 @pytest.mark.external
 @pytest.mark.guardrailsai
+@pytest.mark.skipif(
+    not _DETECT_PII_AVAILABLE,
+    reason="DetectPII hub validator not installed",
+)
 async def test_pii_validator_triggers_retry_or_raises():
     guard = Guard().use(
         # on_fail="reask": guardrails returns a failing outcome (no internal LLM
         # reask since validate() has no llm_api); ant-ai's retry loop takes over.
-        DetectPII(pii_entities=["EMAIL_ADDRESS", "PHONE_NUMBER"], on_fail="reask")
+        DetectPII(pii_entities=["EMAIL_ADDRESS", "PHONE_NUMBER"], on_fail="reask")  # type: ignore[name-defined]
     )
     agent = _safe_agent(guard)
     try:
