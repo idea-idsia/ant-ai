@@ -71,21 +71,25 @@ class GuardrailsAIHook(AgentHook, BaseModel):
         except Exception as exc:  # noqa: BLE001
             return PostModelRetry(reason=f"guardrails validation error: {exc}")
 
-        if outcome.validation_passed:
+        # When on_fail="reask" and num_reasks=0, guardrails quirk: it sets
+        # validation_passed=True even though validators failed (it expected to
+        # reask but couldn't). Detect real failures via validator_status.
+        failed = [
+            s for s in (outcome.validation_summaries or [])
+            if getattr(s, "validator_status", None) == "fail"
+        ]
+        if outcome.validation_passed and not failed:
             return PostModelPass(result=result)
 
         return PostModelRetry(reason=_failure_reason(outcome.validation_summaries))
 
 
 def _failure_reason(summaries: list | None) -> str:
-    """Build a retry critique from guardrails ValidationSummary objects.
-
-    outcome.error is only populated when validate() raises an exception;
-    for normal FailResult failures the details live in validation_summaries.
-    """
+    """Build a retry critique from guardrails ValidationSummary objects."""
     parts = [
         f"{s.validator_name}: {s.failure_reason}"
         for s in (summaries or [])
         if s.failure_reason
+        and getattr(s, "validator_status", "fail") == "fail"
     ]
     return "; ".join(parts) if parts else "validation failed"

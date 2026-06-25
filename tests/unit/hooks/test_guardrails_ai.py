@@ -27,6 +27,7 @@ def _llm_result(raw: str) -> StepResult:
 class _MockSummary:
     validator_name: str
     failure_reason: str | None
+    validator_status: str = "fail"
 
 
 @dataclass
@@ -95,6 +96,29 @@ async def test_retry_when_validate_raises():
     decision = await hook.after_model(_llm_result("some output"), ctx=None)
     assert isinstance(decision, PostModelRetry)
     assert "guardrails validation error" in decision.reason
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
+async def test_retry_when_validation_passed_true_but_summaries_show_failure():
+    # Guardrails quirk: on_fail="reask" + num_reasks=0 returns validation_passed=True
+    # even though validators failed. The hook must detect this via validator_status.
+    outcome = _MockOutcome(
+        validation_passed=True,
+        validation_summaries=[
+            _MockSummary(
+                validator_name="DetectPII",
+                failure_reason="EMAIL_ADDRESS detected in output",
+                validator_status="fail",
+            )
+        ],
+    )
+    guard = MagicMock()
+    guard.validate.return_value = outcome
+    hook = GuardrailsAIHook(guard=guard)
+    decision = await hook.after_model(_llm_result("contact me at foo@bar.com"), ctx=None)
+    assert isinstance(decision, PostModelRetry)
+    assert "EMAIL_ADDRESS detected in output" in decision.reason
 
 
 @pytest.mark.unit
