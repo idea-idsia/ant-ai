@@ -84,11 +84,14 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
         outcome = await asyncio.to_thread(_validate)
 
-        reason: str = _failure_reason(outcome.validation_summaries)
-
-        if outcome.validation_passed and reason == _FALLBACK_REASON:
+        if outcome.validation_passed:
             return PostModelPass(result=result)
 
+        # Guard returned output despite failures (e.g. on_fail=NOOP) — monitor only.
+        if outcome.validated_output is not None:
+            return PostModelPass(result=result)
+
+        reason: str = _failure_reason(outcome.validation_summaries)
         return PostModelRetry(reason=reason)
 
 
