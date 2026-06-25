@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -67,21 +67,34 @@ async def test_pass_when_validation_succeeds():
 @pytest.mark.unit
 @pytest.mark.guardrailsai
 async def test_retry_when_validation_fails():
-    hook = GuardrailsAIHook(
-        guard=_make_guard(passed=False, failure_reason="toxic content detected")
-    )
+    guard = _make_guard(passed=False, failure_reason="toxic content detected")
+    hook = GuardrailsAIHook(guard=guard)
     decision = await hook.after_model(_llm_result("bad output"), ctx=None)
     assert isinstance(decision, PostModelRetry)
     assert "toxic content detected" in decision.reason
+    guard.validate.assert_called_once_with(ANY, num_reasks=0)
 
 
 @pytest.mark.unit
 @pytest.mark.guardrailsai
 async def test_retry_reason_falls_back_when_no_summaries():
-    hook = GuardrailsAIHook(guard=_make_guard(passed=False))
+    guard = _make_guard(passed=False)
+    hook = GuardrailsAIHook(guard=guard)
     decision = await hook.after_model(_llm_result("bad output"), ctx=None)
     assert isinstance(decision, PostModelRetry)
     assert decision.reason == "validation failed"
+    guard.validate.assert_called_once_with(ANY, num_reasks=0)
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
+async def test_retry_when_validate_raises():
+    guard = MagicMock()
+    guard.validate.side_effect = RuntimeError("internal guardrails error")
+    hook = GuardrailsAIHook(guard=guard)
+    decision = await hook.after_model(_llm_result("some output"), ctx=None)
+    assert isinstance(decision, PostModelRetry)
+    assert "guardrails validation error" in decision.reason
 
 
 @pytest.mark.unit

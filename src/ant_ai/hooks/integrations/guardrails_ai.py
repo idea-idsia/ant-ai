@@ -64,9 +64,12 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
         def _validate() -> Any:
             with self._lock:
-                return self.guard.validate(raw)
+                return self.guard.validate(raw, num_reasks=0)
 
-        outcome = await asyncio.to_thread(_validate)
+        try:
+            outcome = await asyncio.to_thread(_validate)
+        except Exception as exc:  # noqa: BLE001
+            return PostModelRetry(reason=f"guardrails validation error: {exc}")
 
         if outcome.validation_passed:
             return PostModelPass(result=result)
