@@ -73,7 +73,14 @@ class GuardrailsAIHook(AgentHook, BaseModel):
         # Guard.validate is synchronous and mutates internal state (history,
         # reask counter). Serialize via _lock so concurrent callers sharing
         # this hook instance do not race on that state.
-        raw: str = result.output.raw
+        raw = result.output.raw
+        if not raw or not raw.strip():
+            # No text content: check tool call arguments instead (the LLM may
+            # have written content via tool calls, e.g. FilesystemTool).
+            tool_calls = result.output.tool_calls
+            if not tool_calls:
+                return PostModelPass(result=result)
+            raw = "\n".join(tc.function.arguments for tc in tool_calls)
 
         def _validate() -> Any:
             with self._lock:
@@ -82,20 +89,29 @@ class GuardrailsAIHook(AgentHook, BaseModel):
                     kwargs["api_key"] = self.api_key
                 return self.guard.validate(raw, num_reasks=self.num_reasks, **kwargs)
 
-        outcome = await asyncio.to_thread(_validate)
+        try:
+            outcome = await asyncio.to_thread(_validate)
+        except Exception as exc:  # noqa: BLE001
+            return PostModelRetry(reason=f"guardrails validation error: {exc}")
 
-        reason: str = _failure_reason(
-            outcome.validation_summaries, self.guard.history.last
-        )
-
-        # validation_passed can be True even on failure (guardrails reask bug: an
-        # unresolved FieldReAsk is not propagated through fixed_output when
-        # num_reasks=0). Treat non-empty summaries as authoritative — only pass when
-        # validation_passed is True AND there is nothing in the summaries.
-        if outcome.validation_passed and reason == _FALLBACK_REASON:
+        # When on_fail="reask" and num_reasks=0, guardrails quirk: it sets
+        # validation_passed=True even though validators failed (it expected to
+        # reask but couldn't). Detect real failures via validator_status.
+        failed = [
+            s
+            for s in (outcome.validation_summaries or [])
+            if getattr(s, "validator_status", None) == "fail"
+        ]
+        if outcome.validation_passed and not failed:
             return PostModelPass(result=result)
 
-        return PostModelRetry(reason=reason)
+        history = getattr(self.guard, "history", None)
+        return PostModelRetry(
+            reason=_failure_reason(
+                outcome.validation_summaries,
+                history.last if history else None,
+            )
+        )
 
 
 _FALLBACK_REASON = "validation failed"
@@ -113,7 +129,7 @@ def _failure_reason(summaries: list | None, history_call: Any = None) -> str:
     parts: list[str] = [
         f"{s.validator_name}: {s.failure_reason}"
         for s in (summaries or [])
-        if s.failure_reason
+        if s.failure_reason and getattr(s, "validator_status", "fail") == "fail"
     ]
     if parts:
         return "; ".join(parts)
