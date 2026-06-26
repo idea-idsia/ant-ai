@@ -41,14 +41,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-guardrails-ai = ["guardrails-ai>=0.5", "tokenizers>=0.22.0,<0.23.1", "huggingface-hub>=1.5.0,<2.0"]
+guardrails-ai = ["guardrails-ai>=0.5", "tokenizers>=0.22.0,<0.23.2", "huggingface-hub>=1.5.0,<2.0"]
 langfuse = ["langfuse>=4.7.1"]
 mem0 = ["mem0ai>=2.0.4"]
 openai = ["openai>=2.38.0"]
 viz = ["graphviz>=0.21"]
 all = [
     "guardrails-ai>=0.5",
-    "tokenizers>=0.22.0,<0.23.1",
+    "tokenizers>=0.22.0,<0.23.2",
     "huggingface-hub>=1.5.0,<2.0",
     "langfuse>=4.7.1",
     "mem0ai>=2.0.4",
