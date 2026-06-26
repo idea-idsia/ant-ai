@@ -104,7 +104,7 @@ class GuardrailsAIHook(AgentHook, BaseModel):
         if outcome.validation_passed and not failed:
             return PostModelPass(result=result)
 
-        return PostModelRetry(reason=reason)
+        return PostModelRetry(reason=_failure_reason(outcome.validation_summaries))
 
 
 _FALLBACK_REASON = "validation failed"
