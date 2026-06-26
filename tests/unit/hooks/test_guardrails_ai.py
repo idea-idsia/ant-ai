@@ -5,6 +5,7 @@ from unittest.mock import ANY, MagicMock
 
 import pytest
 
+from ant_ai.core.message import ToolCall, ToolFunction
 from ant_ai.core.result import (
     LLMOutput,
     StepResult,
@@ -123,7 +124,8 @@ async def test_retry_when_validation_passed_true_but_summaries_show_failure():
 
 @pytest.mark.unit
 @pytest.mark.guardrailsai
-async def test_skips_empty_raw():
+async def test_skips_empty_raw_with_no_tool_calls():
+    # Empty raw AND no tool calls → nothing to validate, pass through.
     guard = _make_guard(passed=False, failure_reason="should not be called")
     hook = GuardrailsAIHook(guard=guard)
     result = StepResult(
@@ -133,6 +135,32 @@ async def test_skips_empty_raw():
     decision = await hook.after_model(result, ctx=None)
     assert isinstance(decision, PostModelPass)
     guard.validate.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
+async def test_validates_tool_call_arguments_when_raw_empty():
+    # Empty raw BUT tool calls present → validate the serialized arguments so
+    # that content written via tools (e.g. FilesystemTool) is still checked.
+    guard = _make_guard(passed=False, failure_reason="EMAIL_ADDRESS detected")
+    hook = GuardrailsAIHook(guard=guard)
+    tc = ToolCall(
+        id="c1",
+        function=ToolFunction(
+            name="filesystem_tool",
+            arguments='{"path": "out.py", "content": "Author: foo@bar.com"}',
+        ),
+    )
+    result = StepResult(
+        output=LLMOutput(raw="", tool_calls=(tc,)),
+        transition=Transition(action=TransitionAction.CONTINUE),
+    )
+    decision = await hook.after_model(result, ctx=None)
+    assert isinstance(decision, PostModelRetry)
+    assert "EMAIL_ADDRESS detected" in decision.reason
+    guard.validate.assert_called_once_with(
+        '{"path": "out.py", "content": "Author: foo@bar.com"}', num_reasks=0
+    )
 
 
 @pytest.mark.unit

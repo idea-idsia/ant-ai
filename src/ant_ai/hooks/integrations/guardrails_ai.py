@@ -62,7 +62,12 @@ class GuardrailsAIHook(AgentHook, BaseModel):
         # this hook instance do not race on that state.
         raw = result.output.raw
         if not raw or not raw.strip():
-            return PostModelPass(result=result)
+            # No text content: check tool call arguments instead (the LLM may
+            # have written content via tool calls, e.g. FilesystemTool).
+            tool_calls = result.output.tool_calls
+            if not tool_calls:
+                return PostModelPass(result=result)
+            raw = "\n".join(tc.function.arguments for tc in tool_calls)
 
         def _validate() -> Any:
             with self._lock:
