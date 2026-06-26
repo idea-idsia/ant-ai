@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import BaseModel
 
 from ant_ai.agent.loop.react import (
     FinalResponse,
@@ -14,11 +15,12 @@ from ant_ai.core.events import (
     MaxStepsReachedEvent,
 )
 from ant_ai.core.exceptions import HookMaxRetriesError
-from ant_ai.core.message import Message, ToolCall, ToolFunction
+from ant_ai.core.message import Message, ToolCall, ToolCallMessage, ToolFunction
 from ant_ai.core.result import (
     ClarificationNeededOutput,
     LLMOutput,
     StepResult,
+    ToolOutput,
     Transition,
     TransitionAction,
 )
@@ -430,3 +432,99 @@ async def test_final_answer_state_message_matches_yielded_event():
     final_event = next(e for e in events if isinstance(e, FinalAnswerEvent))
     assistant_msg = next(m for m in state.messages if m.role == "assistant")
     assert final_event.content == assistant_msg.content
+
+
+@pytest.mark.unit
+async def test_max_steps_with_coerce_schema_forces_structured_final_answer():
+    """When max_steps is exhausted with response_schema set and tools present, the last
+    iteration strips tools and applies response_format so the LLM synthesizes a structured
+    final answer — FinalAnswerEvent is emitted and state gets an assistant message."""
+    tool_call = ToolCall(id="c1", function=ToolFunction(name="t", arguments="{}"))
+    tool_llm_result = make_llm_result(
+        "calling tool", tool_calls=(tool_call,), action=TransitionAction.CONTINUE
+    )
+    structured_json = '{"value": "done"}'
+    forced_final_result = make_llm_result(structured_json)
+
+    class ForcedFinalReasonStep:
+        """Yields tool calls on normal runs; returns structured JSON when model_copy'd."""
+
+        name = "llm"
+
+        async def run(self, state, ctx):
+            yield tool_llm_result
+
+        def model_copy(self, *, update=None, **_):
+            return FakeStep("llm_forced", [forced_final_result])
+
+    act_result = StepResult(
+        output=ToolOutput(
+            results=({"name": "t", "tool_call_id": "c1", "content": "ok"},)
+        )
+    )
+    act_step = FakeStep("tool", [act_result])
+
+    class MySchema(BaseModel):
+        value: str
+
+    loop = make_loop(ForcedFinalReasonStep(), act_step=act_step)
+    state = State(messages=[Message(role="user", content="go")])
+
+    events = [
+        e
+        async for e in loop.stream(
+            state, ctx=None, max_steps=2, response_schema=MySchema
+        )
+    ]
+
+    final_events = [e for e in events if isinstance(e, FinalAnswerEvent)]
+    assert len(final_events) == 1
+    assert MySchema.model_validate_json(final_events[0].content).value == "done"
+
+    # The loop completed with a structured answer — MaxStepsReachedEvent must not fire.
+    assert not any(isinstance(e, MaxStepsReachedEvent) for e in events)
+
+    assistant_msgs = [
+        m
+        for m in state.messages
+        if m.role == "assistant" and not isinstance(m, ToolCallMessage)
+    ]
+    assert len(assistant_msgs) == 1
+    assert assistant_msgs[0].content == structured_json
+
+
+@pytest.mark.unit
+async def test_max_steps_without_coerce_schema_still_emits_max_steps_reached():
+    """Without response_schema, exhausting max_steps still emits MaxStepsReachedEvent
+    and does not add a spurious assistant message to state."""
+    tool_call = ToolCall(id="c2", function=ToolFunction(name="t", arguments="{}"))
+    tool_llm_result = make_llm_result(
+        "calling tool", tool_calls=(tool_call,), action=TransitionAction.CONTINUE
+    )
+    act_result = StepResult(
+        output=ToolOutput(
+            results=({"name": "t", "tool_call_id": "c2", "content": "ok"},)
+        )
+    )
+    act_step = FakeStep("tool", [act_result])
+
+    class AlwaysToolStep:
+        name = "llm"
+
+        async def run(self, state, ctx):
+            yield tool_llm_result
+
+        def model_copy(self, *, update=None, **_):
+            return FakeStep("llm_copy", [tool_llm_result])
+
+    loop = make_loop(AlwaysToolStep(), act_step=act_step)
+    state = State(messages=[Message(role="user", content="go")])
+
+    events = [e async for e in loop.stream(state, ctx=None, max_steps=2)]
+
+    assert any(isinstance(e, MaxStepsReachedEvent) for e in events)
+    assert not any(isinstance(e, FinalAnswerEvent) for e in events)
+    assert not any(
+        m.role == "assistant" and not isinstance(m, ToolCallMessage)
+        for m in state.messages
+    )

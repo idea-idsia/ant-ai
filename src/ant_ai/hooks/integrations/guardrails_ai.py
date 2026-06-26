@@ -4,7 +4,7 @@ import asyncio
 import threading
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, PrivateAttr, SkipValidation
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SkipValidation
 
 from ant_ai.core.result import LLMOutput, StepResult
 from ant_ai.core.types import InvocationContext
@@ -22,6 +22,17 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
     Only overrides ``after_model`` — validates the LLM output text and
     returns ``PostModelRetry`` if validation fails.
+
+    Args:
+        guard: A configured ``guardrails.Guard`` instance.
+        num_reasks: How many times guardrails may internally call an LLM to
+            fix invalid output before handing control back to ant-ai.  The
+            default (``0``) disables guardrails' own reask loop so ant-ai's
+            retry mechanism stays in control.  Set to a positive value only
+            when the guard has an ``llm_api`` configured and you want
+            guardrails to attempt self-correction before ant-ai retries.
+        api_key: API key forwarded to the LLM used by guardrails during
+            internal reasks.  Only relevant when ``num_reasks > 0``.
 
     .. note::
         ``Guard`` is not thread-safe. Validation calls on a shared hook
@@ -47,6 +58,8 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
     name: ClassVar[str] = "guardrails_ai"
     guard: SkipValidation[Any]  # guardrails.Guard
+    num_reasks: int = Field(default=0, ge=0)
+    api_key: str | None = None
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     async def after_model(
@@ -71,7 +84,10 @@ class GuardrailsAIHook(AgentHook, BaseModel):
 
         def _validate() -> Any:
             with self._lock:
-                return self.guard.validate(raw, num_reasks=0)
+                kwargs: dict[str, Any] = {}
+                if self.api_key is not None:
+                    kwargs["api_key"] = self.api_key
+                return self.guard.validate(raw, num_reasks=self.num_reasks, **kwargs)
 
         try:
             outcome = await asyncio.to_thread(_validate)
@@ -88,15 +104,42 @@ class GuardrailsAIHook(AgentHook, BaseModel):
         if outcome.validation_passed and not failed:
             return PostModelPass(result=result)
 
-        return PostModelRetry(reason=_failure_reason(outcome.validation_summaries))
+        return PostModelRetry(reason=reason)
 
 
-def _failure_reason(summaries: list | None) -> str:
-    """Build a retry critique from guardrails ValidationSummary objects."""
-    parts = [
+_FALLBACK_REASON = "validation failed"
+
+
+def _failure_reason(summaries: list | None, history_call: Any = None) -> str:
+    """Build a retry critique from guardrails ValidationSummary objects.
+
+    outcome.error is only populated when validate() raises an exception;
+    for normal FailResult failures the details live in validation_summaries.
+    When summaries are empty (e.g. validators that return FailResult with an
+    empty error_message are filtered out by guardrails), fall back to the
+    guard history to at least surface which validators failed.
+    """
+    parts: list[str] = [
         f"{s.validator_name}: {s.failure_reason}"
         for s in (summaries or [])
         if s.failure_reason
         and getattr(s, "validator_status", "fail") == "fail"
     ]
-    return "; ".join(parts) if parts else "validation failed"
+    if parts:
+        return "; ".join(parts)
+
+    if history_call is not None:
+        it = history_call.iterations.last
+        history_parts: list[str] = []
+        for log in (it.validator_logs if it else []) or []:
+            vr = log.validation_result
+            if getattr(vr, "outcome", None) is None or vr.outcome.value != "fail":
+                continue
+            msg: str = getattr(vr, "error_message", "") or ""
+            history_parts.append(
+                f"{log.validator_name}: {msg}" if msg else log.validator_name
+            )
+        if history_parts:
+            return "; ".join(history_parts)
+
+    return _FALLBACK_REASON

@@ -78,7 +78,19 @@ class ReActLoop(BaseAgentLoop):
 
             await self.hooks.run_before_model(state, ctx)
 
-            async for item in self._run_model_with_hooks(active_step, state, ctx):
+            # On the final iteration with coerce_schema, strip tools and apply
+            # response_format so the LLM synthesizes a structured final answer
+            # from the full accumulated context — no extra LLM call needed.
+            is_last: bool = loop_step == max_steps
+            step_to_run: LLMStep = (
+                self.reason_step.model_copy(
+                    update={"response_format": coerce_schema, "serialized_tools": []}
+                )
+                if is_last and coerce_schema is not None
+                else active_step
+            )
+
+            async for item in self._run_model_with_hooks(step_to_run, state, ctx):
                 if isinstance(item, StepResult):
                     llm_result: StepResult = item
                 elif not isinstance(item, FinalAnswerEvent):

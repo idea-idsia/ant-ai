@@ -4,7 +4,7 @@ from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation, model_validator
 
-from ant_ai.core.message import Message
+from ant_ai.core.message import Message, ToolCallMessage
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks.protocol import AgentHook
 
@@ -99,8 +99,42 @@ class HistoryCompressionHook(AgentHook, BaseModel):
         if len(messages) <= self.keep_last or not self._should_compress(messages):
             return
 
-        to_compress: list[Message] = messages[: -self.keep_last]
-        keep: list[Message] = messages[-self.keep_last :]
+        # messages[:-0] is [] in Python, so handle keep_last=0 ("compress all") explicitly.
+        keep_from: int = (
+            len(messages) - self.keep_last if self.keep_last > 0 else len(messages)
+        )
+
+        # Slide left: never orphan a ToolCallResultMessage at the head of `keep`.
+        # A `tool` role message must always be preceded by an assistant message with
+        # tool_calls; slide left until the boundary no longer bisects such a group.
+        while 0 < keep_from < len(messages) and messages[keep_from].role == "tool":
+            keep_from -= 1
+
+        # Slide right: if the boundary lands on a ToolCallMessage whose results are
+        # absent or incomplete (e.g. broken A2A history or partial parallel calls),
+        # absorb the whole group into `to_compress` so it is summarised away instead
+        # of producing an invalid call.  For parallel tool calls, ALL N results must
+        # immediately follow — so compare the consecutive result count against the
+        # number of tool_calls in the message.
+        while keep_from < len(messages) and isinstance(
+            messages[keep_from], ToolCallMessage
+        ):
+            n_calls = len(messages[keep_from].tool_calls)
+            j = keep_from + 1
+            while j < len(messages) and messages[j].role == "tool":
+                j += 1
+            n_results = j - (keep_from + 1)
+            if n_results >= n_calls:
+                break  # Enough results follow — valid group, keep it.
+            keep_from = j  # Partial or absent results → absorb group into to_compress.
+
+        to_compress: list[Message] = messages[:keep_from]
+        keep: list[Message] = messages[keep_from:]
+
+        # Nothing compressible after boundary adjustment (e.g. history starts with a
+        # tool-call group that would be broken by any split).
+        if not to_compress:
+            return
 
         history_text: str = "\n".join(
             f"{m.role}: {m.content or ''}" for m in to_compress
