@@ -98,7 +98,8 @@ class GuardrailsAIHook(AgentHook, BaseModel):
         # validation_passed=True even though validators failed (it expected to
         # reask but couldn't). Detect real failures via validator_status.
         failed = [
-            s for s in (outcome.validation_summaries or [])
+            s
+            for s in (outcome.validation_summaries or [])
             if getattr(s, "validator_status", None) == "fail"
         ]
         if outcome.validation_passed and not failed:
@@ -122,8 +123,7 @@ def _failure_reason(summaries: list | None, history_call: Any = None) -> str:
     parts: list[str] = [
         f"{s.validator_name}: {s.failure_reason}"
         for s in (summaries or [])
-        if s.failure_reason
-        and getattr(s, "validator_status", "fail") == "fail"
+        if s.failure_reason and getattr(s, "validator_status", "fail") == "fail"
     ]
     if parts:
         return "; ".join(parts)

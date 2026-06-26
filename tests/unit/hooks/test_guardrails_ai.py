@@ -81,8 +81,12 @@ async def test_retry_reason_format():
 @pytest.mark.guardrailsai
 async def test_retry_reason_multiple_validators():
     summaries = [
-        _MockSummary(validator_name="detect_pii", failure_reason="EMAIL_ADDRESS detected"),
-        _MockSummary(validator_name="toxic_language", failure_reason="toxicity score 0.92"),
+        _MockSummary(
+            validator_name="detect_pii", failure_reason="EMAIL_ADDRESS detected"
+        ),
+        _MockSummary(
+            validator_name="toxic_language", failure_reason="toxicity score 0.92"
+        ),
     ]
     outcome = _MockOutcome(validation_passed=False, validation_summaries=summaries)
     guard = MagicMock()
@@ -133,7 +137,9 @@ async def test_retry_when_validation_passed_true_but_summaries_show_failure():
     guard = MagicMock()
     guard.validate.return_value = outcome
     hook = GuardrailsAIHook(guard=guard)
-    decision = await hook.after_model(_llm_result("contact me at foo@bar.com"), ctx=None)
+    decision = await hook.after_model(
+        _llm_result("contact me at foo@bar.com"), ctx=None
+    )
     assert isinstance(decision, PostModelRetry)
     assert "EMAIL_ADDRESS detected in output" in decision.reason
 
