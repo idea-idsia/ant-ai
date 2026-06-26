@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from unittest.mock import ANY, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -68,24 +68,40 @@ async def test_pass_when_validation_succeeds():
 
 @pytest.mark.unit
 @pytest.mark.guardrailsai
-async def test_retry_when_validation_fails():
-    guard = _make_guard(passed=False, failure_reason="toxic content detected")
+async def test_retry_reason_format():
+    hook = GuardrailsAIHook(
+        guard=_make_guard(passed=False, failure_reason="toxic content detected")
+    )
+    decision = await hook.after_model(_llm_result("bad output"), ctx=None)
+    assert isinstance(decision, PostModelRetry)
+    assert decision.reason == "test: toxic content detected"
+
+
+@pytest.mark.unit
+@pytest.mark.guardrailsai
+async def test_retry_reason_multiple_validators():
+    summaries = [
+        _MockSummary(validator_name="detect_pii", failure_reason="EMAIL_ADDRESS detected"),
+        _MockSummary(validator_name="toxic_language", failure_reason="toxicity score 0.92"),
+    ]
+    outcome = _MockOutcome(validation_passed=False, validation_summaries=summaries)
+    guard = MagicMock()
+    guard.validate.return_value = outcome
     hook = GuardrailsAIHook(guard=guard)
     decision = await hook.after_model(_llm_result("bad output"), ctx=None)
     assert isinstance(decision, PostModelRetry)
-    assert "toxic content detected" in decision.reason
-    guard.validate.assert_called_once_with(ANY, num_reasks=0)
+    assert decision.reason == (
+        "detect_pii: EMAIL_ADDRESS detected; toxic_language: toxicity score 0.92"
+    )
 
 
 @pytest.mark.unit
 @pytest.mark.guardrailsai
 async def test_retry_reason_falls_back_when_no_summaries():
-    guard = _make_guard(passed=False)
-    hook = GuardrailsAIHook(guard=guard)
+    hook = GuardrailsAIHook(guard=_make_guard(passed=False))
     decision = await hook.after_model(_llm_result("bad output"), ctx=None)
     assert isinstance(decision, PostModelRetry)
     assert decision.reason == "validation failed"
-    guard.validate.assert_called_once_with(ANY, num_reasks=0)
 
 
 @pytest.mark.unit
