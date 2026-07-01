@@ -438,15 +438,12 @@ async def test_keep_last_zero_no_orphaned_tool_messages():
 
 
 @pytest.mark.unit
-async def test_orphaned_tool_call_at_boundary_slides_into_to_compress():
-    """If keep would start with a ToolCallMessage not followed by a result, slide it right into to_compress."""
+async def test_orphaned_tool_call_removed_by_sanitize():
+    """An orphaned ToolCallMessage is removed by _sanitize before the compression check."""
     llm = _CapturingLLM("summary")
     hook = HistoryCompressionHook(llm=llm, max_messages=4, keep_last=3)
 
-    # [user1, ToolCallMessage(call_X), user2, user3]  — no tool result (invalid history)
-    # keep_last=3 → keep_from=1 → messages[1]=ToolCallMessage, messages[2]=user (not tool)
-    # RIGHT slide: keep_from → 2
-    # to_compress=[user1, ToolCallMessage], keep=[user2, user3]
+    # After _sanitize the orphaned call is gone, leaving 3 messages — below threshold.
     call = ToolCallMessage(
         tool_calls=[
             ToolCall(id="call_X", function=ToolFunction(name="t", arguments="{}"))
@@ -460,21 +457,17 @@ async def test_orphaned_tool_call_at_boundary_slides_into_to_compress():
 
     await hook.before_model(state, ctx=None)
 
-    assert llm.calls
+    assert not llm.calls  # threshold not met after sanitize
     _assert_valid_tool_sequence(state.messages)
     assert all(not isinstance(m, ToolCallMessage) for m in state.messages)
 
 
 @pytest.mark.unit
-async def test_orphaned_tool_call_as_last_message_slides_into_to_compress():
-    """A ToolCallMessage at the very end of keep (no following message) is moved to to_compress."""
+async def test_orphaned_tool_call_as_last_message_removed_by_sanitize():
+    """A ToolCallMessage at the very end with no result is dropped by _sanitize."""
     llm = _CapturingLLM("summary")
     hook = HistoryCompressionHook(llm=llm, max_messages=4, keep_last=1)
 
-    # [user1, user2, user3, ToolCallMessage(call_X)]  — tool call is last message, no result
-    # keep_last=1 → keep_from=3 → messages[3]=ToolCallMessage, nothing follows
-    # RIGHT slide: keep_from → 4 = len(messages)
-    # to_compress = all, keep = []
     call = ToolCallMessage(
         tool_calls=[
             ToolCall(id="call_X", function=ToolFunction(name="t", arguments="{}"))
@@ -488,9 +481,9 @@ async def test_orphaned_tool_call_as_last_message_slides_into_to_compress():
 
     await hook.before_model(state, ctx=None)
 
-    assert llm.calls
-    assert len(state.messages) == 1
-    assert state.messages[0].role == "system"
+    assert not llm.calls  # threshold not met after sanitize
+    assert len(state.messages) == 3
+    assert all(not isinstance(m, ToolCallMessage) for m in state.messages)
 
 
 @pytest.mark.unit
@@ -556,18 +549,18 @@ async def test_parallel_tool_calls_all_results_kept_intact():
     assert llm.calls
     _assert_valid_tool_sequence(state.messages)
     assert any(isinstance(m, ToolCallMessage) for m in state.messages)
-    assert sum(1 for m in state.messages if m.role == "tool") == 2
+    assert (
+        sum(1 for m in state.messages if m.role == "tool") == 2
+    )  # both results in keep
 
 
 @pytest.mark.unit
-async def test_parallel_tool_calls_partial_results_slides_into_to_compress():
-    """ToolCallMessage with 2 calls but only 1 result: whole group absorbed into to_compress."""
+async def test_parallel_tool_calls_partial_results_removed_by_sanitize():
+    """ToolCallMessage with 2 calls but only 1 result: whole group dropped by _sanitize."""
     llm = _CapturingLLM("summary")
     hook = HistoryCompressionHook(llm=llm, max_messages=4, keep_last=3)
 
-    # [user1, ToolCallMessage([A,B]), ToolResult(A), user2]  — missing ToolResult(B)
-    # keep_last=3 → keep_from=1 → ToolCallMessage has 2 calls but only 1 result
-    # RIGHT slide: n_calls=2, n_results=1 → absorb: keep_from=3
+    # After _sanitize the incomplete group is gone, leaving 2 messages — below threshold.
     tcm, results = _make_parallel_tool_group(2)
     state = State()
     state.add_message(Message(role="user", content="user1"))
@@ -577,9 +570,8 @@ async def test_parallel_tool_calls_partial_results_slides_into_to_compress():
 
     await hook.before_model(state, ctx=None)
 
-    assert llm.calls
+    assert not llm.calls  # threshold not met after sanitize
     _assert_valid_tool_sequence(state.messages)
-    # ToolCallMessage and the partial result both absorbed into summary
     assert not any(isinstance(m, ToolCallMessage) for m in state.messages)
     assert not any(m.role == "tool" for m in state.messages)
 
@@ -593,7 +585,6 @@ async def test_parallel_tool_calls_left_slide_keeps_full_group():
     # [user1, ToolCallMessage([A,B]), ToolResult(A), ToolResult(B), user2]
     # keep_last=2 → keep_from=3 → messages[3]=ToolResult(B) (role=tool)
     # LEFT slide: 3→2 (ToolResult A, still tool), 2→1 (ToolCallMessage, not tool) → stop
-    # RIGHT slide: messages[1] is ToolCallMessage, n_calls=2, n_results=2 → break
     # keep=[ToolCallMessage, ToolResult(A), ToolResult(B), user2]
     tcm, results = _make_parallel_tool_group(2)
     state = State()
@@ -609,3 +600,178 @@ async def test_parallel_tool_calls_left_slide_keeps_full_group():
     _assert_valid_tool_sequence(state.messages)
     assert any(isinstance(m, ToolCallMessage) for m in state.messages)
     assert sum(1 for m in state.messages if m.role == "tool") == 2
+
+
+# ---------------------------------------------------------------------------
+# _sanitize — direct unit tests
+# ---------------------------------------------------------------------------
+
+
+def _tc(call_id: str = "id-1", name: str = "t") -> ToolCall:
+    return ToolCall(id=call_id, function=ToolFunction(name=name, arguments="{}"))
+
+
+def _hook() -> HistoryCompressionHook:
+    return HistoryCompressionHook(llm=_CapturingLLM(), max_messages=100)
+
+
+@pytest.mark.unit
+def test_sanitize_removes_orphaned_tool_call():
+    messages = [
+        Message(role="user", content="hi"),
+        ToolCallMessage(tool_calls=[_tc()]),
+        Message(role="user", content="next"),
+    ]
+    result = _hook()._sanitize(messages)
+    assert [m.content for m in result] == ["hi", "next"]
+
+
+@pytest.mark.unit
+def test_sanitize_removes_lone_trailing_tool_call():
+    messages = [
+        Message(role="user", content="hi"),
+        ToolCallMessage(tool_calls=[_tc()]),
+    ]
+    result = _hook()._sanitize(messages)
+    assert result == [messages[0]]
+
+
+@pytest.mark.unit
+def test_sanitize_preserves_complete_group():
+    messages = [
+        ToolCallMessage(tool_calls=[_tc()]),
+        ToolCallResultMessage(tool_call_id="id-1", name="t", content="r"),
+        Message(role="assistant", content="done"),
+    ]
+    assert _hook()._sanitize(messages) == messages
+
+
+@pytest.mark.unit
+def test_sanitize_preserves_parallel_complete_group():
+    messages = [
+        ToolCallMessage(tool_calls=[_tc("a"), _tc("b")]),
+        ToolCallResultMessage(tool_call_id="a", name="t", content="r1"),
+        ToolCallResultMessage(tool_call_id="b", name="t", content="r2"),
+    ]
+    assert _hook()._sanitize(messages) == messages
+
+
+@pytest.mark.unit
+def test_sanitize_drops_partial_parallel_group():
+    messages = [
+        ToolCallMessage(tool_calls=[_tc("a"), _tc("b")]),
+        ToolCallResultMessage(tool_call_id="a", name="t", content="r1"),
+        Message(role="user", content="after"),
+    ]
+    result = _hook()._sanitize(messages)
+    assert result == [messages[-1]]
+
+
+@pytest.mark.unit
+async def test_sanitize_runs_unconditionally_below_compression_threshold():
+    """_sanitize fires even when history is well below the compression threshold."""
+    llm = _CapturingLLM()
+    hook = HistoryCompressionHook(llm=llm, max_messages=100, keep_last=2)
+
+    state = State()
+    state.add_message(ToolCallMessage(tool_calls=[_tc()]))  # orphaned — no result
+    state.add_message(Message(role="user", content="hi"))
+
+    await hook.before_model(state, ctx=None)
+
+    assert not llm.calls  # compression didn't trigger
+    assert len(state.messages) == 1
+    assert state.messages[0].content == "hi"
+
+
+# ---------------------------------------------------------------------------
+# _compression_context regression tests
+# ---------------------------------------------------------------------------
+# When compression fires mid-turn (e.g. after a tool call within the same turn),
+# state.messages[-1] is a ToolCallResultMessage.  Taking [:-1] to build
+# _compression_context would leave an orphaned ToolCallMessage in the persisted
+# checkpoint, causing a 400 on the very next request.
+
+
+@pytest.mark.unit
+async def test_compression_context_not_orphaned_when_last_message_is_tool_result():
+    """Compression after a tool call must not leave an orphaned TCM in the checkpoint.
+
+    Scenario: compression fires for the second model call in a turn.
+      state.messages = [prior_summary, user_msg, TCM, TCRM]   (TCRM is last)
+      After compression keep=[TCM, TCRM], so state.messages = [new_summary, TCM, TCRM].
+      Old bug: _compression_context = [new_summary, TCM]  ← orphaned!
+      Fix:     sanitize_messages removes the dangling TCM.
+    """
+    llm = _CapturingLLM("summary2")
+    hook = HistoryCompressionHook(llm=llm, max_messages=4, keep_last=2)
+
+    call, result = _make_tool_group()
+    state = State()
+    state.add_message(Message(role="system", content="[Conversation summary] prior"))
+    state.add_message(Message(role="user", content="do something"))
+    state.add_message(call)
+    state.add_message(result)  # TCRM is state.messages[-1]
+
+    await hook.before_model(state, ctx=None)
+
+    assert llm.calls, "compression should have fired"
+    assert state._compression_context is not None
+    _assert_valid_tool_sequence(state._compression_context)
+    assert not any(
+        isinstance(m, ToolCallMessage) for m in state._compression_context
+    ), "_compression_context must not contain an orphaned ToolCallMessage"
+
+
+@pytest.mark.unit
+async def test_compression_context_not_orphaned_with_parallel_tool_calls():
+    """Same regression with parallel calls: dropping the last TCRM leaves TCM with only one result."""
+    llm = _CapturingLLM("summary2")
+    hook = HistoryCompressionHook(llm=llm, max_messages=5, keep_last=3)
+
+    # state = [summary, user, TCM([A,B]), TCRM(A), TCRM(B)]
+    # keep_from=2 → no slide (TCM is assistant) → keep=[TCM, TCRM(A), TCRM(B)]
+    # after compress: [new_summary, TCM([A,B]), TCRM(A), TCRM(B)]
+    # [:-1] without fix = [new_summary, TCM([A,B]), TCRM(A)] — only 1 of 2 results → incomplete!
+    tcm, results = _make_parallel_tool_group(2)
+    state = State()
+    state.add_message(Message(role="system", content="[Conversation summary] prior"))
+    state.add_message(Message(role="user", content="do something"))
+    state.add_message(tcm)
+    state.add_message(results[0])
+    state.add_message(results[1])  # second TCRM is state.messages[-1]
+
+    await hook.before_model(state, ctx=None)
+
+    assert llm.calls, "compression should have fired"
+    assert state._compression_context is not None
+    _assert_valid_tool_sequence(state._compression_context)
+    assert not any(isinstance(m, ToolCallMessage) for m in state._compression_context)
+
+
+@pytest.mark.unit
+async def test_compression_context_keeps_complete_pair_when_last_is_non_tool():
+    """When the last kept message is NOT a tool result, a complete pair stays in the checkpoint."""
+    llm = _CapturingLLM("summary")
+    hook = HistoryCompressionHook(llm=llm, max_messages=6, keep_last=3)
+
+    # state = [u1, u2, u3, TCM, TCRM, user_final]
+    # keep_from=3 → messages[3]=TCM (assistant, not tool) → keep=[TCM, TCRM, user_final]
+    # after compress: [summary, TCM, TCRM, user_final]
+    # [:-1] = [summary, TCM, TCRM] — complete pair, should be preserved
+    call, result = _make_tool_group()
+    state = State()
+    for i in range(3):
+        state.add_message(Message(role="user", content=f"user{i}"))
+    state.add_message(call)
+    state.add_message(result)
+    state.add_message(Message(role="user", content="final"))  # user message is last
+
+    await hook.before_model(state, ctx=None)
+
+    assert llm.calls
+    assert state._compression_context is not None
+    _assert_valid_tool_sequence(state._compression_context)
+    # The complete pair should be retained in the checkpoint
+    assert any(isinstance(m, ToolCallMessage) for m in state._compression_context)
+    assert any(m.role == "tool" for m in state._compression_context)

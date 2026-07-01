@@ -94,3 +94,31 @@ type AnyMessage = Annotated[
     Field(discriminator="kind"),
 ]
 """Type alias for any message type in the system, discriminated by the `_kind` field."""
+
+
+def sanitize_messages(messages: list[Message]) -> list[Message]:
+    """Return a copy of *messages* with every incomplete tool-call group removed.
+
+    An incomplete group is a ``ToolCallMessage`` whose immediately-following
+    ``role="tool"`` messages are fewer than the number of ``tool_calls`` it
+    declares.  Such groups cause OpenAI-compatible APIs to reject the request
+    with a 400 error.
+
+    Complete groups and all non-tool-call messages are preserved in order.
+    """
+    result: list[Message] = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if isinstance(msg, ToolCallMessage):
+            n_calls = len(msg.tool_calls)
+            j = i + 1
+            while j < len(messages) and messages[j].role == "tool":
+                j += 1
+            if j - (i + 1) >= n_calls:
+                result.extend(messages[i:j])
+            i = j
+        else:
+            result.append(msg)
+            i += 1
+    return result
