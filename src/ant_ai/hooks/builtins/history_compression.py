@@ -4,7 +4,12 @@ from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation, model_validator
 
-from ant_ai.core.message import Message, ToolCallMessage
+from ant_ai.core.message import (
+    Message,
+    ToolCallMessage,
+    ToolCallResultMessage,
+    sanitize_messages,
+)
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks.protocol import AgentHook
 
@@ -13,6 +18,24 @@ _SUMMARISE_PROMPT = (
     "Summarise the following conversation history concisely, "
     "preserving key facts, decisions, and context:\n\n"
 )
+
+
+def _message_text(m: Message) -> str:
+    """Return a human-readable single-line representation of a message.
+
+    Plain messages use ``role: content``.  Tool calls list function names and
+    their arguments so the summariser sees what was invoked, not an empty line.
+    Tool results prefix the tool name so the summariser can match call to result.
+    """
+    if isinstance(m, ToolCallMessage):
+        calls = "; ".join(
+            f"{tc.function.name}({tc.function.arguments})" for tc in m.tool_calls
+        )
+        prefix = f"{m.content} " if m.content else ""
+        return f"assistant: {prefix}[tool calls]: {calls}"
+    if isinstance(m, ToolCallResultMessage):
+        return f"tool [{m.name}]: {m.content or ''}"
+    return f"{m.role}: {m.content or ''}"
 
 
 class HistoryCompressionHook(AgentHook, BaseModel):
@@ -77,7 +100,7 @@ class HistoryCompressionHook(AgentHook, BaseModel):
 
     def _estimate_tokens(self, messages: list[Message]) -> int:
         """Rough estimate: 1 token ≈ 4 characters."""
-        return sum(len(m.content or "") for m in messages) // 4
+        return sum(len(_message_text(m)) for m in messages) // 4
 
     def _should_compress(self, messages: list[Message]) -> bool:
         if self.max_messages is not None and len(messages) >= self.max_messages:
@@ -88,13 +111,18 @@ class HistoryCompressionHook(AgentHook, BaseModel):
                 return True
         return False
 
+    def _sanitize(self, messages: list[Message]) -> list[Message]:
+        return sanitize_messages(messages)
+
     async def before_model(self, state: State, ctx: InvocationContext | None) -> None:
-        """Compress older history when either threshold is exceeded.
+        """Sanitize history and compress when a threshold is exceeded.
 
         Args:
             state: Current agent state whose ``messages`` may be compressed.
             ctx: Invocation context, or None if not available.
         """
+        state.messages = self._sanitize(state.messages)
+
         messages: list[Message] = state.messages
         if len(messages) <= self.keep_last or not self._should_compress(messages):
             return
@@ -104,29 +132,13 @@ class HistoryCompressionHook(AgentHook, BaseModel):
             len(messages) - self.keep_last if self.keep_last > 0 else len(messages)
         )
 
-        # Slide left: never orphan a ToolCallResultMessage at the head of `keep`.
-        # A `tool` role message must always be preceded by an assistant message with
-        # tool_calls; slide left until the boundary no longer bisects such a group.
+        # Slide left: never bisect a tool-result group at the boundary.  A tool
+        # role message must always be preceded by its ToolCallMessage; slide left
+        # until the boundary lands on the call or on a non-tool message.
+        # After _sanitize every ToolCallMessage in the list has complete results,
+        # so no slide-right is needed.
         while 0 < keep_from < len(messages) and messages[keep_from].role == "tool":
             keep_from -= 1
-
-        # Slide right: if the boundary lands on a ToolCallMessage whose results are
-        # absent or incomplete (e.g. broken A2A history or partial parallel calls),
-        # absorb the whole group into `to_compress` so it is summarised away instead
-        # of producing an invalid call.  For parallel tool calls, ALL N results must
-        # immediately follow — so compare the consecutive result count against the
-        # number of tool_calls in the message.
-        while keep_from < len(messages) and isinstance(
-            messages[keep_from], ToolCallMessage
-        ):
-            n_calls = len(messages[keep_from].tool_calls)
-            j = keep_from + 1
-            while j < len(messages) and messages[j].role == "tool":
-                j += 1
-            n_results = j - (keep_from + 1)
-            if n_results >= n_calls:
-                break  # Enough results follow — valid group, keep it.
-            keep_from = j  # Partial or absent results → absorb group into to_compress.
 
         to_compress: list[Message] = messages[:keep_from]
         keep: list[Message] = messages[keep_from:]
@@ -136,9 +148,7 @@ class HistoryCompressionHook(AgentHook, BaseModel):
         if not to_compress:
             return
 
-        history_text: str = "\n".join(
-            f"{m.role}: {m.content or ''}" for m in to_compress
-        )
+        history_text: str = "\n".join(_message_text(m) for m in to_compress)
         summary_request: list[Message] = [
             Message(role="user", content=f"{_SUMMARISE_PROMPT}{history_text}")
         ]
@@ -150,6 +160,9 @@ class HistoryCompressionHook(AgentHook, BaseModel):
             Message(role="system", content=f"{_SUMMARY_PREFIX}{summary}"),
             *keep,
         ]
-        # Record the compressed baseline (everything before the current user message)
+        # Record the compressed baseline (everything before the current trigger message)
         # so transport layers can persist it for durability across turns.
-        state._compression_context = list(state.messages[:-1])
+        # sanitize_messages removes any tool-call group whose result is the trigger
+        # (the last message), which would otherwise leave an orphaned ToolCallMessage
+        # in the persisted checkpoint and cause a 400 on the next turn.
+        state._compression_context = sanitize_messages(list(state.messages[:-1]))

@@ -25,6 +25,7 @@ from ant_ai.core.message import (
     ToolCallMessage,
     ToolCallResultMessage,
     ToolFunction,
+    sanitize_messages,
 )
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk
 from ant_ai.core.result import (
@@ -69,6 +70,7 @@ __all__ = [
     "ToolFunction",
     "ToolCall",
     "AnyMessage",
+    "sanitize_messages",
     # response
     "ChatLLMResponse",
     "ChatLLMStreamChunk",
