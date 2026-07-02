@@ -34,6 +34,7 @@ dependencies = [
     "litellm>=1.86.2",
     "loguru>=0.7.3",
     "mcp>=1.27.2",
+    "pathspec>=1.1.1",
     "pydantic>=2.13.4",
     "pyyaml>=6.0",
     "starlette>=1.2.1",
