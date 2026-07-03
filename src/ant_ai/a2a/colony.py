@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urlparse
 
 from a2a.server.tasks import DatabaseTaskStore, InMemoryTaskStore, TaskStore
@@ -62,7 +63,7 @@ class Colony(BaseModel):
         name: str,
         *,
         agent: Agent,
-        workflow: Workflow,
+        workflow: Workflow[Any],
         card: AgentCard,
     ) -> Colony:
         """Adds an agent to the colony.
