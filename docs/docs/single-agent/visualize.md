@@ -8,7 +8,7 @@ title: Visualizing Workflows
 
 ## Installation
 
-The visualizer wraps the [Graphviz](https://graphviz.org/) library. Install both the Python package and the system CLI:
+The `png`, `jpg`, `pdf`, `svg`, and `latex` formats wrap the [Graphviz](https://graphviz.org/) library. Install both the Python package and the system CLI:
 
 ```sh
 uv add ant-ai[viz]
@@ -19,6 +19,8 @@ brew install graphviz
 # Ubuntu / Debian
 sudo apt-get install graphviz
 ```
+
+The `mermaid` format has no such dependency — see [Mermaid output](#mermaid-output) below.
 
 ## Jupyter notebook
 
@@ -44,7 +46,37 @@ render_workflow(wf, "diagram", format="pdf")
 
 # LaTeX — produces a self-contained .tex file with a tikzpicture
 render_workflow(wf, "diagram", format="latex")
+
+# Mermaid — produces a .mmd file, no graphviz dependency required
+render_workflow(wf, "diagram", format="mermaid")
 ```
+
+### Mermaid output
+
+The `mermaid` format doesn't need the `graphviz` package or CLI at all — call
+[`build_workflow_mermaid()`][ant_ai.workflow.visualize.build_workflow_mermaid]
+directly to get the definition as a string, or use `render_workflow(..., format="mermaid")`
+to write a `diagram.mmd` file:
+
+```python
+from ant_ai.workflow import build_workflow_mermaid
+
+print(build_workflow_mermaid(wf))
+```
+
+```mermaid
+flowchart LR
+    n_START(["START"])
+    n_END(["END"])
+    n_A["A"]
+    n_START --> n_A
+    n_A --> n_END
+```
+
+Mermaid definitions render natively in GitHub, GitLab, and MkDocs Material
+(via `pymdownx.superfences`, already enabled for this site) — paste the
+output straight into a fenced ` ```mermaid ` code block in a README, PR
+description, or docs page.
 
 ### LaTeX output
 
@@ -71,6 +103,7 @@ The default layout is left-to-right (`rankdir="LR"`). Pass `rankdir="TB"` for a 
 
 ```python
 build_workflow_graph(wf)                          # left-to-right (default)
+build_workflow_mermaid(wf)                        # left-to-right (default)
 render_workflow(wf, "diagram", format="png")      # left-to-right (default)
 render_workflow(wf, "diagram", format="png", rankdir="TB")  # top-to-bottom
 ```
