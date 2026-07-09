@@ -10,7 +10,9 @@ from graphviz import Digraph
 
 from ant_ai.workflow.workflow import END, START, RouterAction, Workflow
 
-_FORMATS = ("png", "jpg", "pdf", "svg", "latex")
+type RenderFormat = Literal["png", "jpg", "pdf", "svg", "latex", "mermaid"]
+
+_FORMATS: tuple[RenderFormat, ...] = get_args(RenderFormat.__value__)
 
 _FILL_SPECIAL = "#d0e8ff"  # START / END
 _FILL_NODE = "#ffffff"  # regular nodes
@@ -20,6 +22,15 @@ _FILL_ROUTER = "#fff3cd"  # decision diamonds
 def _gv_id(name: str) -> str:
     """Stable single-token graphviz node id (no spaces)."""
     return name.replace(" ", "_").replace("-", "_")
+
+
+def _mmd_id(name: str) -> str:
+    """Stable Mermaid node id.
+
+    Prefixed so node names can never collide with Mermaid reserved words
+    (e.g. ``end``, matched case-insensitively) or its edge-hint syntax.
+    """
+    return "n_" + _gv_id(name)
 
 
 def _router_destinations(router: RouterAction) -> list[str]:
@@ -137,6 +148,54 @@ def build_workflow_graph(
     return g
 
 
+def build_workflow_mermaid(
+    workflow: Workflow,
+    *,
+    rankdir: str = "LR",
+) -> str:
+    """
+    Build a Mermaid ``flowchart`` definition for *workflow*.
+
+    Unlike :func:`build_workflow_graph`, this has no dependency on the
+    ``graphviz`` package or CLI — Mermaid does its own auto-layout, and the
+    result is plain text that renders natively in GitHub, GitLab, MkDocs
+    Material, and the Mermaid Live Editor.
+
+    Args:
+        workflow: The workflow to visualise.
+        rankdir: Layout direction — ``"LR"`` (left-to-right, default) or
+            ``"TB"`` (top-to-bottom). Passed through to Mermaid's
+            ``flowchart`` direction.
+
+    Returns:
+        A Mermaid ``flowchart`` definition as a string.
+    """
+    lines = [f"flowchart {rankdir}"]
+
+    # START / END — stadium shape
+    for special in (START, END):
+        lines.append(f'    {_mmd_id(special)}(["{special}"])')
+
+    # Regular nodes — rectangle
+    for name in workflow.nodes:
+        lines.append(f'    {_mmd_id(name)}["{name}"]')
+
+    # Static edges
+    for src, dst in workflow.edges.items():
+        lines.append(f"    {_mmd_id(src)} --> {_mmd_id(dst)}")
+
+    # Conditional edges — diamond + AST-extracted destinations
+    for src, router in workflow.conditional_edges.items():
+        diamond_id = f"r_{_gv_id(src)}"
+        router_label = getattr(router, "__name__", repr(router))
+        lines.append(f'    {diamond_id}{{"{router_label}"}}')
+        lines.append(f"    {_mmd_id(src)} --> {diamond_id}")
+        for dst in _router_destinations(router):
+            lines.append(f"    {diamond_id} -.-> {_mmd_id(dst)}")
+
+    return "\n".join(lines)
+
+
 _TIKZ_PREAMBLE = r"""\documentclass{standalone}
 \usepackage{tikz}
 \usetikzlibrary{shapes.geometric, arrows.meta, positioning}
@@ -251,7 +310,7 @@ def _build_tikz(workflow: Workflow, engine: str) -> str:
 def render_workflow(
     workflow: Workflow,
     path: str | Path,
-    format: Literal["png", "jpg", "pdf", "svg", "latex"] = "png",
+    format: RenderFormat = "png",
     *,
     engine: str = "dot",
     rankdir: str = "LR",
@@ -263,23 +322,32 @@ def render_workflow(
         workflow: The workflow to visualise.
         path: Output path. The file extension is set automatically based on
             *format* (any existing extension is replaced).
-        format: ``"png"``, ``"jpg"``, ``"pdf"``, ``"svg"``, or ``"latex"``.
-            The ``"latex"`` format produces a self-contained ``.tex`` file
-            that can be compiled with ``pdflatex``.
-        engine: Graphviz layout engine.
+        format: ``"png"``, ``"jpg"``, ``"pdf"``, ``"svg"``, ``"latex"``, or
+            ``"mermaid"``. The ``"latex"`` format produces a self-contained
+            ``.tex`` file that can be compiled with ``pdflatex``. The
+            ``"mermaid"`` format produces a ``.mmd`` file with a Mermaid
+            ``flowchart`` definition — no ``graphviz`` dependency required.
+        engine: Graphviz layout engine. Ignored for ``"mermaid"``.
         rankdir: Layout direction — ``"LR"`` (left-to-right, default) or ``"TB"``.
 
     Returns:
         :class:`~pathlib.Path` of the rendered file.
 
     Raises:
-        ImportError: if the ``graphviz`` package is not installed.
+        ImportError: if the ``graphviz`` package is not installed and
+            *format* requires it (i.e. not ``"latex"`` or ``"mermaid"``).
         ValueError: if *format* is not one of the supported values.
     """
     if format not in _FORMATS:
         raise ValueError(f"format must be one of {_FORMATS!r}, got {format!r}")
 
     out = Path(path)
+
+    if format == "mermaid":
+        mmd = build_workflow_mermaid(workflow, rankdir=rankdir)
+        dest = out.with_suffix(".mmd")
+        dest.write_text(mmd, encoding="utf-8")
+        return dest
 
     if format == "latex":
         tex = _build_tikz(workflow, engine=engine)

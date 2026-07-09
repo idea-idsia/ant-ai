@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Literal
 
 import pytest
 
 from ant_ai.workflow.visualize import (
     _gv_id,
+    _mmd_id,
     _router_destinations,
     build_workflow_graph,
+    build_workflow_mermaid,
     render_workflow,
 )
 from ant_ai.workflow.workflow import Workflow
@@ -174,3 +177,81 @@ def test_build_workflow_graph_lr_rankdir(noop_workflow):
 def test_render_workflow_rejects_invalid_format(noop_workflow):
     with pytest.raises(ValueError, match="format must be one of"):
         render_workflow(noop_workflow, "/tmp/wf", format="bmp")  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
+def test_mmd_id_passthrough():
+    assert _mmd_id("simple") == "n_simple"
+
+
+@pytest.mark.unit
+def test_mmd_id_normalizes_spaces_and_hyphens():
+    assert _mmd_id("my-cool node") == "n_my_cool_node"
+
+
+@pytest.mark.unit
+def test_build_workflow_mermaid_no_graphviz_required(monkeypatch, noop_workflow):
+    monkeypatch.setitem(sys.modules, "graphviz", None)
+    # Should not raise even though graphviz is unavailable.
+    assert "flowchart" in build_workflow_mermaid(noop_workflow)
+
+
+@pytest.mark.unit
+def test_build_workflow_mermaid_default_direction(noop_workflow):
+    src = build_workflow_mermaid(noop_workflow)
+    assert src.startswith("flowchart LR")
+
+
+@pytest.mark.unit
+def test_build_workflow_mermaid_tb_direction(noop_workflow):
+    src = build_workflow_mermaid(noop_workflow, rankdir="TB")
+    assert src.startswith("flowchart TB")
+
+
+@pytest.mark.unit
+def test_build_workflow_mermaid_start_end_are_stadiums(noop_workflow):
+    src = build_workflow_mermaid(noop_workflow)
+    assert 'n_START(["START"])' in src
+    assert 'n_END(["END"])' in src
+
+
+@pytest.mark.unit
+def test_build_workflow_mermaid_regular_node_is_rectangle(noop_workflow):
+    assert 'n_A["A"]' in build_workflow_mermaid(noop_workflow)
+
+
+@pytest.mark.unit
+def test_build_workflow_mermaid_static_edge(noop_workflow):
+    src = build_workflow_mermaid(noop_workflow)
+    assert "n_START --> n_A" in src
+    assert "n_A --> n_END" in src
+
+
+@pytest.mark.unit
+def test_build_workflow_mermaid_conditional_creates_diamond(conditional_workflow):
+    assert 'r_A{"my_router"}' in build_workflow_mermaid(conditional_workflow)
+
+
+@pytest.mark.unit
+def test_build_workflow_mermaid_conditional_dashed_edges(conditional_workflow):
+    src = build_workflow_mermaid(conditional_workflow)
+    assert "r_A -.-> n_B" in src
+    assert "r_A -.-> n_END" in src
+
+
+@pytest.mark.unit
+def test_render_workflow_mermaid_writes_mmd_file(noop_workflow, tmp_path: Path):
+    out = render_workflow(noop_workflow, tmp_path / "wf", format="mermaid")
+    assert out.suffix == ".mmd"
+    assert out.exists()
+    text = out.read_text()
+    assert "flowchart LR" in text
+    assert "n_START" in text
+    assert "n_END" in text
+    assert "n_A" in text
+
+
+@pytest.mark.unit
+def test_render_workflow_mermaid_extension_replaced(noop_workflow, tmp_path: Path):
+    out = render_workflow(noop_workflow, tmp_path / "wf.txt", format="mermaid")
+    assert out.suffix == ".mmd"
