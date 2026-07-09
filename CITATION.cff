@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "ant-ai: A lightweight Python framework for building multi-agent AI systems"
+type: software
+authors:
+    - family-names: Sas
+      given-names: Cezar
+      email: cezar.sas@supsi.ch
+    - family-names: Giuffrida
+      given-names: Vincenzo
+      email: vincenzo.giuffrida@supsi.ch
+    - family-names: Mitrovic
+      given-names: Sandra
+      email: sandra.mitrovic@supsi.ch
+    - family-names: Salani
+      given-names: Matteo
+      email: matteo.salani@supsi.ch
+repository-code: "https://github.com/idea-idsia/ant-ai"
+url: "https://idea.idsia.ch/ant-ai/"
+license: MIT
+identifiers:
+    - type: doi
+      value: 10.5281/zenodo.21276625
+      description: "The DOI for all versions of ant-ai."
