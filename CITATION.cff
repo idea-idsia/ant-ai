@@ -6,15 +6,19 @@ authors:
     - family-names: Sas
       given-names: Cezar
       email: cezar.sas@supsi.ch
+      orcid: "https://orcid.org/0000-0002-3018-0140"
     - family-names: Giuffrida
       given-names: Vincenzo
       email: vincenzo.giuffrida@supsi.ch
+      orcid: "https://orcid.org/0009-0009-4627-7391"
     - family-names: Mitrovic
       given-names: Sandra
       email: sandra.mitrovic@supsi.ch
+      orcid: "https://orcid.org/0000-0002-5697-5865"
     - family-names: Salani
       given-names: Matteo
       email: matteo.salani@supsi.ch
+      orcid: "https://orcid.org/0000-0003-2809-4347"
 repository-code: "https://github.com/idea-idsia/ant-ai"
 url: "https://idea.idsia.ch/ant-ai/"
 license: MIT
