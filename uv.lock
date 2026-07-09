@@ -167,7 +167,7 @@ wheels = [
 
 [[package]]
 name = "ant-ai"
-version = "1.5.14"
+version = "1.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk", extra = ["encryption", "grpc", "http-server", "sql", "telemetry"] },
