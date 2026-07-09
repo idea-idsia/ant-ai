@@ -4,7 +4,7 @@ import ast
 import inspect
 import textwrap
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args, get_origin, get_type_hints
 
 from graphviz import Digraph
 
@@ -23,12 +23,22 @@ def _gv_id(name: str) -> str:
 
 
 def _router_destinations(router: RouterAction) -> list[str]:
-    """Return every literal string a router function can return, via AST.
+    """Return every destination a router function can route to.
 
-    Uses a depth-first visitor so results appear in source-code order.
-    Only direct string literals in ``return`` statements are collected;
-    variable references (e.g. ``return END``) are intentionally ignored.
+    Prefers the router's ``Literal[...]`` return-type annotation, since that
+    is the router's declared contract and survives dynamic return
+    expressions (ternaries, enum lookups, etc.) that a source-level scan
+    would miss. Falls back to an AST scan for direct string-literal
+    ``return`` statements when there is no ``Literal`` annotation.
     """
+    try:
+        hints = get_type_hints(router)
+    except Exception:
+        hints = {}
+    return_hint = hints.get("return")
+    if get_origin(return_hint) is Literal:
+        return list(get_args(return_hint))
+
     try:
         src = textwrap.dedent(inspect.getsource(router))
     except OSError:

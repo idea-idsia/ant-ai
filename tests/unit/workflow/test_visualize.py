@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from typing import Literal
 
 import pytest
 
@@ -76,6 +77,24 @@ def test_router_destinations_ignores_non_literal_returns():
 
     dests = _router_destinations(router)
     assert dests == []
+
+
+@pytest.mark.unit
+def test_router_destinations_uses_literal_annotation_for_ternary():
+    def router(a, state, ctx) -> Literal["node_b", "node_c"]:
+        return "node_b" if True else "node_c"
+
+    dests = _router_destinations(router)
+    assert dests == ["node_b", "node_c"]
+
+
+@pytest.mark.unit
+def test_router_destinations_uses_literal_annotation_for_dynamic_return():
+    def router(a, state, ctx) -> Literal["node_b", "node_c"]:
+        return state.destination  # value only known at runtime
+
+    dests = _router_destinations(router)
+    assert dests == ["node_b", "node_c"]
 
 
 @pytest.mark.unit
