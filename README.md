@@ -10,6 +10,7 @@
 ![PyPI - Version](https://img.shields.io/pypi/v/ant-ai?label=PyPI)
 [![Coverage](https://img.shields.io/codecov/c/github/idea-idsia/ant-ai?label=Coverage&logo=codecov)](https://codecov.io/gh/idea-idsia/ant-ai)
 [![Docs](https://img.shields.io/badge/Docs-mkdocs-526cfe?logo=materialformkdocs&logoColor=white)](https://idea.idsia.ch/ant-ai/)
+[![DOI](https://zenodo.org/badge/1219140757.svg)](https://doi.org/10.5281/zenodo.21276625)
 
 **A lightweight Python framework for building tool-driven AI agents and multi-agent systems.**
 
@@ -139,6 +140,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributing guide, branchin
 ## License
 
 This software is licensed under the MIT license. See the [LICENSE](LICENSE) file for details.
+
+## Citation
+
+If you use `ant-ai` in your research, please cite it. See [CITATION.cff](CITATION.cff) for the machine-readable citation metadata, or use the BibTeX entry below.
+
+```bibtex
+@software{ant_ai,
+  author  = {Sas, Cezar and Giuffrida, Vincenzo and Mitrovic, Sandra and Salani, Matteo},
+  title   = {ant-ai: A lightweight Python framework for building multi-agent AI systems},
+  url     = {https://github.com/idea-idsia/ant-ai},
+  doi     = {10.5281/zenodo.21276625}
+}
+```
 
 ## Funding
 
