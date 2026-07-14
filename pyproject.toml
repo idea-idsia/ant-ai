@@ -13,7 +13,7 @@ requires-python = ">=3.14"
 authors = [
     { name = "Cezar Sas", email = "cezar.sas@supsi.ch" },
     { name = "Vincenzo Giuffrida", email = "vincenzo.giuffrida@supsi.ch" },
-    { name = "Sandra Mitrovic", email = "sandra.mitrovic@supsi.ch" },
+    { name = "Sandra Mitrović", email = "sandra.mitrovic@supsi.ch" },
     { name = "Matteo Salani", email = "matteo.salani@supsi.ch" },
 ]
 

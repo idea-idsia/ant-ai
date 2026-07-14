@@ -8,7 +8,7 @@ If you use `ant-ai` in your research, please cite it. See [CITATION.cff](https:/
 
 ```bibtex
 @software{Sas_ant-ai_A_lightweight,
-author = {Sas, Cezar and Giuffrida, Vincenzo and Mitrovic, Sandra and Salani, Matteo},
+author = {Sas, Cezar and Giuffrida, Vincenzo and Mitrović, Sandra and Salani, Matteo},
 license = {MIT},
 title = {{ant-ai: A lightweight Python framework for building multi-agent AI systems}},
 url = {https://github.com/idea-idsia/ant-ai}
