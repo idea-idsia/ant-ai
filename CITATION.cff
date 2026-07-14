@@ -23,7 +23,7 @@ repository-code: "https://github.com/idea-idsia/ant-ai"
 url: "https://idea.idsia.ch/ant-ai/"
 license: MIT
 doi: 10.5281/zenodo.21276625
-date-released: "2026-07-14"
+date-released: "2026-06-30"
 identifiers:
     - type: doi
       value: 10.5281/zenodo.21276625
