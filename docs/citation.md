@@ -11,6 +11,8 @@ If you use `ant-ai` in your research, please cite it. See [CITATION.cff](https:/
 author = {Sas, Cezar and Giuffrida, Vincenzo and Mitrović, Sandra and Salani, Matteo},
 license = {MIT},
 title = {{ant-ai: A lightweight Python framework for building multi-agent AI systems}},
-url = {https://github.com/idea-idsia/ant-ai}
+url = {https://github.com/idea-idsia/ant-ai},
+year = {2026},
+doi = {10.5281/zenodo.21276625}
 }
 ```
