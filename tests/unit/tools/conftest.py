@@ -26,8 +26,9 @@ def mcp_server():
         [
             sys.executable,
             "-c",
-            f"import sys; sys.path.insert(0, {str(_TEST_DIR)!r});"
-            "from test_tool_mcp import mcp; mcp.run(transport='streamable-http')",
+            f"import os, sys; sys.path.insert(0, {str(_TEST_DIR)!r});"
+            "from test_tool_mcp import mcp; "
+            "mcp.run(transport='streamable-http', host='127.0.0.1', port=int(os.environ['MCP_TEST_PORT']))",
         ],
         env=env,
     )

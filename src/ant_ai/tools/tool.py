@@ -268,15 +268,15 @@ class Tool(BaseModel):
         unwrap_result: bool = True,
     ) -> Tool:
         full_name: str = f"{namespace}.{mcp_tool.name}" if namespace else mcp_tool.name
-        params: dict = dict(mcp_tool.inputSchema or {})
+        params: dict = dict(mcp_tool.input_schema or {})
         params.setdefault("type", "object")
 
         async def _call_mcp(**kwargs: Any) -> Any:
             # Open a short-lived MCP HTTP connection per call.
             # This keeps the Tool self-contained and agent-friendly.
-            async with streamable_http_client(url) as client_context:  # pyright: ignore[reportOptionalCall]
-                read, write, _aclose = client_context
-                async with MCPClientSession(read, write) as session:  # pyright: ignore[reportOptionalCall]
+            async with streamable_http_client(url) as client_context:
+                read, write = client_context
+                async with MCPClientSession(read, write) as session:
                     await session.initialize()
                     result: mcp.types.CallToolResult = await session.call_tool(
                         mcp_tool.name, arguments=kwargs
@@ -442,9 +442,9 @@ async def mcp_tools_from_url(
         agent = Agent(tools=tools, ...)  # your agent just sees Tool objects
     """
 
-    async with streamable_http_client(url) as client_context:  # pyright: ignore[reportOptionalCall]
-        read, write, _aclose = client_context
-        async with MCPClientSession(read, write) as session:  # pyright: ignore[reportOptionalCall]
+    async with streamable_http_client(url) as client_context:
+        read, write = client_context
+        async with MCPClientSession(read, write) as session:
             await session.initialize()
             tools_resp: mcp.types.ListToolsResult = await session.list_tools()
             mcp_tools: list[mcp.types.Tool] = tools_resp.tools

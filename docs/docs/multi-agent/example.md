@@ -31,6 +31,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from ant_ai import Agent
 from ant_ai.llm.integrations import LiteLLMChat
 
+
 def build_codegen_agent() -> tuple[Agent, AgentCard]:
     agent = Agent(
         name="Developer",
@@ -46,13 +47,17 @@ def build_codegen_agent() -> tuple[Agent, AgentCard]:
         default_input_modes=["text"],
         default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
-        supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url="http://codegen-agent:9001/")],
-        skills=[AgentSkill(
-            id="develop",
-            name="Write python code",
-            description="Returns high-quality Python code",
-            tags=["code", "develop"],
-        )],
+        supported_interfaces=[
+            AgentInterface(protocol_binding="JSONRPC", url="http://codegen-agent:9001/")
+        ],
+        skills=[
+            AgentSkill(
+                id="develop",
+                name="Write python code",
+                description="Returns high-quality Python code",
+                tags=["code", "develop"],
+            )
+        ],
     )
 
     return agent, card
@@ -85,7 +90,12 @@ async def generate_code(
 async def validate_code(
     agent: Agent, state: State, ctx: InvocationContext
 ) -> AsyncGenerator[NodeYield]:
-    state.add_message(Message(role="user", content="Is the code above correct? Reply with VALID or NOT VALID."))
+    state.add_message(
+        Message(
+            role="user",
+            content="Is the code above correct? Reply with VALID or NOT VALID.",
+        )
+    )
     async for event in agent.stream(state, ctx=ctx):
         yield event
     yield state
@@ -118,7 +128,7 @@ def build_codegen_workflow() -> Workflow:
     workflow.add_edge(START, "generate_code")
     workflow.add_edge("generate_code", "validate_code")
     workflow.add_conditional_edge("validate_code", code_validation_result)
-    workflow.add_edge("fix_code", "validate_code")   # retry loop
+    workflow.add_edge("fix_code", "validate_code")  # retry loop
 
     return workflow
 ```
@@ -156,12 +166,18 @@ def build_se_hive() -> Colony:
 
     colony = Colony(db_url="postgresql+asyncpg://user:pass@host/db")
 
-    colony.agent("codegen", agent=codegen, card=codegen_card, workflow=build_codegen_workflow())
-    colony.agent("testgen", agent=testgen, card=testgen_card, workflow=build_testgen_workflow())
-    colony.agent("quality", agent=quality, card=quality_card, workflow=build_quality_workflow())
+    colony.agent(
+        "codegen", agent=codegen, card=codegen_card, workflow=build_codegen_workflow()
+    )
+    colony.agent(
+        "testgen", agent=testgen, card=testgen_card, workflow=build_testgen_workflow()
+    )
+    colony.agent(
+        "quality", agent=quality, card=quality_card, workflow=build_quality_workflow()
+    )
 
-    colony.collab("codegen", "testgen")   # codegen gets a tool to call testgen
-    colony.collab("quality", "codegen")   # quality gets a tool to call codegen
+    colony.collab("codegen", "testgen")  # codegen gets a tool to call testgen
+    colony.collab("quality", "codegen")  # quality gets a tool to call codegen
 
     return colony
 ```
@@ -177,6 +193,7 @@ from ant_ai.a2a import Colony
 from myapp.colonies.se_hive import build_se_hive
 
 app = typer.Typer()
+
 
 @app.command()
 def start(agent: str):

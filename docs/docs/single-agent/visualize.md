@@ -102,9 +102,9 @@ To embed it in an existing document, copy the `tikzpicture` block or use `\input
 The default layout is left-to-right (`rankdir="LR"`). Pass `rankdir="TB"` for a top-to-bottom layout instead:
 
 ```python
-build_workflow_graph(wf)                          # left-to-right (default)
-build_workflow_mermaid(wf)                        # left-to-right (default)
-render_workflow(wf, "diagram", format="png")      # left-to-right (default)
+build_workflow_graph(wf)  # left-to-right (default)
+build_workflow_mermaid(wf)  # left-to-right (default)
+render_workflow(wf, "diagram", format="png")  # left-to-right (default)
 render_workflow(wf, "diagram", format="png", rankdir="TB")  # top-to-bottom
 ```
 
@@ -115,8 +115,8 @@ The visualizer inspects the router function's source code with Python's `ast` mo
 ```python
 def my_router(agent, state, ctx) -> Literal["validate", "publish"]:
     if state.last_message.content == "retry":
-        return "validate"   # ← edge 1
-    return "publish"        # ← edge 2
+        return "validate"  # ← edge 1
+    return "publish"  # ← edge 2
 ```
 
 Variable returns (e.g. `return node_name`) are not collected — use string literals in router functions.
@@ -132,27 +132,32 @@ from ant_ai.workflow.workflow import START, END
 
 w = Workflow()
 
+
 async def noop(agent, state, ctx): ...
+
 
 for node in ("fetch", "enrich", "validate", "check", "publish", "revise"):
     w.add_node(node, noop)
+
 
 def classify(agent, state, ctx) -> Literal["enrich", "validate"]:
     if state.last_message.content == "enrich":
         return "enrich"
     return "validate"
 
+
 def review(agent, state, ctx) -> Literal["publish", "revise"]:
     if state.last_message.content == "approved":
         return "publish"
     return "revise"
 
+
 w.add_edge(START, "fetch")
-w.add_conditional_edge("fetch", classify)   # → enrich or validate
+w.add_conditional_edge("fetch", classify)  # → enrich or validate
 w.add_edge("validate", "check")
 w.add_edge("enrich", "check")
-w.add_conditional_edge("check", review)    # → publish or revise
-w.add_edge("revise", "check")              # retry loop
+w.add_conditional_edge("check", review)  # → publish or revise
+w.add_edge("revise", "check")  # retry loop
 w.add_edge("publish", END)
 
 render_workflow(w, "diagram", format="png")

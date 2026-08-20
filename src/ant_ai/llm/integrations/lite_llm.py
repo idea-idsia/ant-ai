@@ -23,12 +23,12 @@ def to_chatllm_response(
         content=choice.message.get("content", ""),
     )
 
-    tool_calls = [
+    tool_calls: list[ToolCall] = [
         ToolCall(
             id=tc.id,
             function=ToolFunction(
-                name=tc.function.name or "",
-                arguments=tc.function.arguments or "",
+                name=tc.function.name or "",  # ty:ignore[unresolved-attribute]
+                arguments=tc.function.arguments or "",  # ty:ignore[unresolved-attribute]
             ),
         )
         for tc in (choice.message.tool_calls or [])
