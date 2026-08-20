@@ -240,7 +240,7 @@ async def test_from_mcp_descriptor_unwraps_structured_content(monkeypatch):
     class FakeMcpTool:
         name = "weather"
         description = "desc"
-        inputSchema = {"type": "object", "properties": {"q": {"type": "string"}}}
+        input_schema = {"type": "object", "properties": {"q": {"type": "string"}}}
 
     class FakeResult:
         structuredContent = {"ok": True}
@@ -250,7 +250,7 @@ async def test_from_mcp_descriptor_unwraps_structured_content(monkeypatch):
     class DummyClientCtx:
         async def __aenter__(self):
             # read/write placeholders
-            return object(), object(), object()
+            return object(), object()
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
@@ -293,7 +293,7 @@ async def test_mcp_tools_from_url_builds_tools_list(monkeypatch):
         def __init__(self, name: str):
             self.name = name
             self.description = f"desc:{name}"
-            self.inputSchema = {"type": "object", "properties": {}}
+            self.input_schema = {"type": "object", "properties": {}}
 
     class FakeListToolsResult:
         def __init__(self):
@@ -301,7 +301,7 @@ async def test_mcp_tools_from_url_builds_tools_list(monkeypatch):
 
     class DummyClientCtx:
         async def __aenter__(self):
-            return object(), object(), object()
+            return object(), object()
 
         async def __aexit__(self, exc_type, exc, tb):
             return False

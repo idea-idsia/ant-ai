@@ -1,14 +1,11 @@
-import os
 from typing import Any
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from ant_ai.tools.tool import Tool, mcp_tools_from_url
 
-_PORT = int(os.environ.get("MCP_TEST_PORT", "43654"))
-
-mcp: FastMCP[Any] = FastMCP("remote", host="127.0.0.1", port=_PORT)
+mcp: MCPServer[Any] = MCPServer("remote")
 
 
 @mcp.tool(name="greet", description="Greet someone")
