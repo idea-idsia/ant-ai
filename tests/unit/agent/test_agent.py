@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 import pytest
-from pydantic import model_serializer
+from pydantic import ValidationError, model_serializer
 
 from ant_ai.agent.agent import Agent
 from ant_ai.core.events import (
@@ -28,7 +28,7 @@ from ant_ai.core.result import (
     Transition,
     TransitionAction,
 )
-from ant_ai.core.types import State
+from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks import (
     AgentHook,
     PostModelFallback,
@@ -36,8 +36,10 @@ from ant_ai.hooks import (
     PostModelRetry,
 )
 from ant_ai.llm.protocol import ChatLLM
+from ant_ai.memory.protocol import Memory
 from ant_ai.steps.llm_step import LLMStep
 from ant_ai.steps.tool_step import ToolStep
+from ant_ai.tools.builtins.memory_tool import MemoryTool
 from ant_ai.tools.registry import ToolRegistry
 
 
@@ -642,3 +644,131 @@ async def test_agent_hook_critique_message_is_injected_into_retry_state():
     assert llm.call_count == 2
     retry_contents = [m.content for m in received_messages_on_retry if m.content]
     assert any(CRITIQUE_MARKER in c for c in retry_contents)
+
+
+class RecordingMemory(MemoryTool):
+    """Minimal `MemoryTool` backend used to test `Agent(memory=...)` wiring."""
+
+    async def retrieve(self, query, *, top_k=5, **kwargs):
+        return [Message(role="system", content=f"fact about {query}")]
+
+    async def update(self, messages, **kwargs):
+        pass
+
+
+@pytest.mark.unit
+async def test_agent_with_memory_registers_search_and_save_tools():
+    class DummyLLM(ChatLLM):
+        async def ainvoke(
+            self, messages, *, ctx=None, tools=None, response_format=None
+        ):
+            return DummyResponse(message=Message(role="assistant", content="ok"))
+
+    agent = Agent(
+        name="test",
+        system_prompt="sys",
+        llm=DummyLLM(),
+        memory=RecordingMemory(),
+    )
+
+    tool_names = {t["function"]["name"] for t in agent.registry.to_serialized()}
+    assert tool_names == {"RecordingMemory_search", "RecordingMemory_add"}
+
+
+@pytest.mark.unit
+async def test_agent_without_memory_has_no_memory_tools():
+    class DummyLLM(ChatLLM):
+        async def ainvoke(
+            self, messages, *, ctx=None, tools=None, response_format=None
+        ):
+            return DummyResponse(message=Message(role="assistant", content="ok"))
+
+    agent = Agent(name="test", system_prompt="sys", llm=DummyLLM())
+
+    assert agent.registry.to_serialized() == []
+
+
+@pytest.mark.unit
+def test_agent_memory_field_rejects_plain_memory_not_memory_tool():
+    """`Agent.memory` requires a `MemoryTool` (Tool-capable), not just a bare
+    `Memory` implementation — a plain `Memory` can't be registered as a tool."""
+
+    class PlainMemory(Memory):
+        async def retrieve(self, query, *, top_k=5, **kwargs):
+            return []
+
+        async def update(self, messages, **kwargs):
+            pass
+
+    class DummyLLM(ChatLLM):
+        async def ainvoke(
+            self, messages, *, ctx=None, tools=None, response_format=None
+        ):
+            return DummyResponse(message=Message(role="assistant", content="ok"))
+
+    with pytest.raises(ValidationError):
+        Agent(
+            name="test",
+            system_prompt="sys",
+            llm=DummyLLM(),
+            memory=PlainMemory(),
+        )
+
+
+@pytest.mark.unit
+async def test_stream_with_memory_tool_call_injects_ctx_end_to_end():
+    """Full loop: the LLM calls the memory search tool, and the real
+    InvocationContext passed to agent.stream() reaches the memory backend —
+    proving the ctx-injection path works end-to-end, not just in isolation."""
+    received: dict[str, Any] = {}
+
+    class RecordingMemoryWithCtx(MemoryTool):
+        async def retrieve(self, query, *, top_k=5, **kwargs):
+            received["ctx"] = kwargs.get("ctx")
+            received["query"] = query
+            return [Message(role="system", content="likes rust")]
+
+        async def update(self, messages, **kwargs):
+            pass
+
+    class TwoStepLLM(ChatLLM):
+        def __init__(self):
+            self.calls = 0
+
+        async def ainvoke(
+            self, messages, *, ctx=None, tools=None, response_format=None
+        ):
+            self.calls += 1
+            if self.calls == 1:
+                return DummyResponse(
+                    message=Message(role="assistant", content="searching memory"),
+                    tool_calls=[
+                        make_tool_call(
+                            call_id="call-1",
+                            name="RecordingMemoryWithCtx_search",
+                            arguments='{"query": "preferences"}',
+                        )
+                    ],
+                )
+            return DummyResponse(
+                message=Message(role="assistant", content="done"), tool_calls=[]
+            )
+
+    agent = Agent(
+        name="memory-agent",
+        system_prompt="sys",
+        llm=TwoStepLLM(),
+        memory=RecordingMemoryWithCtx(),
+    )
+
+    ctx = InvocationContext(session_id="s1", user_id="alice")
+    state = State(messages=[Message(role="user", content="What do you know?")])
+
+    events = [e async for e in agent.stream(state, max_steps=5, ctx=ctx)]
+
+    assert received["query"] == "preferences"
+    assert received["ctx"] is ctx
+    tool_results = [e for e in events if isinstance(e, ToolResultEvent)]
+    assert len(tool_results) == 1
+    assert "likes rust" in tool_results[0].content
+    assert isinstance(events[-1], FinalAnswerEvent)

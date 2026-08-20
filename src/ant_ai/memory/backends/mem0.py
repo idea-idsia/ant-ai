@@ -8,7 +8,7 @@ from pydantic import Field, PrivateAttr, model_validator
 
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext
-from ant_ai.memory.protocol import Memory
+from ant_ai.tools.builtins.memory_tool import MemoryTool
 
 
 def _resolve_ctx(kwargs: dict[str, Any]) -> dict[str, str]:
@@ -16,6 +16,12 @@ def _resolve_ctx(kwargs: dict[str, Any]) -> dict[str, str]:
 
     ctx.user_id  → user_id  (cross-session)
     ctx.session_id → run_id (session-scoped fallback)
+
+    Raises:
+        ValueError: If no scoping information (ctx or a bare
+            user_id/run_id/agent_id/app_id) is available — without this,
+            retrieve/update would hit mem0 unscoped, pooling memory across
+            every user and session.
     """
     ctx: InvocationContext | None = kwargs.pop("ctx", None)
     if ctx is not None:
@@ -27,10 +33,16 @@ def _resolve_ctx(kwargs: dict[str, Any]) -> dict[str, str]:
         val = kwargs.pop(key, None)
         if val is not None:
             filters[key] = val
+    if not filters:
+        raise ValueError(
+            "Mem0Memory requires scoping information (pass ctx=... with a "
+            "session_id/user_id, or an explicit user_id/run_id/agent_id/"
+            "app_id) to avoid pooling memory across every user and session."
+        )
     return filters
 
 
-class Mem0Memory(Memory):
+class Mem0Memory(MemoryTool):
     """
     mem0 cloud backend for AgentMemory.
 
