@@ -53,6 +53,8 @@ flowchart TD
         subgraph hooks_sub[ant_ai.hooks]
             HookLayer[HookLayer]
             GuardrailsHook[GuardrailsAIHook]
+            PIIHook[PIIGuardrailHook]
+            LLMGuardrail[LLMGuardrailHook]
         end
 
         Colony -.->|creates A2AServer| A2AS

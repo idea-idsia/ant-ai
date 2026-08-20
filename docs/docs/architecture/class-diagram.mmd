@@ -44,6 +44,8 @@ classDiagram
     ToolRegistry --> Tool : resolves
     HookLayer --> AgentHook : orchestrates
     AgentHook <|.. GuardrailsAIHook : implements
+    AgentHook <|.. PIIGuardrailHook : implements
+    AgentHook <|.. LLMGuardrailHook : implements
     SkillPresenter --> AgentSkill : renders
     SkillPresenter <|.. MarkdownSkillPresenter : implements
     Tool <|-- A2AAgentTool : extends

@@ -182,6 +182,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "datafog" },
     { name = "graphviz" },
     { name = "guardrails-ai" },
     { name = "huggingface-hub" },
@@ -189,6 +190,9 @@ all = [
     { name = "mem0ai" },
     { name = "openai" },
     { name = "tokenizers" },
+]
+datafog = [
+    { name = "datafog" },
 ]
 guardrails-ai = [
     { name = "guardrails-ai" },
@@ -232,6 +236,8 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", extras = ["sql", "http-server", "grpc", "encryption", "telemetry"], specifier = ">=1.1.2" },
+    { name = "datafog", marker = "extra == 'all'", specifier = ">=4.8.1" },
+    { name = "datafog", marker = "extra == 'datafog'", specifier = ">=4.8.1" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "graphviz", marker = "extra == 'all'", specifier = ">=0.21" },
     { name = "graphviz", marker = "extra == 'viz'", specifier = ">=0.21" },
@@ -256,7 +262,7 @@ requires-dist = [
     { name = "tokenizers", marker = "extra == 'guardrails-ai'", specifier = ">=0.23.1" },
     { name = "uvicorn", specifier = ">=0.52.3" },
 ]
-provides-extras = ["guardrails-ai", "langfuse", "mem0", "openai", "viz", "all"]
+provides-extras = ["datafog", "guardrails-ai", "langfuse", "mem0", "openai", "viz", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -686,6 +692,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/64/a2/4615c8f7d81a00b1d6e6afe19f694e1543582349fb5f4076f6cb5dc36485/cryptography-50.0.0-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:c87f62a3d3b9888ed0fdde100ec06aa61ca9cd44bad9057d1dff9a516b5f5bb9", size = 4878208, upload-time = "2026-07-31T14:24:45.522Z" },
     { url = "https://files.pythonhosted.org/packages/d2/1a/efcfb02f91407149a0dacffffab791f7e19bf6385f63b3666dc8b5e5c9c8/cryptography-50.0.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:65c2c3add92b45fd0709db8594536aea39c2a67af0e27ffcf049c498501140b7", size = 5037050, upload-time = "2026-07-31T14:24:47.697Z" },
     { url = "https://files.pythonhosted.org/packages/57/30/4a22984d4f1bdfb8c054f07a92bc176b97a3134cc1d6c4b3bffb1f3688b4/cryptography-50.0.0-cp39-abi3-win_amd64.whl", hash = "sha256:d24fead1d4d076e1bfb006dcec392074a3cd8d7b4fc8a595aa64073b2b7a96ba", size = 3874135, upload-time = "2026-07-31T14:24:50.085Z" },
+]
+
+[[package]]
+name = "datafog"
+version = "4.8.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6e/02/27d9aecbbfefd814ff5f0b086313aa2e2b4240525533eca2bef953a77bde/datafog-4.8.1.tar.gz", hash = "sha256:3b54f05ccdaff5b5b7a04cde0a3824e2b82f6dedd95d768b2b33fc460f698086", size = 101965, upload-time = "2026-07-28T00:10:59.965Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/80/b5/93063b6df06da145aeef015aaf4a74764c96e16201ec08c412a0a813b800/datafog-4.8.1-py3-none-any.whl", hash = "sha256:d91cfb6d93568c9d073ca3ec93b492d29195f44828584556bd7bc443d3347040", size = 76401, upload-time = "2026-07-28T00:10:58.733Z" },
 ]
 
 [[package]]
