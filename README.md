@@ -78,10 +78,12 @@ uv sync --all-packages --all-groups --all-extras
 from ant_ai import Agent, Message, State, tool
 from ant_ai.llm.integrations import LiteLLMChat
 
+
 @tool
 def get_weather(city: str) -> str:
     """Return the current weather for a city."""
     return f"Sunny, 22°C in {city}"
+
 
 llm = LiteLLMChat(model="gpt-4o-mini")
 
@@ -112,10 +114,12 @@ async for event in agent.stream(state):
 ```python
 from pydantic import BaseModel
 
+
 class WeatherReport(BaseModel):
     city: str
     temperature: int
     condition: str
+
 
 answer = agent.invoke(state, response_schema=WeatherReport)
 # answer is a JSON string matching WeatherReport

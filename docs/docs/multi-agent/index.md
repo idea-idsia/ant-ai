@@ -51,8 +51,8 @@ If you don't need a persistent task store, omit `db_url` and the colony will use
 `colony.collab(source, target)` adds the target agent as a callable tool on the source agent. The source can then invoke the target during its ReAct loop, exactly like any other tool.
 
 ```python
-colony.collab("codegen", "testgen")   # codegen can call testgen
-colony.collab("quality", "codegen")   # quality can call codegen
+colony.collab("codegen", "testgen")  # codegen can call testgen
+colony.collab("quality", "codegen")  # quality can call codegen
 
 # bidirectional shorthand
 colony.collab("codegen", "quality", mutual=True)

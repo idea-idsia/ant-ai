@@ -39,11 +39,13 @@ The `@tool` decorator turns a plain function into a tool. Type annotations are u
 ```python
 from ant_ai import tool
 
+
 @tool
 def read_file(path: str) -> str:
     """Read the contents of a file."""
     with open(path) as f:
         return f.read()
+
 
 @tool
 def write_file(path: str, content: str) -> str:
@@ -69,6 +71,7 @@ Group related tools under a single class. Each public method becomes a separate 
 ```python
 from ant_ai import Tool
 
+
 class FilesystemTools(Tool):
     """Tools for reading and writing files."""
 
@@ -82,6 +85,7 @@ class FilesystemTools(Tool):
         with open(path, "w") as f:
             f.write(content)
         return f"Written to {path}"
+
 
 agent = Agent(..., tools=[FilesystemTools()])
 ```
@@ -106,6 +110,7 @@ import asyncio
 from ant_ai import Message, State, InvocationContext
 from ant_ai.core import FinalAnswerEvent, UpdateEvent
 
+
 async def main():
     ctx = InvocationContext(session_id="my-session")
     state = State()
@@ -116,6 +121,7 @@ async def main():
             print("update:", event.content)
         elif isinstance(event, FinalAnswerEvent):
             print("final:", event.content)
+
 
 asyncio.run(main())
 ```
@@ -141,15 +147,18 @@ from collections.abc import AsyncGenerator
 from ant_ai import Agent, Message, InvocationContext, State
 from ant_ai.workflow import NodeYield
 
+
 async def generate(
     agent: Agent, state: State, ctx: InvocationContext
 ) -> AsyncGenerator[NodeYield]:
-    state.add_message(Message(role="user", content="Write a Python function that reverses a string."))
+    state.add_message(
+        Message(role="user", content="Write a Python function that reverses a string.")
+    )
 
     async for event in agent.stream(state, ctx=ctx):
-        yield event   # forward events to the caller
+        yield event  # forward events to the caller
 
-    yield state       # always yield the updated state at the end
+    yield state  # always yield the updated state at the end
 ```
 
 ### Routing between nodes
@@ -159,6 +168,7 @@ A _conditional edge_ is an async function that inspects the state and returns th
 ```python
 from typing import Literal
 from ant_ai.workflow import END
+
 
 async def should_revise(
     agent: Agent, state: State, ctx: InvocationContext
@@ -181,7 +191,7 @@ workflow.add_node("revise", revise)
 workflow.add_edge(START, "generate")
 workflow.add_edge("generate", "validate")
 workflow.add_conditional_edge("validate", should_revise)
-workflow.add_edge("revise", "validate")   # retry loop
+workflow.add_edge("revise", "validate")  # retry loop
 ```
 
 The workflow enforces that each non-conditional node has exactly one outgoing edge. Conditional edges replace static edges on the same source node.

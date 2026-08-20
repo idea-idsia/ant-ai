@@ -12,11 +12,13 @@ This example builds a code-generation agent with file-system tools and runs it d
 # tools.py
 from ant_ai import tool
 
+
 @tool
 def read_file(path: str) -> str:
     """Read the contents of a file."""
     with open(path) as f:
         return f.read()
+
 
 @tool
 def write_file(path: str, content: str) -> str:
@@ -55,7 +57,12 @@ from myapp.agent import agent
 async def main():
     ctx = InvocationContext(session_id="demo-session")
     state = State()
-    state.add_message(Message(role="user", content="Write a function that checks if a number is prime and save it to prime.py."))
+    state.add_message(
+        Message(
+            role="user",
+            content="Write a function that checks if a number is prime and save it to prime.py.",
+        )
+    )
 
     async for event in agent.stream(state, ctx=ctx):
         if event.content:

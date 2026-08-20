@@ -179,9 +179,14 @@ Emitted by the agent's ReAct loop during LLM calls and tool execution.
 
 ```python
 from ant_ai.core.events import (
-    StartEvent, UpdateEvent, CompletedEvent,
-    ReasoningEvent, ToolCallingEvent, ToolResultEvent,
-    FinalAnswerEvent, MaxStepsReachedEvent,
+    StartEvent,
+    UpdateEvent,
+    CompletedEvent,
+    ReasoningEvent,
+    ToolCallingEvent,
+    ToolResultEvent,
+    FinalAnswerEvent,
+    MaxStepsReachedEvent,
 )
 
 async for event in workflow.stream(agent, ctx=ctx, state=state):

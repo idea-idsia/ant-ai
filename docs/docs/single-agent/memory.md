@@ -24,10 +24,9 @@ from ant_ai.memory import Memory
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext
 
+
 class MyMemory(Memory):
-    async def retrieve(
-        self, query: str, *, top_k: int = 5, **kwargs
-    ) -> list[Message]:
+    async def retrieve(self, query: str, *, top_k: int = 5, **kwargs) -> list[Message]:
         # Return relevant memories as system messages
         ...
 
@@ -51,7 +50,7 @@ agent = Agent(
     name="Assistant",
     llm=LiteLLMChat("gpt-5-mini"),
     system_prompt="You are a helpful assistant.",
-    memory=Mem0Memory(),           # picks up MEM0_API_KEY from the environment
+    memory=Mem0Memory(),  # picks up MEM0_API_KEY from the environment
 )
 ```
 
@@ -103,6 +102,7 @@ agent = Agent(
     memory=Mem0Memory(),
 )
 
+
 async def chat(user_id: str, text: str) -> str:
     ctx = InvocationContext(session_id="s1", user_id=user_id)
     state = State()
@@ -112,6 +112,7 @@ async def chat(user_id: str, text: str) -> str:
         if isinstance(event, FinalAnswerEvent):
             result = event.content
     return result
+
 
 async def main():
     # First session — agent learns the preference
@@ -123,6 +124,7 @@ async def main():
     # Second session — agent remembers without being told again
     reply = await chat("alice", "What's the capital of my country?")
     print(reply)
+
 
 asyncio.run(main())
 ```
