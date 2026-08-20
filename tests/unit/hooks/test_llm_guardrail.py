@@ -108,6 +108,19 @@ async def test_retry_when_judge_returns_invalid_json():
 
 
 @pytest.mark.unit
+async def test_retry_when_judge_returns_valid_json_missing_passed_field():
+    """Valid JSON that fails GuardrailVerdict schema validation, distinct from
+    the invalid-JSON case above: this fails at model_validate_json's schema
+    check, not its parse step."""
+    hook = LLMGuardrailHook(
+        judge_llm=_StubJudgeLLM('{"reason": "looks fine"}'), criteria="be nice"
+    )
+    decision = await hook.after_model(_llm_result("some text"), ctx=None)
+    assert isinstance(decision, PostModelRetry)
+    assert "LLM guardrail judge error" in decision.reason
+
+
+@pytest.mark.unit
 async def test_judge_called_with_response_format_and_criteria_in_prompt():
     judge = _StubJudgeLLM('{"passed": true}')
     hook = LLMGuardrailHook(judge_llm=judge, criteria="no medical advice")

@@ -88,6 +88,38 @@ async def test_allowlist_exempts_exact_value():
 
 
 @pytest.mark.unit
+async def test_allowlist_patterns_exempts_matching_regex():
+    hook = PIIGuardrailHook(allowlist_patterns=[r".*@example\.com"])
+    decision = await hook.after_model(
+        _llm_result("Reach support@example.com or foo@bar.com"), ctx=None
+    )
+    assert isinstance(decision, PostModelRetry)
+    assert decision.reason == "PII detected: EMAIL"
+
+
+@pytest.mark.unit
+async def test_allowlist_patterns_does_not_exempt_non_matching_text():
+    hook = PIIGuardrailHook(allowlist_patterns=[r".*@example\.com"])
+    decision = await hook.after_model(_llm_result("Contact foo@bar.com"), ctx=None)
+    assert isinstance(decision, PostModelRetry)
+    assert decision.reason == "PII detected: EMAIL"
+
+
+@pytest.mark.unit
+async def test_locales_enables_locale_specific_entity_detection():
+    hook = PIIGuardrailHook()
+    text = "Steuer-ID: 12 345 678 901"
+
+    decision_without_locale = await hook.after_model(_llm_result(text), ctx=None)
+    assert isinstance(decision_without_locale, PostModelPass)
+
+    localized_hook = PIIGuardrailHook(locales=["de"])
+    decision_with_locale = await localized_hook.after_model(_llm_result(text), ctx=None)
+    assert isinstance(decision_with_locale, PostModelRetry)
+    assert decision_with_locale.reason == "PII detected: DE_TAX_ID"
+
+
+@pytest.mark.unit
 async def test_skips_empty_raw_with_no_tool_calls():
     hook = PIIGuardrailHook()
     result = StepResult(
@@ -96,6 +128,27 @@ async def test_skips_empty_raw_with_no_tool_calls():
     )
     decision = await hook.after_model(result, ctx=None)
     assert isinstance(decision, PostModelPass)
+
+
+@pytest.mark.unit
+async def test_scans_all_joined_tool_call_arguments_not_just_the_first():
+    tc1 = ToolCall(
+        id="c1",
+        function=ToolFunction(name="tool_a", arguments='{"path": "a.py"}'),
+    )
+    tc2 = ToolCall(
+        id="c2",
+        function=ToolFunction(
+            name="tool_b", arguments='{"note": "contact foo@bar.com"}'
+        ),
+    )
+    result = StepResult(
+        output=LLMOutput(raw="", tool_calls=(tc1, tc2)),
+        transition=Transition(action=TransitionAction.CONTINUE),
+    )
+    decision = await PIIGuardrailHook().after_model(result, ctx=None)
+    assert isinstance(decision, PostModelRetry)
+    assert decision.reason == "PII detected: EMAIL"
 
 
 @pytest.mark.unit
