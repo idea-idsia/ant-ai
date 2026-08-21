@@ -6,7 +6,7 @@ import pytest
 
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext
-from ant_ai.memory.backends.mem0 import Mem0Memory, _resolve_ctx
+from ant_ai.memory.backends.mem0 import Mem0Memory, _resolve_scope
 
 
 @pytest.fixture
@@ -19,26 +19,26 @@ def mem0() -> Mem0Memory:
 
 
 @pytest.mark.unit
-def test_resolve_ctx_with_user_id_ctx_returns_user_id_filter():
+def test_resolve_scope_with_user_id_ctx_returns_user_id_filter():
     ctx = InvocationContext(session_id="s1", user_id="alice")
-    assert _resolve_ctx({"ctx": ctx}) == {"user_id": "alice"}
+    assert _resolve_scope(ctx, {}) == {"user_id": "alice"}
 
 
 @pytest.mark.unit
-def test_resolve_ctx_with_session_only_ctx_falls_back_to_run_id():
+def test_resolve_scope_with_session_only_ctx_falls_back_to_run_id():
     ctx = InvocationContext(session_id="s1", user_id=None)
-    assert _resolve_ctx({"ctx": ctx}) == {"run_id": "s1"}
+    assert _resolve_scope(ctx, {}) == {"run_id": "s1"}
 
 
 @pytest.mark.unit
-def test_resolve_ctx_with_bare_user_id_kwarg():
-    assert _resolve_ctx({"user_id": "alice"}) == {"user_id": "alice"}
+def test_resolve_scope_with_bare_user_id_kwarg():
+    assert _resolve_scope(None, {"user_id": "alice"}) == {"user_id": "alice"}
 
 
 @pytest.mark.unit
-def test_resolve_ctx_raises_when_unscoped():
+def test_resolve_scope_raises_when_unscoped():
     with pytest.raises(ValueError, match="requires scoping information"):
-        _resolve_ctx({})
+        _resolve_scope(None, {})
 
 
 @pytest.mark.unit

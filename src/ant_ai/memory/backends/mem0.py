@@ -11,8 +11,10 @@ from ant_ai.core.types import InvocationContext
 from ant_ai.tools.builtins.memory_tool import MemoryTool
 
 
-def _resolve_ctx(kwargs: dict[str, Any]) -> dict[str, str]:
-    """Pop ctx (or bare entity ids) from kwargs and return mem0 filters dict.
+def _resolve_scope(
+    ctx: InvocationContext | None, kwargs: dict[str, Any]
+) -> dict[str, str]:
+    """Build a mem0 filters dict from `ctx`, or bare entity ids in kwargs.
 
     ctx.user_id  → user_id  (cross-session)
     ctx.session_id → run_id (session-scoped fallback)
@@ -23,7 +25,6 @@ def _resolve_ctx(kwargs: dict[str, Any]) -> dict[str, str]:
             retrieve/update would hit mem0 unscoped, pooling memory across
             every user and session.
     """
-    ctx: InvocationContext | None = kwargs.pop("ctx", None)
     if ctx is not None:
         if ctx.user_id:
             return {"user_id": ctx.user_id}
@@ -60,7 +61,7 @@ class Mem0Memory(MemoryTool):
 
     @model_validator(mode="after")
     def _init_client(self) -> Mem0Memory:
-        self._client = (
+        self._client: AsyncMemoryClient = (
             AsyncMemoryClient(api_key=self.api_key)
             if self.api_key
             else AsyncMemoryClient()
@@ -68,9 +69,14 @@ class Mem0Memory(MemoryTool):
         return self
 
     async def retrieve(
-        self, query: str, *, top_k: int = 5, **kwargs: Any
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        ctx: InvocationContext | None = None,
+        **kwargs: Any,
     ) -> list[Message]:
-        filters = _resolve_ctx(kwargs)
+        filters = _resolve_scope(ctx, kwargs)
         options = SearchMemoryOptions(filters=filters or None, top_k=top_k)
         results: Any = await self._client.search(query, options=options)
         return [
@@ -78,8 +84,14 @@ class Mem0Memory(MemoryTool):
             for r in results.get("results", [])
         ]
 
-    async def update(self, messages: list[Message], **kwargs: Any) -> None:
-        filters = _resolve_ctx(kwargs)
+    async def update(
+        self,
+        messages: list[Message],
+        *,
+        ctx: InvocationContext | None = None,
+        **kwargs: Any,
+    ) -> None:
+        filters = _resolve_scope(ctx, kwargs)
         msg_dicts: list[dict[str, str]] = [
             {"role": m.role, "content": m.content} for m in messages if m.content
         ]

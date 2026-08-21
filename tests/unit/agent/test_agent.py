@@ -723,8 +723,8 @@ async def test_stream_with_memory_tool_call_injects_ctx_end_to_end():
     received: dict[str, Any] = {}
 
     class RecordingMemoryWithCtx(MemoryTool):
-        async def retrieve(self, query, *, top_k=5, **kwargs):
-            received["ctx"] = kwargs.get("ctx")
+        async def retrieve(self, query, *, top_k=5, ctx=None, **kwargs):
+            received["ctx"] = ctx
             received["query"] = query
             return [Message(role="system", content="likes rust")]
 

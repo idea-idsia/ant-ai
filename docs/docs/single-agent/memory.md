@@ -24,14 +24,24 @@ Both tools are absent when `memory` is `None`, so existing agents without memory
 ```python
 from ant_ai.memory import Memory
 from ant_ai.core.message import Message
+from ant_ai.core.types import InvocationContext
 
 
 class MyMemory(Memory):
-    async def retrieve(self, query: str, *, top_k: int = 5, **kwargs) -> list[Message]:
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        ctx: InvocationContext | None = None,
+        **kwargs,
+    ) -> list[Message]:
         # Return relevant memories as system messages
         ...
 
-    async def update(self, messages: list[Message], **kwargs) -> None:
+    async def update(
+        self, messages: list[Message], *, ctx: InvocationContext | None = None, **kwargs
+    ) -> None:
         # Persist messages for future retrieval
         ...
 ```
@@ -41,19 +51,27 @@ class MyMemory(Memory):
 ```python
 from ant_ai.tools.builtins.memory_tool import MemoryTool
 from ant_ai.core.message import Message
+from ant_ai.core.types import InvocationContext
 
 
 class MyMemory(MemoryTool):
     async def retrieve(
-        self, query: str, *, top_k: int = 5, **kwargs
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        ctx: InvocationContext | None = None,
+        **kwargs,
     ) -> list[Message]: ...
 
-    async def update(self, messages: list[Message], **kwargs) -> None: ...
+    async def update(
+        self, messages: list[Message], *, ctx: InvocationContext | None = None, **kwargs
+    ) -> None: ...
 
     # search/add are inherited automatically — no need to redefine them.
 ```
 
-Both `retrieve` and `update` receive `ctx: InvocationContext` via `**kwargs`. Use `ctx.user_id` for cross-session scoping.
+Both `retrieve` and `update` take `ctx: InvocationContext | None` as an explicit keyword-only parameter — the same one `search`/`add` receive, which `ToolStep` injects automatically from the current `InvocationContext` when the LLM calls the tool (see [How it works](#how-it-works)). Use `ctx.user_id` for cross-session scoping. `**kwargs` remains for backend-specific extras when calling `retrieve`/`update` directly, outside the tool path (e.g. `memory.retrieve(query, user_id="alice")`).
 
 ## Built-in backend: mem0
 
