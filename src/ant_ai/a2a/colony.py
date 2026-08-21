@@ -65,6 +65,7 @@ class Colony(BaseModel):
         agent: Agent,
         workflow: Workflow[Any],
         card: AgentCard,
+        stream_artifacts: bool = False,
     ) -> Colony:
         """Adds an agent to the colony.
 
@@ -73,6 +74,8 @@ class Colony(BaseModel):
             agent: The agent to be registered.
             workflow: The agent's workflow that will guide the agent execution.
             card: The A2A card for the agent.
+            stream_artifacts: Whether this agent's A2A server should translate
+                ContentDeltaEvent into artifact-update chunks. See `A2AServer`.
 
         Raises:
             ValueError: If the agent is already registered.
@@ -92,6 +95,7 @@ class Colony(BaseModel):
             host=parsed.hostname or "",
             port=parsed.port or 80,
             card=card,
+            stream_artifacts=stream_artifacts,
         )
         return self
 
@@ -167,6 +171,7 @@ class Colony(BaseModel):
             port=spec.port,
             agent_card=spec.card,
             task_store=task_store,
+            stream_artifacts=spec.stream_artifacts,
         )
 
     def _add_edge(self, source: str, target: str, *, config: A2AConfig) -> None:
@@ -228,4 +233,5 @@ class AgentSpec(BaseModel):
     host: str
     port: int
     card: AgentCard
+    stream_artifacts: bool = False
     model_config = ConfigDict(arbitrary_types_allowed=True)

@@ -78,6 +78,29 @@ class DummyOpenAIStreamChunk:
 
 
 @pytest.fixture
+def openai_tool_call_chunk():
+    def _make(
+        *,
+        index: int,
+        call_id: str | None = None,
+        name: str | None = None,
+        arguments: str | None = None,
+    ):
+        tc = SimpleNamespace(
+            index=index,
+            id=call_id,
+            function=SimpleNamespace(name=name, arguments=arguments),
+        )
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(delta=SimpleNamespace(content=None, tool_calls=[tc]))
+            ]
+        )
+
+    return _make
+
+
+@pytest.fixture
 def openai_sync_response():
     def _make(content: str | None) -> DummyOpenAIChatResponse:
         return DummyOpenAIChatResponse(content=content)
@@ -119,11 +142,44 @@ def litellm_response():
 
 @pytest.fixture
 def litellm_stream_chunk():
-    def _make(content: str | None):
+    def _make(content: str | None, *, reasoning_content: str | None = None):
         # shape: chunk.choices[0].delta.content
         return SimpleNamespace(
-            choices=[SimpleNamespace(delta=SimpleNamespace(content=content))],
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=content, reasoning_content=reasoning_content
+                    )
+                )
+            ],
             usage=Usage(**{"in_tokens": 10, "out_tokens": 15}),
+        )
+
+    return _make
+
+
+@pytest.fixture
+def litellm_tool_call_chunk():
+    def _make(
+        *,
+        index: int,
+        call_id: str | None = None,
+        name: str | None = None,
+        arguments: str | None = None,
+    ):
+        tc = SimpleNamespace(
+            index=index,
+            id=call_id,
+            function=SimpleNamespace(name=name, arguments=arguments),
+        )
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None, reasoning_content=None, tool_calls=[tc]
+                    )
+                )
+            ]
         )
 
     return _make

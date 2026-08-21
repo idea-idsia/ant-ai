@@ -30,17 +30,21 @@ class A2AExecutor(AgentExecutor):
     It handles the execution the workflow and propages the updates generated in it.
     """
 
-    def __init__(self, agent: Agent, workflow: Workflow):
+    def __init__(
+        self, agent: Agent, workflow: Workflow, *, stream_artifacts: bool = False
+    ):
         """Initialize the A2AExecutor. A2AExecutor is a subclass of AgentExecutor. The AgentExecutor is the a2a-sdk class
         that is responsible for processing the request made to the agent.
 
         Args:
             agent: Agent that will be used to execute the workflow.
             workflow: Workflow that will be executed.
+            stream_artifacts: Whether to translate ContentDeltaEvent into A2A
+                artifact-update chunks. See `HVEventToA2A`.
         """
         self.workflow: Workflow = workflow
         self.agent: Agent = agent
-        self._translator: HVEventToA2A = HVEventToA2A()
+        self._translator: HVEventToA2A = HVEventToA2A(stream_artifacts=stream_artifacts)
         self._a2a_to_hv: A2AToHVEvent = A2AToHVEvent()
 
     async def execute(

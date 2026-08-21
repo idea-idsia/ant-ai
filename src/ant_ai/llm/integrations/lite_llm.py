@@ -129,12 +129,26 @@ class LiteLLMChat(ChatLLM):
 
             stream = await acompletion(**kwargs)
             async for chunk in stream:
-                delta = chunk.choices[0].delta.content or ""
-                if not delta:
-                    continue
-
-                yield ChatLLMStreamChunk(
-                    delta=MessageChunk(role="assistant", delta=delta)
+                choice_delta = chunk.choices[0].delta
+                delta = choice_delta.content or ""
+                reasoning_delta = (
+                    getattr(choice_delta, "reasoning_content", None) or None
                 )
+                if delta or reasoning_delta:
+                    yield ChatLLMStreamChunk(
+                        delta=MessageChunk(role="assistant", delta=delta),
+                        reasoning_delta=reasoning_delta,
+                    )
+
+                for tc in getattr(choice_delta, "tool_calls", None) or []:
+                    yield ChatLLMStreamChunk(
+                        delta=MessageChunk(role="assistant", delta=""),
+                        tool_calls={
+                            "index": tc.index,
+                            "id": tc.id,
+                            "name": getattr(tc.function, "name", None),
+                            "arguments": getattr(tc.function, "arguments", None) or "",
+                        },
+                    )
 
         return gen()

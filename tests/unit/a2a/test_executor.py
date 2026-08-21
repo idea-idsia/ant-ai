@@ -15,8 +15,10 @@ from ant_ai.core.message import (
 )
 
 
-def _make_executor() -> A2AExecutor:
-    return A2AExecutor(agent=MagicMock(), workflow=MagicMock())
+def _make_executor(*, stream_artifacts: bool = False) -> A2AExecutor:
+    return A2AExecutor(
+        agent=MagicMock(), workflow=MagicMock(), stream_artifacts=stream_artifacts
+    )
 
 
 def _a2a_msg(role: Role = Role.ROLE_AGENT, text: str = "hello") -> A2AMessage:
@@ -137,3 +139,15 @@ def test_convert_history_mixed_sequence():
     assert isinstance(result[1], ToolCallResultMessage)
     assert isinstance(result[2], Message)
     assert result[2].role == "assistant"
+
+
+@pytest.mark.unit
+def test_stream_artifacts_defaults_to_disabled_on_translator():
+    executor = _make_executor()
+    assert executor._translator._stream_artifacts is False
+
+
+@pytest.mark.unit
+def test_stream_artifacts_flag_threaded_into_translator():
+    executor = _make_executor(stream_artifacts=True)
+    assert executor._translator._stream_artifacts is True

@@ -4,7 +4,7 @@ import pytest
 
 from ant_ai.a2a.agent import A2AAgentTool
 from ant_ai.a2a.config import A2AConfig
-from ant_ai.core.events import FinalAnswerEvent, UpdateEvent
+from ant_ai.core.events import ContentDeltaEvent, FinalAnswerEvent, UpdateEvent
 
 MODULE = sys.modules[A2AAgentTool.__module__]
 
@@ -148,6 +148,34 @@ async def test_call_remote_returns_last_event_content_until_final(monkeypatch, c
 
     result = await tool._func("hi there")  # type: ignore[attr-defined]
     assert result == "Hello world"
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_call_remote_ignores_content_delta_events(monkeypatch, config):
+    """A remote agent streaming ContentDeltaEvent (stream_artifacts=True on its
+    server) must not corrupt the returned text: ContentDeltaEvent.content is
+    always empty (only .delta carries text), so _call_remote's `if ev.content`
+    check should skip every delta and only pick up the terminal event's text."""
+
+    class FakeA2AClient:
+        def __init__(self, config):
+            self.config = config
+
+        async def get_agent_card(self):
+            return DummyAgentCard(name="remote-agent", description="desc")
+
+        async def send_message(self, message: str, context_id: None = None):
+            yield ContentDeltaEvent(delta="Hel", stream_id="s1", is_first=True)
+            yield ContentDeltaEvent(delta="lo", stream_id="s1")
+            yield FinalAnswerEvent(content="Hello", stream_id="s1")
+
+    monkeypatch.setattr(MODULE, "A2AClient", FakeA2AClient)
+
+    tool: A2AAgentTool = await A2AAgentTool.from_config(config)
+
+    result = await tool._func("hi there")  # type: ignore[attr-defined]
+    assert result == "Hello"
 
 
 @pytest.mark.unit

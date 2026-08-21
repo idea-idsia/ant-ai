@@ -142,3 +142,32 @@ async def test_wrap_model_call_chain_is_outermost_first():
         pass
 
     assert order == ["A:enter", "B:enter", "B:exit", "A:exit"]
+
+
+@pytest.mark.unit
+def test_is_stream_safe_true_for_empty_layer():
+    assert HookLayer().is_stream_safe() is True
+
+
+@pytest.mark.unit
+def test_is_stream_safe_true_for_hook_overriding_unrelated_method():
+    class BeforeAgentHook(AgentHook):
+        async def before_agent(self, state, ctx):
+            pass
+
+    assert HookLayer(hooks=[BeforeAgentHook()]).is_stream_safe() is True
+
+
+@pytest.mark.unit
+def test_is_stream_safe_false_for_hook_overriding_after_model():
+    assert HookLayer(hooks=[_RetryHook("x")]).is_stream_safe() is False
+
+
+@pytest.mark.unit
+def test_is_stream_safe_false_for_hook_overriding_wrap_model_call():
+    class WrapHook(AgentHook):
+        async def wrap_model_call(self, call_next, state, ctx):
+            async for item in call_next(state, ctx):
+                yield item
+
+    assert HookLayer(hooks=[WrapHook()]).is_stream_safe() is False

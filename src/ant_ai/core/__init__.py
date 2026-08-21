@@ -4,6 +4,7 @@ from ant_ai.core.events import (
     AnyEvent,
     ClarificationNeededEvent,
     CompletedEvent,
+    ContentDeltaEvent,
     Event,
     EventOrigin,
     FinalAnswerEvent,
@@ -55,6 +56,7 @@ __all__ = [
     "ToolResultEvent",
     "ReasoningEvent",
     "CompletedEvent",
+    "ContentDeltaEvent",
     "AnyEvent",
     # exceptions
     "HookBlockedError",

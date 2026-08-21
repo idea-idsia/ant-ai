@@ -25,6 +25,7 @@ class Agent(BaseAgent):
             hooks=self._hook_layer,
             max_retries=self.max_retries,
             memory=self.memory,
+            streaming=self.streaming,
         )
 
     def add_tool(self, tool: Tool) -> None:

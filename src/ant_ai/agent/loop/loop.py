@@ -38,6 +38,20 @@ class BaseAgentLoop(ABC, BaseModel):
     hooks: HookLayer = Field(default_factory=HookLayer)
     max_retries: int = Field(default=3, ge=1)
     memory: Memory | None = None
+    streaming: bool = Field(
+        default=False,
+        description="Forward LLM token deltas live instead of buffering whole events, when no registered hook needs the complete response.",
+    )
+
+    def _streaming_active(self) -> bool:
+        """Whether this run should stream deltas live.
+
+        Only true when the caller opted in AND no registered hook overrides
+        `after_model`/`wrap_model_call` beyond the no-op default — such a
+        hook needs the complete response to decide, and tokens already
+        streamed to a client cannot be retracted.
+        """
+        return self.streaming and self.hooks.is_stream_safe()
 
     async def _retrieve_memories(
         self, state: State, ctx: InvocationContext | None
@@ -86,9 +100,28 @@ class BaseAgentLoop(ABC, BaseModel):
         step: Step,
         state: State,
         ctx: InvocationContext | None,
+        *,
+        allow_streaming: bool = True,
     ) -> AsyncIterator[Event | StepResult]:
-        """Yields buffered events then StepResult, always going through the hook path."""
-        wrapped: WrapCall = self.hooks.wrap_model_call(step.run)
+        """Yields buffered events then StepResult, always going through the hook path.
+
+        When streaming is active and allowed for this call, invokes the
+        step's `stream()` method (live token deltas) instead of `run()`
+        (whole-response), mirroring `ChatLLM`'s own `ainvoke`/`stream` split.
+        `allow_streaming=False` forces the whole-response path regardless of
+        `_streaming_active()` — used for steps whose output may be silently
+        rewritten afterward (e.g. structured-output coercion), where
+        streaming live would be misleading.
+        """
+        use_stream = allow_streaming and self._streaming_active()
+        run_call: WrapCall = (
+            getattr(step, "stream", step.run) if use_stream else step.run
+        )
+        wrapped: WrapCall = self.hooks.wrap_model_call(run_call)
+        if use_stream:
+            async for item in self._stream_wrapped(step, wrapped, state, ctx):
+                yield item
+            return
         events, result = await self._consume_wrapped(step, wrapped, state, ctx)
         events, result = await self._apply_hooks(
             step, wrapped, state, ctx, events, result
@@ -96,6 +129,41 @@ class BaseAgentLoop(ABC, BaseModel):
         for event in events:
             yield event
         yield result
+
+    async def _stream_wrapped(
+        self,
+        step: Step,
+        wrapped_run: WrapCall,
+        state: State,
+        ctx: InvocationContext | None,
+    ) -> AsyncIterator[Event | StepResult]:
+        """Forward a step's events live, without buffering, on the hook-safe path.
+
+        Still runs `after_model` for lifecycle-contract correctness, but the
+        decision must be PostModelPass: a retry/block/fallback verdict here
+        would mean `is_stream_safe()` was wrong after tokens were already
+        irrevocably sent to the caller, which must fail loudly rather than
+        silently drop or duplicate output.
+        """
+        result: StepResult | None = None
+        async for item in self._observe_step(step, wrapped_run(state, ctx)):
+            if isinstance(item, StepResult):
+                result = item
+            else:
+                yield item
+
+        if result is None:
+            raise RuntimeError("Step produced no result")
+
+        decision: PostModelDecision = await self.hooks.run_after_model(result, ctx)
+        if not isinstance(decision, PostModelPass):
+            raise RuntimeError(
+                "Hook requested retry/block/fallback on a streamed response "
+                "after tokens were already forwarded to the caller. This "
+                "indicates HookLayer.is_stream_safe() incorrectly reported "
+                "the hook chain as stream-safe."
+            )
+        yield decision.result
 
     async def _consume_wrapped(
         self,

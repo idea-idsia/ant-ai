@@ -99,12 +99,22 @@ class OpenAIChat(ChatLLM):
             )
 
             async for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if not delta:
-                    continue
+                choice_delta = chunk.choices[0].delta
+                delta = choice_delta.content
+                if delta:
+                    yield ChatLLMStreamChunk(
+                        delta=MessageChunk(role="assistant", delta=delta)
+                    )
 
-                yield ChatLLMStreamChunk(
-                    delta=MessageChunk(role="assistant", delta=delta)
-                )
+                for tc in getattr(choice_delta, "tool_calls", None) or []:
+                    yield ChatLLMStreamChunk(
+                        delta=MessageChunk(role="assistant", delta=""),
+                        tool_calls={
+                            "index": tc.index,
+                            "id": tc.id,
+                            "name": getattr(tc.function, "name", None),
+                            "arguments": getattr(tc.function, "arguments", None) or "",
+                        },
+                    )
 
         return gen()

@@ -229,7 +229,12 @@ def _make_agent_card(port: int) -> AgentCard:
     return card
 
 
-def _make_colony(db_url: str | None = None) -> tuple[Colony, Agent, socket.socket]:
+def _make_colony(
+    db_url: str | None = None,
+    *,
+    streaming: bool = False,
+    stream_artifacts: bool = False,
+) -> tuple[Colony, Agent, socket.socket]:
     """Build a Colony + agent on a free port. Does NOT start the server.
 
     Returns an open bound socket (not a bare port number) so the port stays
@@ -242,6 +247,7 @@ def _make_colony(db_url: str | None = None) -> tuple[Colony, Agent, socket.socke
         llm=LiteLLMChat("test-model"),
         system_prompt=STICKY_AGENT_SYS,
         description="Sticky history test agent",
+        streaming=streaming,
     )
     colony = Colony(db_url=db_url)
     colony.agent(
@@ -249,6 +255,7 @@ def _make_colony(db_url: str | None = None) -> tuple[Colony, Agent, socket.socke
         agent=agent,
         workflow=build_single_node_workflow(),
         card=_make_agent_card(port),
+        stream_artifacts=stream_artifacts,
     )
     return colony, agent, sock
 
@@ -290,6 +297,22 @@ async def single_agent_hive(scripted_llm) -> AsyncGenerator[dict]:
     Yields ``{"port": int}``.
     """
     colony, _, sock = _make_colony(db_url=None)
+    port = sock.getsockname()[1]
+    app = colony.asgi(agent_name="sticky", use_fastapi=True)
+    server, task = await _start_server(app, sock)
+    yield {"port": port}
+    await _stop_server(server, task)
+
+
+@pytest.fixture
+async def streaming_agent_hive(scripted_llm) -> AsyncGenerator[dict]:
+    """
+    Single-agent colony with agent.streaming and A2A stream_artifacts both
+    enabled, backed by InMemoryTaskStore. CI-safe, no external deps.
+
+    Yields ``{"port": int}``.
+    """
+    colony, _, sock = _make_colony(db_url=None, streaming=True, stream_artifacts=True)
     port = sock.getsockname()[1]
     app = colony.asgi(agent_name="sticky", use_fastapi=True)
     server, task = await _start_server(app, sock)

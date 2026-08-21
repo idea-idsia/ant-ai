@@ -112,6 +112,65 @@ async def test_stream_yields_message_chunks_and_skips_empty_deltas(
 
 
 @pytest.mark.unit
+async def test_stream_yields_reasoning_delta(
+    monkeypatch,
+    sample_messages,
+    litellm_stream_chunk,
+    make_async_stream,
+):
+    import ant_ai.llm.integrations.lite_llm as wrapper_module
+
+    parts = [
+        litellm_stream_chunk(None, reasoning_content="thinking "),
+        litellm_stream_chunk("answer"),
+    ]
+
+    async def fake_acompletion(*, model, messages, stream=False, **kwargs):
+        return make_async_stream(parts)
+
+    monkeypatch.setattr(wrapper_module, "acompletion", fake_acompletion)
+
+    chat = LiteLLMChat(model="litellm-stream-model")
+    chunks = [c async for c in chat.stream(sample_messages)]
+
+    assert chunks[0].reasoning_delta == "thinking "
+    assert chunks[0].delta.delta == ""
+    assert chunks[1].reasoning_delta is None
+    assert chunks[1].delta.delta == "answer"
+
+
+@pytest.mark.unit
+async def test_stream_yields_tool_call_fragments(
+    monkeypatch,
+    sample_messages,
+    litellm_tool_call_chunk,
+    make_async_stream,
+):
+    import ant_ai.llm.integrations.lite_llm as wrapper_module
+
+    fragments = [
+        litellm_tool_call_chunk(
+            index=0, call_id="call-1", name="my_tool", arguments="{}"
+        ),
+    ]
+
+    async def fake_acompletion(*, model, messages, stream=False, **kwargs):
+        return make_async_stream(fragments)
+
+    monkeypatch.setattr(wrapper_module, "acompletion", fake_acompletion)
+
+    chat = LiteLLMChat(model="litellm-stream-model")
+    chunks = [c async for c in chat.stream(sample_messages)]
+
+    assert chunks[0].tool_calls == {
+        "index": 0,
+        "id": "call-1",
+        "name": "my_tool",
+        "arguments": "{}",
+    }
+
+
+@pytest.mark.unit
 def test_to_chatllm_response_maps_tool_calls(litellm_response, dummy_tool_call):
     """Validates the tool call mapping in to_chatllm_response()."""
     tool_calls = [

@@ -39,6 +39,20 @@ class HookLayer(BaseModel):
         """Returns True when no hooks are registered."""
         return not self.hooks
 
+    def is_stream_safe(self) -> bool:
+        """Returns True when no registered hook can retry/block/fall back a response.
+
+        Live token-level streaming can only be forwarded when no hook
+        overrides `after_model` or `wrap_model_call` beyond the no-op
+        defaults — such a hook needs the complete response to decide, and
+        tokens already streamed to a client cannot be retracted.
+        """
+        return all(
+            type(h).after_model is AgentHook.after_model
+            and type(h).wrap_model_call is AgentHook.wrap_model_call
+            for h in self.hooks
+        )
+
     async def run_before_agent(
         self, state: State, ctx: InvocationContext | None
     ) -> None:

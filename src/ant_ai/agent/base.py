@@ -75,6 +75,14 @@ class BaseAgent(BaseModel):
         ge=1,
         description="Maximum number of times to retry after a hook returns RETRY.",
     )
+    streaming: bool = Field(
+        default=False,
+        description=(
+            "Forward LLM token deltas live via ContentDeltaEvent instead of "
+            "buffering whole events, when no registered hook needs the "
+            "complete response (see HookLayer.is_stream_safe())."
+        ),
+    )
 
     _registry: ToolRegistry = PrivateAttr()
     _loop: BaseAgentLoop = PrivateAttr()
@@ -117,6 +125,14 @@ class BaseAgent(BaseModel):
     ) -> AsyncGenerator[Event]:
         """
         Stream events for a single agent turn.
+
+        When `streaming=True` on this agent and no registered hook needs the
+        complete response (see `HookLayer.is_stream_safe()`), live
+        `ContentDeltaEvent`s are interleaved before the terminal
+        `ReasoningEvent`/`ToolCallingEvent`/`FinalAnswerEvent` they build up
+        to; otherwise only whole events are yielded, as before. Structured
+        output's final coercion step never streams, since it may silently
+        rewrite the raw text.
 
         Pass `response_schema` to request structured output on the
         `FinalAnswerEvent`. When provided, the final event content will be

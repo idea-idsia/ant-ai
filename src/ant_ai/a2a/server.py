@@ -33,6 +33,14 @@ class A2AServer(BaseModel):
     queue_manager: QueueManager | None = Field(default=None)
     push_config_store: PushNotificationConfigStore | None = Field(default=None)
     push_sender: PushNotificationSender | None = Field(default=None)
+    stream_artifacts: bool = Field(
+        default=False,
+        description=(
+            "Translate ContentDeltaEvent into A2A TaskArtifactUpdateEvent "
+            "chunks via add_artifact. Independent of the agent's own "
+            "`streaming` flag."
+        ),
+    )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -47,6 +55,7 @@ class A2AServer(BaseModel):
             agent_executor=A2AExecutor(
                 agent=self.agent,
                 workflow=self.workflow,
+                stream_artifacts=self.stream_artifacts,
             ),
             task_store=self.task_store,
             agent_card=self.agent_card,
