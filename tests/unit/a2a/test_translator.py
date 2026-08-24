@@ -6,7 +6,13 @@ import pytest
 from a2a.types import Artifact, Part, TaskArtifactUpdateEvent
 
 from ant_ai.a2a.translator import A2AToHVEvent, HVEventToA2A
-from ant_ai.core.events import ContentDeltaEvent, FinalAnswerEvent
+from ant_ai.core.events import (
+    ContentDeltaEvent,
+    FinalAnswerEvent,
+    ReasoningEvent,
+    ToolCallingEvent,
+)
+from ant_ai.core.message import ToolCall, ToolFunction
 
 
 def _artifact_event(
@@ -90,9 +96,9 @@ async def test_content_delta_calls_add_artifact_with_append_and_artifact_id():
 
     assert updater.add_artifact.call_count == 2
     first_call, second_call = updater.add_artifact.call_args_list
-    assert first_call.kwargs["artifact_id"] == "s1"
+    assert first_call.kwargs["artifact_id"] == "s1:content"
     assert first_call.kwargs["append"] is False
-    assert second_call.kwargs["artifact_id"] == "s1"
+    assert second_call.kwargs["artifact_id"] == "s1:content"
     assert second_call.kwargs["append"] is True
 
 
@@ -110,7 +116,23 @@ async def test_content_delta_for_tool_call_uses_composite_artifact_id():
 
     await translator.apply(event, updater)
 
-    assert updater.add_artifact.call_args.kwargs["artifact_id"] == "s1:0"
+    assert updater.add_artifact.call_args.kwargs["artifact_id"] == "s1:tool:0"
+
+
+@pytest.mark.unit
+async def test_content_delta_for_reasoning_uses_distinct_artifact_id():
+    """Reasoning and content deltas from the same generation must not share
+    an artifact id, or a peer reading raw artifact text would see them
+    concatenated together."""
+    updater = _mock_updater()
+    translator = HVEventToA2A(stream_artifacts=True)
+    event = ContentDeltaEvent(
+        target_kind="reasoning", delta="thinking...", stream_id="s1", is_first=True
+    )
+
+    await translator.apply(event, updater)
+
+    assert updater.add_artifact.call_args.kwargs["artifact_id"] == "s1:reasoning"
 
 
 @pytest.mark.unit
@@ -122,9 +144,66 @@ async def test_agent_message_closes_artifact_when_stream_id_and_streaming_enable
     await translator.apply(event, updater)
 
     updater.add_artifact.assert_called_once_with(
-        parts=[], artifact_id="s1", append=True, last_chunk=True
+        parts=[], artifact_id="s1:content", append=True, last_chunk=True
     )
     updater.update_status.assert_called_once()
+
+
+@pytest.mark.unit
+async def test_agent_message_closes_reasoning_artifact_separately():
+    updater = _mock_updater()
+    translator = HVEventToA2A(stream_artifacts=True)
+    event = ReasoningEvent(content="thinking...", stream_id="s1")
+
+    await translator.apply(event, updater)
+
+    updater.add_artifact.assert_called_once_with(
+        parts=[], artifact_id="s1:reasoning", append=True, last_chunk=True
+    )
+
+
+@pytest.mark.unit
+async def test_agent_message_closes_content_and_each_tool_artifact():
+    """A ToolCallingEvent whose model also narrated text before calling
+    tools must close both the content artifact and one artifact per tool
+    call -- not just a single bare-stream_id artifact."""
+    updater = _mock_updater()
+    translator = HVEventToA2A(stream_artifacts=True)
+    event = ToolCallingEvent(
+        content="Let me check that.",
+        stream_id="s1",
+        tool_calls=(
+            ToolCall(id="tc-1", function=ToolFunction(name="echo", arguments="{}")),
+            ToolCall(id="tc-2", function=ToolFunction(name="echo", arguments="{}")),
+        ),
+    )
+
+    await translator.apply(event, updater)
+
+    closed_ids = {c.kwargs["artifact_id"] for c in updater.add_artifact.call_args_list}
+    assert closed_ids == {"s1:content", "s1:tool:0", "s1:tool:1"}
+
+
+@pytest.mark.unit
+async def test_agent_message_skips_content_artifact_when_no_narration():
+    """A ToolCallingEvent with no narration text (pure tool call, no
+    preceding content deltas) must not attempt to close a content artifact
+    that was never created."""
+    updater = _mock_updater()
+    translator = HVEventToA2A(stream_artifacts=True)
+    event = ToolCallingEvent(
+        content="",
+        stream_id="s1",
+        tool_calls=(
+            ToolCall(id="tc-1", function=ToolFunction(name="echo", arguments="{}")),
+        ),
+    )
+
+    await translator.apply(event, updater)
+
+    updater.add_artifact.assert_called_once_with(
+        parts=[], artifact_id="s1:tool:0", append=True, last_chunk=True
+    )
 
 
 @pytest.mark.unit

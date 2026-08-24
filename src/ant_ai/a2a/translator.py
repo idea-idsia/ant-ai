@@ -66,7 +66,7 @@ class HVEventToA2A:
     never from per-artifact bookkeeping kept here.
     """
 
-    def __init__(self, *, stream_artifacts: bool = False) -> None:
+    def __init__(self, *, stream_artifacts: bool = True) -> None:
         """
         Initializes the translator and registers handlers. Adopting a single-dispatch like approach for translating Events to A2A updates, where handlers are registered via a decorator and stored in a mapping of event class to handler method.
 
@@ -74,7 +74,8 @@ class HVEventToA2A:
             stream_artifacts: Whether to translate ContentDeltaEvent into A2A
                 TaskArtifactUpdateEvent chunks via `add_artifact`. When False,
                 deltas are dropped and only the terminal whole-event message
-                is sent, matching today's behavior.
+                is sent. The terminal message is always sent either way, so
+                this is purely additive for peers that read artifacts.
         """
         self._stream_artifacts = stream_artifacts
         self._handlers: dict[type[Event], Handler] = {}
@@ -140,9 +141,32 @@ class HVEventToA2A:
         )
 
         stream_id = getattr(event, "stream_id", None)
-        if self._stream_artifacts and stream_id:
+        if not self._stream_artifacts or not stream_id:
+            return
+
+        # Reasoning, content, and each tool call stream under their own
+        # artifact id (see _content_delta) so a peer reading raw artifact
+        # text never sees them concatenated. Which of these actually exist
+        # is derivable from the event itself, with no tracking needed:
+        # ReasoningEvent only fires when reasoning text was non-empty (i.e.
+        # reasoning deltas -- and that artifact -- exist); content deltas
+        # exist iff event.content is non-empty; tool calls always streamed
+        # under their index if they're present at all (stream_id is only
+        # set by LLMStep.stream(), never .run()). Tool calls appear here in
+        # the same order _stream_deltas first saw their index (see
+        # LLMStep.stream / _ToolCallFragment), so position == original index.
+        artifact_ids: list[str] = []
+        if isinstance(event, ReasoningEvent):
+            artifact_ids.append(f"{stream_id}:reasoning")
+        else:
+            if event.content:
+                artifact_ids.append(f"{stream_id}:content")
+            tool_calls = getattr(event, "tool_calls", None) or []
+            artifact_ids += [f"{stream_id}:tool:{i}" for i in range(len(tool_calls))]
+
+        for artifact_id in artifact_ids:
             await updater.add_artifact(
-                parts=[], artifact_id=stream_id, append=True, last_chunk=True
+                parts=[], artifact_id=artifact_id, append=True, last_chunk=True
             )
 
     @handler(ContentDeltaEvent)
@@ -152,9 +176,9 @@ class HVEventToA2A:
         if not self._stream_artifacts:
             return
         artifact_id = (
-            f"{event.stream_id}:{event.tool_call_index}"
+            f"{event.stream_id}:tool:{event.tool_call_index}"
             if event.tool_call_index is not None
-            else event.stream_id
+            else f"{event.stream_id}:{event.target_kind}"
         )
         metadata: dict[str, Any] = A2AMetadata(event=event).model_dump()
         await updater.add_artifact(

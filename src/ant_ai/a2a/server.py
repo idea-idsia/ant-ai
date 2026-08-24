@@ -34,11 +34,14 @@ class A2AServer(BaseModel):
     push_config_store: PushNotificationConfigStore | None = Field(default=None)
     push_sender: PushNotificationSender | None = Field(default=None)
     stream_artifacts: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Translate ContentDeltaEvent into A2A TaskArtifactUpdateEvent "
-            "chunks via add_artifact. Independent of the agent's own "
-            "`streaming` flag."
+            "chunks via add_artifact, forwarding live token deltas to "
+            "whatever peer is talking to this server. The agent's own "
+            "stream() always emits ContentDeltaEvents internally regardless "
+            "of this flag -- this only decides whether they also go out "
+            "over the wire."
         ),
     )
 

@@ -31,7 +31,7 @@ class A2AExecutor(AgentExecutor):
     """
 
     def __init__(
-        self, agent: Agent, workflow: Workflow, *, stream_artifacts: bool = False
+        self, agent: Agent, workflow: Workflow, *, stream_artifacts: bool = True
     ):
         """Initialize the A2AExecutor. A2AExecutor is a subclass of AgentExecutor. The AgentExecutor is the a2a-sdk class
         that is responsible for processing the request made to the agent.

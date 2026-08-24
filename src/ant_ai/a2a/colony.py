@@ -65,7 +65,7 @@ class Colony(BaseModel):
         agent: Agent,
         workflow: Workflow[Any],
         card: AgentCard,
-        stream_artifacts: bool = False,
+        stream_artifacts: bool = True,
     ) -> Colony:
         """Adds an agent to the colony.
 
@@ -76,6 +76,10 @@ class Colony(BaseModel):
             card: The A2A card for the agent.
             stream_artifacts: Whether this agent's A2A server should translate
                 ContentDeltaEvent into artifact-update chunks. See `A2AServer`.
+                Defaults on since it's additive (the terminal message is
+                always sent regardless) and harmless for peers that ignore
+                it, like `A2AAgentTool`. Set False to skip the wire overhead
+                for an agent that's only ever called by other agents.
 
         Raises:
             ValueError: If the agent is already registered.
@@ -233,5 +237,5 @@ class AgentSpec(BaseModel):
     host: str
     port: int
     card: AgentCard
-    stream_artifacts: bool = False
+    stream_artifacts: bool = True
     model_config = ConfigDict(arbitrary_types_allowed=True)
