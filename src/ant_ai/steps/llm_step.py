@@ -71,14 +71,11 @@ class LLMStep(BaseModel):
 
     response_format: type[BaseModel] | None = Field(default=None, exclude=True)
 
-    async def run(
-        self,
-        state: State,
-        ctx: InvocationContext | None,
-    ):
-        llm_input: list[Message] = [self.system_message, *state.messages]
+    def _build_llm_input(self, state: State) -> list[Message]:
+        return [self.system_message, *state.messages]
 
-        async with obs.span(
+    def _generation_span(self, llm_input: list[Message], state: State):
+        return obs.span(
             getattr(self.llm, "model", "llm"),
             as_type="generation",
             model=getattr(self.llm, "model", None),
@@ -88,7 +85,36 @@ class LLMStep(BaseModel):
                 "tool_count": len(self.serialized_tools),
                 "has_response_format": self.response_format is not None,
             },
-        ) as span:
+        )
+
+    async def _finish(
+        self,
+        raw: str,
+        tool_calls: list[ToolCall],
+        reasoning: str | None,
+        stream_id: str | None,
+    ):
+        """Yields the optional `ReasoningEvent`, terminal event, and `StepResult`
+        shared by `run()` and `stream()` once a response has been fully collected.
+        """
+        if reasoning:
+            yield ReasoningEvent(content=reasoning, stream_id=stream_id)
+
+        event, transition = _terminal_event(raw, tool_calls, stream_id=stream_id)
+        yield event
+        yield StepResult(
+            output=LLMOutput(raw=raw, tool_calls=tuple(tool_calls)),
+            transition=transition,
+        )
+
+    async def run(
+        self,
+        state: State,
+        ctx: InvocationContext | None,
+    ):
+        llm_input: list[Message] = self._build_llm_input(state)
+
+        async with self._generation_span(llm_input, state) as span:
             response: ChatLLMResponse = await self.llm.ainvoke(
                 llm_input,
                 ctx=ctx,
@@ -116,15 +142,9 @@ class LLMStep(BaseModel):
 
             span.update(**update_payload)
 
-        output = LLMOutput(raw=raw, tool_calls=tuple(tool_calls))
-
         reasoning = getattr(response, "reasoning", None)
-        if reasoning:
-            yield ReasoningEvent(content=reasoning)
-
-        event, transition = _terminal_event(raw, tool_calls, stream_id=None)
-        yield event
-        yield StepResult(output=output, transition=transition)
+        async for item in self._finish(raw, tool_calls, reasoning, stream_id=None):
+            yield item
 
     async def stream(
         self,
@@ -138,20 +158,10 @@ class LLMStep(BaseModel):
         as `run()` would produce for the same response, correlated via
         `stream_id`.
         """
-        llm_input: list[Message] = [self.system_message, *state.messages]
+        llm_input: list[Message] = self._build_llm_input(state)
         stream_id = str(uuid4())
 
-        async with obs.span(
-            getattr(self.llm, "model", "llm"),
-            as_type="generation",
-            model=getattr(self.llm, "model", None),
-            input=llm_input,
-            metadata={
-                "message_count": len(state.messages),
-                "tool_count": len(self.serialized_tools),
-                "has_response_format": self.response_format is not None,
-            },
-        ) as span:
+        async with self._generation_span(llm_input, state) as span:
             raw, tool_calls, reasoning = "", [], None
             async for (
                 delta_event,
@@ -171,14 +181,8 @@ class LLMStep(BaseModel):
             # ChatLLMResponse, so those span attributes are unavailable here.
             span.update(output=raw, metadata={"tool_call_count": len(tool_calls)})
 
-        output = LLMOutput(raw=raw, tool_calls=tuple(tool_calls))
-
-        if reasoning:
-            yield ReasoningEvent(content=reasoning, stream_id=stream_id)
-
-        event, transition = _terminal_event(raw, tool_calls, stream_id=stream_id)
-        yield event
-        yield StepResult(output=output, transition=transition)
+        async for item in self._finish(raw, tool_calls, reasoning, stream_id=stream_id):
+            yield item
 
     async def _stream_deltas(
         self,

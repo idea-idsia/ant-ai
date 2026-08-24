@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -71,6 +72,32 @@ def make_tool_call_response(tool_name: str, message: str) -> _FakeResponse:
     """
     tc = _FakeToolCall(tool_name, json.dumps({"message": message}))
     return _FakeResponse(_FakeMessage("", tool_calls=[tc]))
+
+
+def _stream_chunk_from_response(resp: _FakeResponse) -> SimpleNamespace:
+    """Adapt a non-streaming `_FakeResponse` into one litellm-shaped stream chunk."""
+    message = resp.choices[0].message
+    tool_deltas = [
+        SimpleNamespace(
+            index=i,
+            id=tc.id,
+            function=SimpleNamespace(
+                name=tc.function.name, arguments=tc.function.arguments
+            ),
+        )
+        for i, tc in enumerate(message.tool_calls)
+    ]
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=message.get("content"),
+                    reasoning_content=None,
+                    tool_calls=tool_deltas or None,
+                )
+            )
+        ]
+    )
 
 
 def _bound_socket() -> socket.socket:
@@ -152,7 +179,25 @@ def scripted_llm(monkeypatch: pytest.MonkeyPatch):
         make_tool_call_response = staticmethod(make_tool_call_response)
 
         def install(self, fn: Any) -> None:
-            monkeypatch.setattr(_llm_mod, "acompletion", fn)
+            async def adapted(*, stream: bool = False, **kwargs: Any) -> Any:
+                """Streaming is now always attempted (see ChatLLM.stream()'s default
+                and Agent's hook-safety gate), but most dispatch fns here only know
+                how to answer non-streaming calls. When one of those returns a plain
+                `_FakeResponse` for a `stream=True` call, adapt it into a one-chunk
+                stream instead of forcing every test's dispatch fn to branch on
+                `stream` itself. A dispatch fn that already returns something
+                iterable (e.g. it branches on `stream` itself) passes through as-is.
+                """
+                result: Any = await fn(stream=stream, **kwargs)
+                if stream and not hasattr(result, "__aiter__"):
+
+                    async def gen() -> AsyncIterator[SimpleNamespace]:
+                        yield _stream_chunk_from_response(result)
+
+                    return gen()
+                return result
+
+            monkeypatch.setattr(_llm_mod, "acompletion", adapted)
 
     return _ScriptedLLM()
 

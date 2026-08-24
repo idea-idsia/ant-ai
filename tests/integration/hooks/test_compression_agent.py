@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Awaitable, Callable
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -40,6 +42,37 @@ class _FakeResponse:
     def __init__(self, content: str) -> None:
         self.choices = [_FakeChoice(_FakeMessage(content))]
         self.usage = _FakeUsage()
+
+
+def _adapt_stream(
+    fn: Callable[..., Awaitable[_FakeResponse]],
+) -> Callable[..., Awaitable[Any]]:
+    """Wrap a non-streaming dispatch fn so `stream=True` calls (always attempted
+    now — see ChatLLM.stream()'s default and Agent's hook-safety gate) get a
+    one-chunk stream instead of the plain `_FakeResponse` these tests return.
+    """
+
+    async def wrapped(*, stream: bool = False, **kwargs: Any) -> Any:
+        result = await fn(stream=stream, **kwargs)
+        if not stream:
+            return result
+
+        async def gen() -> AsyncIterator[SimpleNamespace]:
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content=result.choices[0].message.get("content"),
+                            reasoning_content=None,
+                            tool_calls=None,
+                        )
+                    )
+                ]
+            )
+
+        return gen()
+
+    return wrapped
 
 
 class _SummaryLLM:
@@ -123,7 +156,7 @@ async def test_compression_fires_in_standalone_agent(monkeypatch: pytest.MonkeyP
         call_count += 1
         return _FakeResponse(f"Reply {call_count}.")
 
-    monkeypatch.setattr(_llm_mod, "acompletion", dispatch)
+    monkeypatch.setattr(_llm_mod, "acompletion", _adapt_stream(dispatch))
 
     summary_llm = _SummaryLLM("STANDALONE_SUMMARY")
     # max_messages=5, keep_last=2 → compression fires on turn 3 (5 msgs: u1 a1 u2 a2 u3)
@@ -162,7 +195,7 @@ async def test_compression_fires_in_agent_workflow(monkeypatch: pytest.MonkeyPat
         call_count += 1
         return _FakeResponse(f"Reply {call_count}.")
 
-    monkeypatch.setattr(_llm_mod, "acompletion", dispatch)
+    monkeypatch.setattr(_llm_mod, "acompletion", _adapt_stream(dispatch))
 
     summary_llm = _SummaryLLM("WORKFLOW_SUMMARY")
     agent = _make_agent(summary_llm, max_messages=5, keep_last=2)

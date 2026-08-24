@@ -73,7 +73,6 @@ def make_loop(
     act_step=None,
     hooks=None,
     max_retries: int = 3,
-    streaming: bool = False,
 ) -> ReActLoop:
     """Construct a ReActLoop bypassing Pydantic validation."""
     return ReActLoop.model_construct(
@@ -81,7 +80,6 @@ def make_loop(
         act_step=act_step,
         hooks=hooks if hooks is not None else HookLayer(),
         max_retries=max_retries,
-        streaming=streaming,
     )
 
 
@@ -540,9 +538,9 @@ async def test_max_steps_without_coerce_schema_still_emits_max_steps_reached():
 
 @pytest.mark.unit
 async def test_streaming_active_forwards_content_deltas_live():
-    """With streaming=True and no unsafe hooks, the loop calls .stream() (not
-    .run()), ContentDeltaEvents are forwarded, and the final answer content
-    matches what a buffered run would have produced."""
+    """With no unsafe hooks, the loop calls .stream() (not .run()) by default,
+    ContentDeltaEvents are forwarded, and the final answer content matches
+    what a buffered run would have produced."""
     calls: list[str] = []
 
     class RecordingStep:
@@ -564,7 +562,7 @@ async def test_streaming_active_forwards_content_deltas_live():
         def model_copy(self, *, update=None, **_):
             return self
 
-    loop = make_loop(RecordingStep(), streaming=True)
+    loop = make_loop(RecordingStep())
     state = State(messages=[Message(role="user", content="hi")])
 
     events = [e async for e in loop.stream(state, ctx=None)]
@@ -583,8 +581,9 @@ async def test_streaming_active_forwards_content_deltas_live():
 
 @pytest.mark.unit
 async def test_streaming_falls_back_to_buffered_when_hook_is_unsafe():
-    """A hook overriding after_model makes is_stream_safe() False, so even with
-    streaming=True the loop must take the fully-buffered path unchanged."""
+    """A hook overriding after_model makes is_stream_safe() False, so the loop
+    must take the fully-buffered path even though streaming is otherwise
+    always attempted."""
     reason_step = FakeStep(
         "llm",
         [
@@ -592,7 +591,7 @@ async def test_streaming_falls_back_to_buffered_when_hook_is_unsafe():
             make_llm_result("Hello"),
         ],
     )
-    loop = make_loop(reason_step, hooks=HookLayer(hooks=[_PassHook()]), streaming=True)
+    loop = make_loop(reason_step, hooks=HookLayer(hooks=[_PassHook()]))
     state = State(messages=[Message(role="user", content="hi")])
 
     events = [e async for e in loop.stream(state, ctx=None)]
@@ -610,8 +609,8 @@ async def test_streaming_falls_back_to_buffered_when_hook_is_unsafe():
 @pytest.mark.unit
 async def test_coerce_schema_final_step_never_streams():
     """The structured-output coercion branch must always call .run(), never
-    .stream(), even when the loop is streaming-active, since coercion may
-    silently rewrite the raw text after the fact."""
+    .stream(), even though streaming is otherwise always attempted, since
+    coercion may silently rewrite the raw text after the fact."""
     calls: list[str] = []
 
     class RecordingStep:
@@ -633,7 +632,7 @@ async def test_coerce_schema_final_step_never_streams():
 
     # act_step must be non-None for the loop to treat response_schema as
     # coerce_schema (applied on the final step) rather than an eager override.
-    loop = make_loop(RecordingStep(), act_step=FakeStep("tool", []), streaming=True)
+    loop = make_loop(RecordingStep(), act_step=FakeStep("tool", []))
     state = State(messages=[Message(role="user", content="hi")])
 
     events = [

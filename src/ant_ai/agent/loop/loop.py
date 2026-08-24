@@ -38,20 +38,16 @@ class BaseAgentLoop(ABC, BaseModel):
     hooks: HookLayer = Field(default_factory=HookLayer)
     max_retries: int = Field(default=3, ge=1)
     memory: Memory | None = None
-    streaming: bool = Field(
-        default=False,
-        description="Forward LLM token deltas live instead of buffering whole events, when no registered hook needs the complete response.",
-    )
 
     def _streaming_active(self) -> bool:
         """Whether this run should stream deltas live.
 
-        Only true when the caller opted in AND no registered hook overrides
-        `after_model`/`wrap_model_call` beyond the no-op default — such a
-        hook needs the complete response to decide, and tokens already
-        streamed to a client cannot be retracted.
+        True unless a registered hook overrides `after_model`/
+        `wrap_model_call` beyond the no-op default — such a hook needs the
+        complete response to decide, and tokens already streamed to a
+        client cannot be retracted.
         """
-        return self.streaming and self.hooks.is_stream_safe()
+        return self.hooks.is_stream_safe()
 
     async def _retrieve_memories(
         self, state: State, ctx: InvocationContext | None
