@@ -201,6 +201,9 @@ class LLMStep(BaseModel):
         reasoning_started = False
         content_started = False
         tool_frags: dict[int, _ToolCallFragment] = {}
+        # Some providers tag every parallel tool call with the same provider-reported index instead of incrementing it, delivering each as one complete chunk (its own id + full arguments). This dict maps those provider indices to the next available index for our own use, so we can yield a separate `ContentDeltaEvent` for each tool call.
+        resolved_index_for: dict[int, int] = {}
+        next_resolved_index = 0
 
         async for chunk in self.llm.stream(
             messages=llm_input,
@@ -237,11 +240,29 @@ class LLMStep(BaseModel):
                 content_started = True
 
             if chunk.tool_calls:
-                idx = chunk.tool_calls["index"]
+                provider_idx = chunk.tool_calls["index"]
+                incoming_id = chunk.tool_calls.get("id")
+                if provider_idx not in resolved_index_for:
+                    idx = next_resolved_index
+                    next_resolved_index += 1
+                    resolved_index_for[provider_idx] = idx
+                else:
+                    idx = resolved_index_for[provider_idx]
+                    existing_frag = tool_frags.get(idx)
+                    if (
+                        existing_frag is not None
+                        and existing_frag.id is not None
+                        and incoming_id
+                        and incoming_id != existing_frag.id
+                    ):
+                        idx = next_resolved_index
+                        next_resolved_index += 1
+                        resolved_index_for[provider_idx] = idx
+
                 frag: _ToolCallFragment = tool_frags.setdefault(
                     idx, _ToolCallFragment()
                 )
-                is_first_frag = frag.id is None and bool(chunk.tool_calls.get("id"))
+                is_first_frag = frag.id is None and bool(incoming_id)
                 if chunk.tool_calls.get("id"):
                     frag.id = chunk.tool_calls["id"]
                 if chunk.tool_calls.get("name"):
