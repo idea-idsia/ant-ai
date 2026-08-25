@@ -66,6 +66,7 @@ A hook whose `after_model`/`wrap_model_call` override never changes the outcome 
 ```python
 from ant_ai.hooks import AgentHook, PostModelPass
 
+
 class LoggingHook(AgentHook):
     stream_safe = True  # never returns anything but PostModelPass
 
