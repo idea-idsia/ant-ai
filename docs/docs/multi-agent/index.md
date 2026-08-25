@@ -100,7 +100,7 @@ http://quality-agent:9003/
 4. The target agent runs its own workflow, streams events back, and returns a final answer.
 5. The source agent incorporates the result as a tool result and continues its ReAct loop.
 
-See [Architecture](../architecture/index.md) for the full event-streaming sequence diagram.
+See [Architecture](../architecture/index.md) for the full event-streaming sequence diagram, and [Streaming](../single-agent/streaming.md#over-a2a) for how live token deltas are forwarded (or not) between agents in a colony.
 
 ## Full example
 
