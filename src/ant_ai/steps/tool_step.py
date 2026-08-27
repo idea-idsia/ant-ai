@@ -154,6 +154,9 @@ class ToolStep(BaseModel):
             )
 
         tool: Tool = self.registry[tool_name]
+        call_kwargs: dict[str, Any] = dict(parsed_args)
+        if tool.wants_context:
+            call_kwargs["ctx"] = ctx
         try:
             async with obs.span(
                 tool_name,
@@ -161,7 +164,7 @@ class ToolStep(BaseModel):
                 input=parsed_args,
                 metadata={"tool_call_id": tool_call_id},
             ) as span:
-                res: Any = await tool.ainvoke(**parsed_args)
+                res: Any = await tool.ainvoke(**call_kwargs)
                 if isinstance(res, ClarificationNeededOutput):
                     return ClarificationNeededOutput(
                         question=res.question,

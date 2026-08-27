@@ -28,11 +28,11 @@ flowchart TD
         A2AS[A2AServer]
         Exec[A2AExecutor]
         Agent[Agent]
-        Memory[Memory]
 
         subgraph reg[ToolRegistry]
             Tool[Tool]
             A2AT[A2AAgentTool]
+            MemT["MemoryTool (e.g. Mem0Memory)"]
         end
 
         subgraph wf[Workflow]
@@ -66,7 +66,6 @@ flowchart TD
 
         Agent -->|uses ToolRegistry| reg
         SkillPresenter -.->|provides system prompt to Agent| Agent
-        Agent <-->|reads and writes Memory| Memory
         Agent -.->|invokes HookLayer hooks| hooks_sub
     end
 

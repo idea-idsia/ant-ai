@@ -24,7 +24,6 @@ class Agent(BaseAgent):
             else None,
             hooks=self._hook_layer,
             max_retries=self.max_retries,
-            memory=self.memory,
         )
 
     def add_tool(self, tool: Tool) -> None:

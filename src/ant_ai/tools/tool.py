@@ -89,7 +89,7 @@ def _build_args_model_from_signature(
 
     fields: dict[str, tuple[Any, Any]] = {}
     for name, param in sig.parameters.items():
-        if name in ("self", "cls"):
+        if name in ("self", "cls", "ctx"):
             continue
         if param.kind not in (
             inspect.Parameter.POSITIONAL_ONLY,
@@ -177,6 +177,7 @@ class Tool(BaseModel):
     _func: Callable[..., Any] | None = PrivateAttr(default=None)
     __namespace_methods__: list[str] = []
     _func_signature: inspect.Signature | None = PrivateAttr(default=None)
+    _wants_ctx: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def _set_defaults(self) -> Tool:
@@ -196,16 +197,31 @@ class Tool(BaseModel):
         """
         When you subclass Tool, this inspects the class body and collects
         all public callables as "namespace methods".
+
+        Namespace methods declared on an intermediate Tool-subclass ancestor
+        (e.g. a shared base class's own tool methods, like `MemoryTool.search`)
+        are inherited even when a concrete subclass doesn't redefine them —
+        only methods first introduced on `Tool`/`BaseModel` itself, or on a
+        non-Tool mixin (e.g. an abstract protocol's own methods), are excluded.
         """
         super().__init_subclass__(**kwargs)
         inherited_names: set[str] = {
             name for klass in cls.__mro__[1:] for name in klass.__dict__
         }
-        cls.__namespace_methods__: list[str] = [
+        own_methods: list[str] = [
             name
             for name, value in cls.__dict__.items()
             if _is_public_callable(name, value) and name not in inherited_names
         ]
+        inherited_namespace_methods: list[str] = []
+        for klass in cls.__mro__[1:]:
+            existing = klass.__dict__.get("__namespace_methods__")
+            if existing:
+                inherited_namespace_methods = list(existing)
+                break
+        cls.__namespace_methods__: list[str] = list(
+            dict.fromkeys(own_methods + inherited_namespace_methods)
+        )
 
     def _call_func(self, *args: Any, **kwargs: Any) -> Any:
         """
@@ -233,6 +249,16 @@ class Tool(BaseModel):
             and self._func is None
         )
 
+    @property
+    def wants_context(self) -> bool:
+        """
+        True if this tool's underlying function declares a `ctx` parameter.
+
+        `ToolStep` injects the real `InvocationContext` for such tools at
+        call time; `ctx` is never exposed in the LLM-facing JSON schema.
+        """
+        return self._wants_ctx
+
     @classmethod
     def _from_function(
         cls,
@@ -256,6 +282,7 @@ class Tool(BaseModel):
             parameters=schema,
         )
         inst._func = func
+        inst._wants_ctx = "ctx" in inspect.signature(func).parameters
         return inst
 
     @classmethod

@@ -21,8 +21,18 @@ repos:
                 - python
             args: [--fix]
           - id: ruff-format
+            types_or:
+                - python
+                - pyi
+                - jupyter
+                - markdown
 
     - repo: https://github.com/betterleaks/betterleaks
       rev: v1.8.1
       hooks:
           - id: betterleaks
+
+    - repo: https://github.com/astral-sh/ty-pre-commit
+      rev: v0.0.74
+      hooks:
+          - id: ty

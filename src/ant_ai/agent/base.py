@@ -22,11 +22,11 @@ from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks.layer import HookLayer
 from ant_ai.hooks.protocol import AgentHook
 from ant_ai.llm.protocol import ChatLLM
-from ant_ai.memory.protocol import Memory
 from ant_ai.observer import obs
 from ant_ai.skills.loader import SkillLoader
 from ant_ai.skills.presenter import MarkdownSkillPresenter, SkillPresenter
 from ant_ai.skills.protocol import AgentSkill
+from ant_ai.tools.builtins.memory_tool import MemoryTool
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import Tool
 
@@ -58,9 +58,10 @@ class BaseAgent(BaseModel):
         default_factory=list,
         description="Lifecycle hooks for the agent.",
     )
-    memory: Memory | None = Field(
+    memory: MemoryTool | None = Field(
         default=None,
-        description="Pluggable memory backend for cross-session context.",
+        description="Pluggable memory backend for cross-session context, "
+        "directly usable as an agent Tool (see MemoryTool).",
     )
     skills: Path | list[Path] | None = Field(
         default=None,
@@ -85,7 +86,10 @@ class BaseAgent(BaseModel):
 
     @model_validator(mode="after")
     def _build(self) -> BaseAgent:
-        self._registry = ToolRegistry(self.tools)
+        tools: list[Tool] = (
+            [*self.tools, self.memory] if self.memory is not None else self.tools
+        )
+        self._registry = ToolRegistry(tools)
         self._hook_layer = HookLayer(hooks=self.hooks)
         self._skills = (
             SkillLoader(self.skills).load() if self.skills is not None else []

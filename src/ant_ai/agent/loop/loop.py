@@ -19,7 +19,6 @@ from ant_ai.hooks import (
     PostModelRetry,
     WrapCall,
 )
-from ant_ai.memory.protocol import Memory
 from ant_ai.observer import obs
 from ant_ai.steps import Step
 from ant_ai.tools.registry import ToolRegistry
@@ -37,7 +36,6 @@ class BaseAgentLoop(ABC, BaseModel):
 
     hooks: HookLayer = Field(default_factory=HookLayer)
     max_retries: int = Field(default=3, ge=1)
-    memory: Memory | None = None
 
     def _streaming_active(self) -> bool:
         """Whether this run should stream deltas live.
@@ -48,33 +46,6 @@ class BaseAgentLoop(ABC, BaseModel):
         client cannot be retracted.
         """
         return self.hooks.is_stream_safe()
-
-    async def _retrieve_memories(
-        self, state: State, ctx: InvocationContext | None
-    ) -> None:
-        """Retrieve relevant memories from the store and prepend them to state."""
-        if self.memory is None:
-            return
-        user_query: str | None = next(
-            (m.content for m in reversed(state.messages) if m.role == "user"), ""
-        )
-        if not user_query:
-            return
-        memory_msgs: list[Message] = await self.memory.retrieve(user_query, ctx=ctx)
-        state.messages[0:0] = memory_msgs
-
-    async def _consolidate_memories(
-        self,
-        messages: list[Message | None],
-        ctx: InvocationContext | None,
-    ) -> None:
-        """Persist the current-turn exchange to memory."""
-        if self.memory is None:
-            return
-        to_store: list[Message] = [m for m in messages if m is not None and m.content]
-        if not to_store:
-            return
-        await self.memory.update(to_store, ctx=ctx)
 
     @abstractmethod
     def stream(

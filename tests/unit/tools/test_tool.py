@@ -86,6 +86,75 @@ def test_build_args_model_from_signature_skips_self_cls_and_varargs_kwargs():
 
 
 @pytest.mark.unit
+def test_from_function_wants_context_true_when_ctx_param_present():
+    def f(query: str, ctx: Any | None = None) -> str:
+        return query
+
+    t: Tool = Tool._from_function(f)
+    assert t.wants_context is True
+    assert "ctx" not in t.parameters["properties"]
+
+
+@pytest.mark.unit
+def test_from_function_wants_context_false_when_no_ctx_param():
+    def f(query: str) -> str:
+        return query
+
+    t: Tool = Tool._from_function(f)
+    assert t.wants_context is False
+
+
+@pytest.mark.unit
+def test_namespace_method_wants_context_excludes_ctx_from_schema():
+    class NS(Tool):
+        def search(self, query: str, ctx: Any | None = None) -> str:
+            """Search."""
+            return query
+
+        def plain(self, query: str) -> str:
+            """Plain."""
+            return query
+
+    tools = NS()._expand_namespace()
+    search_tool = next(t for t in tools if t.name == "NS_search")
+    plain_tool = next(t for t in tools if t.name == "NS_plain")
+
+    assert search_tool.wants_context is True
+    assert set(search_tool.parameters["properties"].keys()) == {"query"}
+    assert plain_tool.wants_context is False
+
+
+@pytest.mark.unit
+def test_namespace_methods_inherited_from_intermediate_tool_subclass():
+    """A concrete subclass that only implements a non-Tool mixin's abstract
+    protocol method still inherits a Tool-subclass ancestor's own namespace
+    (tool) methods, even though it doesn't redefine them in its own class
+    body. Mirrors the Memory (plain mixin) / MemoryTool (Tool subclass with
+    search/save) / Mem0Memory (implements only retrieve/update) shape."""
+
+    class Protocol:
+        def fetch(self) -> int:
+            raise NotImplementedError
+
+    class Base(Protocol, Tool):
+        def exposed(self, x: int) -> int:
+            """Exposed tool method."""
+            return self.fetch() + x
+
+    class Concrete(Base):
+        def fetch(self) -> int:
+            return 10
+
+    assert Base.__namespace_methods__ == ["exposed"]
+    assert Concrete.__namespace_methods__ == ["exposed"]
+    c = Concrete()
+    assert c.is_namespace is True
+    tools = c._expand_namespace()
+    assert [t.name for t in tools] == ["Concrete_exposed"]
+    assert tools[0].invoke(x=5) == 15
+
+
+@pytest.mark.unit
 def test_tool_defaults_set_on_init():
     class MyTools(Tool):
         """My tool namespace docs."""
