@@ -104,8 +104,14 @@ async def memory_agent_server() -> AsyncGenerator[dict]:
         name="memory-agent",
         llm=LiteLLMChat(_MODEL),
         system_prompt=(
-            "You are a helpful assistant with persistent memory. "
-            "Use what you know about the user to give personalised responses."
+            "You are a helpful assistant with persistent memory, exposed via "
+            "the Mem0Memory_search and Mem0Memory_add tools. Whenever the "
+            "user shares a fact, preference, or personal detail, call "
+            "Mem0Memory_add to save it immediately — do not wait to be "
+            "asked. Before answering questions that depend on something you "
+            "might already know about the user, call Mem0Memory_search "
+            "first. Use what you know about the user to give personalised "
+            "responses."
         ),
         description="An agent with persistent mem0 memory",
         memory=Mem0Memory(),

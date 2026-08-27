@@ -61,20 +61,8 @@ class ReActLoop(BaseAgentLoop):
             response_schema if self.act_step is not None else None
         )
 
-        _trigger_msg: Message | None = next(
-            (
-                m
-                for m in reversed(state.messages)
-                if isinstance(m, Message) and m.role == "user"
-            ),
-            None,
-        )
-
         for loop_step in range(1, max_steps + 1):
             llm_result: StepResult | None = None
-
-            if loop_step == 1 and self.memory is not None:
-                await self._retrieve_memories(state, ctx)
 
             await self.hooks.run_before_model(state, ctx)
 
@@ -150,15 +138,9 @@ class ReActLoop(BaseAgentLoop):
                         role="assistant", content=final_event.content
                     )
                     state.add_message(assistant_msg)
-                    if self.memory is not None:
-                        await self._consolidate_memories(
-                            [_trigger_msg, assistant_msg], ctx
-                        )
                     yield final_event
                     return
 
-        if self.memory is not None:
-            await self._consolidate_memories([_trigger_msg], ctx)
         yield MaxStepsReachedEvent(
             origin=EventOrigin(layer="agent", run_step=max_steps),
         )

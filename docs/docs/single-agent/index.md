@@ -101,6 +101,23 @@ tools = await mcp_tools_from_url("http://localhost:8000/mcp", namespace="remote"
 agent = Agent(..., tools=tools)
 ```
 
+### Receiving the invocation context (`ctx`)
+
+Any tool — `@tool`-decorated function or namespace method — can declare a `ctx: InvocationContext` parameter to receive the real [`InvocationContext`][ant_ai.core.types.InvocationContext] passed to `agent.stream(...)`/`agent.ainvoke(...)`. It's injected automatically at call time and is hidden from the LLM-facing JSON schema — the model never sees or supplies it.
+
+```python
+from ant_ai import tool
+from ant_ai.core.types import InvocationContext
+
+
+@tool
+def whoami(ctx: InvocationContext) -> str:
+    """Return the current user's id."""
+    return ctx.user_id or "anonymous"
+```
+
+Use this for anything scoped to the caller rather than the conversation — per-user data lookups, multi-tenant isolation, audit logging. [`MemoryTool`][ant_ai.tools.builtins.memory_tool.MemoryTool] (see [Agent memory](memory.md)) is a built-in example: its `search`/`add` tool methods take `ctx` this way to scope memories per user.
+
 ## Streaming a response
 
 [`Agent.stream()`][ant_ai.agent.agent.Agent.stream] drives the agent until it produces a final answer, yielding [`Event`][ant_ai.core.events.Event] objects at each step — LLM output, tool calls, tool results, and completion.

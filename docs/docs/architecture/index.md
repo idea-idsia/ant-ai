@@ -13,7 +13,7 @@ title: Architecture
 | <nobr>`ant_ai.tools`</nobr>    | [`Tool`][ant_ai.tools.tool.Tool]                                                                    | Callables exposed to the LLM via JSON schema. Defined with the `@tool` decorator or as a `Tool` subclass for grouped namespaces.                                          |
 |                                | [`ToolRegistry`][ant_ai.tools.registry.ToolRegistry]                                                | Built automatically from the agent's tool list. Expands namespace tools into individually callable entries.                                                               |
 | <nobr>`ant_ai.skills`</nobr>   | [`AgentSkill`][ant_ai.skills.protocol.AgentSkill] / [`SkillLoader`][ant_ai.skills.loader.SkillLoader] / [`SkillPresenter`][ant_ai.skills.presenter.SkillPresenter] | Skills following the [agentskills.io](https://agentskills.io) spec. Loaded from disk via `SkillLoader`; `SkillPresenter` (default: `MarkdownSkillPresenter`) formats them into the agent's system prompt with each skill's `SKILL.md` path. The agent activates a skill by reading that file directly via its file tool (progressive disclosure). |
-| <nobr>`ant_ai.memory`</nobr>   | [`Memory`][ant_ai.memory.protocol.Memory]                                                           | Pluggable memory backend. Relevant memories are retrieved before each LLM call and injected into the agent's state; new knowledge is persisted after the session via `update`. |
+| <nobr>`ant_ai.memory`</nobr>   | [`Memory`][ant_ai.memory.protocol.Memory] / [`MemoryTool`][ant_ai.tools.builtins.memory_tool.MemoryTool] | Pluggable memory backend. `Memory` is the storage interface (`retrieve`/`update`); `MemoryTool` extends it with `Tool`, so a backend (e.g. `Mem0Memory`) is directly registered as `<Backend>_search`/`<Backend>_add` when set as `Agent.memory` — the model decides when to search or persist, the same way it decides to call any other tool. |
 | <nobr>`ant_ai.hooks`</nobr>    | [`AgentHook`][ant_ai.hooks.protocol.AgentHook] / [`HookLayer`][ant_ai.hooks.layer.HookLayer]       | Lifecycle hooks invoked around each model call and agent turn. [`HistoryCompressionHook`][ant_ai.hooks.builtins.history_compression.HistoryCompressionHook] compresses older conversation history via LLM summarisation to keep the context window manageable. [`GuardrailsAIHook`][ant_ai.hooks.integrations.guardrails_ai.GuardrailsAIHook] wraps a `guardrails.Guard` to validate LLM output and trigger automatic retries on failure. [`PIIGuardrailHook`][ant_ai.hooks.integrations.pii_guardrail.PIIGuardrailHook] scans LLM output for PII via `datafog` and triggers automatic retries on detection. [`LLMGuardrailHook`][ant_ai.hooks.builtins.llm_guardrail.LLMGuardrailHook] is a templated LLM-as-judge base class subclassed to guardrail on arbitrary criteria. |
 | <nobr>`ant_ai.a2a`</nobr>      | [`Colony`][ant_ai.a2a.colony.Colony]                                                                | Multi-agent coordinator. Registers agents with their workflows and A2A cards, wires collaboration edges, and produces ASGI apps for deployment.                           |
 |                                | [`A2AExecutor`][ant_ai.a2a.executor.A2AExecutor]                                                    | ASGI request handler. Receives incoming A2A requests, initialises `InvocationContext` and `State`, drives `Workflow.stream()`, and translates events to A2A task updates. |
@@ -39,11 +39,11 @@ flowchart TD
         A2AS["A2AServer"]
         Exec["A2AExecutor"]
         Agent["Agent"]
-        Memory["Memory"]
 
         subgraph reg["ToolRegistry"]
             Tool["Tool"]
             A2AT["A2AAgentTool"]
+            MemT["MemoryTool (e.g. Mem0Memory)"]
         end
 
         subgraph wf["Workflow"]
@@ -75,7 +75,6 @@ flowchart TD
         wf --> Agent
         Agent --> reg
         SkillPresenter -.->|"system prompt"| Agent
-        Agent <-->|"retrieve / update"| Memory
         Agent -.->|"before/after model"| hooks_sub
     end
 

@@ -34,7 +34,7 @@ classDiagram
     Workflow --> BaseAgent : orchestrates
     BaseAgent <|-- Agent : extends
     BaseAgent --> HookLayer : owns
-    BaseAgent --> Memory : uses
+    BaseAgent --> MemoryTool : uses
     BaseAgent --> SkillPresenter : uses
     Agent --> ReActLoop : creates
     ReActLoop --> LLMStep : owns
@@ -42,6 +42,8 @@ classDiagram
     LLMStep --> ChatLLM : calls
     ToolStep --> ToolRegistry : looks up via
     ToolRegistry --> Tool : resolves
+    Tool <|-- MemoryTool : extends
+    Memory <|-- MemoryTool : extends
     HookLayer --> AgentHook : orchestrates
     AgentHook <|.. GuardrailsAIHook : implements
     AgentHook <|.. PIIGuardrailHook : implements
@@ -52,6 +54,6 @@ classDiagram
     A2AAgentTool --> A2AClient : delegates to
     A2AAgentTool --> A2AConfig : configured by
     ChatLLM <|.. LiteLLMChat : implements
-    Memory <|.. Mem0Memory : implements
+    MemoryTool <|-- Mem0Memory : extends
     ObservabilitySink <|.. CompositeSink : implements
     ObservabilitySink <|.. LangfuseSink : implements

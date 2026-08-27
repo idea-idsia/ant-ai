@@ -8,16 +8,23 @@ from pydantic import Field, PrivateAttr, model_validator
 
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext
-from ant_ai.memory.protocol import Memory
+from ant_ai.tools.builtins.memory_tool import MemoryTool
 
 
-def _resolve_ctx(kwargs: dict[str, Any]) -> dict[str, str]:
-    """Pop ctx (or bare entity ids) from kwargs and return mem0 filters dict.
+def _resolve_scope(
+    ctx: InvocationContext | None, kwargs: dict[str, Any]
+) -> dict[str, str]:
+    """Build a mem0 filters dict from `ctx`, or bare entity ids in kwargs.
 
     ctx.user_id  → user_id  (cross-session)
     ctx.session_id → run_id (session-scoped fallback)
+
+    Raises:
+        ValueError: If no scoping information (ctx or a bare
+            user_id/run_id/agent_id/app_id) is available — without this,
+            retrieve/update would hit mem0 unscoped, pooling memory across
+            every user and session.
     """
-    ctx: InvocationContext | None = kwargs.pop("ctx", None)
     if ctx is not None:
         if ctx.user_id:
             return {"user_id": ctx.user_id}
@@ -27,10 +34,16 @@ def _resolve_ctx(kwargs: dict[str, Any]) -> dict[str, str]:
         val = kwargs.pop(key, None)
         if val is not None:
             filters[key] = val
+    if not filters:
+        raise ValueError(
+            "Mem0Memory requires scoping information (pass ctx=... with a "
+            "session_id/user_id, or an explicit user_id/run_id/agent_id/"
+            "app_id) to avoid pooling memory across every user and session."
+        )
     return filters
 
 
-class Mem0Memory(Memory):
+class Mem0Memory(MemoryTool):
     """
     mem0 cloud backend for AgentMemory.
 
@@ -48,7 +61,7 @@ class Mem0Memory(Memory):
 
     @model_validator(mode="after")
     def _init_client(self) -> Mem0Memory:
-        self._client = (
+        self._client: AsyncMemoryClient = (
             AsyncMemoryClient(api_key=self.api_key)
             if self.api_key
             else AsyncMemoryClient()
@@ -56,9 +69,14 @@ class Mem0Memory(Memory):
         return self
 
     async def retrieve(
-        self, query: str, *, top_k: int = 5, **kwargs: Any
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        ctx: InvocationContext | None = None,
+        **kwargs: Any,
     ) -> list[Message]:
-        filters = _resolve_ctx(kwargs)
+        filters = _resolve_scope(ctx, kwargs)
         options = SearchMemoryOptions(filters=filters or None, top_k=top_k)
         results: Any = await self._client.search(query, options=options)
         return [
@@ -66,8 +84,14 @@ class Mem0Memory(Memory):
             for r in results.get("results", [])
         ]
 
-    async def update(self, messages: list[Message], **kwargs: Any) -> None:
-        filters = _resolve_ctx(kwargs)
+    async def update(
+        self,
+        messages: list[Message],
+        *,
+        ctx: InvocationContext | None = None,
+        **kwargs: Any,
+    ) -> None:
+        filters = _resolve_scope(ctx, kwargs)
         msg_dicts: list[dict[str, str]] = [
             {"role": m.role, "content": m.content} for m in messages if m.content
         ]

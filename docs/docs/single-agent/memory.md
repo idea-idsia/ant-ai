@@ -8,16 +8,18 @@ The `memory` field on [`Agent`][ant_ai.agent.agent.Agent] connects a pluggable l
 
 ## How it works
 
-On every call to `agent.stream()`:
+Setting `memory` on `Agent` registers two extra tools the LLM can call, just like any other tool — named after the backend class, e.g. `Mem0Memory_search`/`Mem0Memory_add` for the built-in mem0 backend:
 
-1. **Retrieve** — before the first LLM step the agent queries the memory store with the latest user message and prepends any matching memories as `system` messages.
-2. **Consolidate** — once a final answer is produced (or the step limit is reached) the user message and assistant reply are written back to the store.
+- `<Backend>_search(query)` — search the memory store for facts relevant to `query`.
+- `<Backend>_add(facts)` — persist one or more durable facts for future conversations.
 
-Both steps are no-ops when `memory` is `None`, so existing agents are unaffected.
+The model decides when to call them — memory is no longer retrieved automatically before every turn or written back automatically at the end. The tool descriptions explicitly nudge the model to search before answering questions that might depend on stored context, and to save facts proactively as soon as it learns them. This means recall now depends on the model choosing to call `<Backend>_add`/`<Backend>_search` — for applications that need exhaustive capture, reinforce this in the agent's `system_prompt` (see the [full example](#full-example) below), since a weaker or less instruction-following model may not always call it.
 
-## The `Memory` interface
+Both tools are absent when `memory` is `None`, so existing agents without memory are unaffected.
 
-[`Memory`][ant_ai.memory.protocol.Memory] is the abstract base class. Implement two async methods to connect any backend:
+## The `Memory` and `MemoryTool` classes
+
+[`Memory`][ant_ai.memory.protocol.Memory] is the storage interface — implement two async methods to connect any backend:
 
 ```python
 from ant_ai.memory import Memory
@@ -26,20 +28,54 @@ from ant_ai.core.types import InvocationContext
 
 
 class MyMemory(Memory):
-    async def retrieve(self, query: str, *, top_k: int = 5, **kwargs) -> list[Message]:
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        ctx: InvocationContext | None = None,
+        **kwargs,
+    ) -> list[Message]:
         # Return relevant memories as system messages
         ...
 
-    async def update(self, messages: list[Message], **kwargs) -> None:
+    async def update(
+        self, messages: list[Message], *, ctx: InvocationContext | None = None, **kwargs
+    ) -> None:
         # Persist messages for future retrieval
         ...
 ```
 
-Both methods receive `ctx: InvocationContext` via `**kwargs`. Use `ctx.user_id` for cross-session scoping.
+[`MemoryTool`][ant_ai.tools.builtins.memory_tool.MemoryTool] extends `Memory` with the `Tool` base class, adding the LLM-facing `search`/`add` methods on top of `retrieve`/`update` — matching the vocabulary mem0's own client uses (`search`/`add`). **A backend must extend `MemoryTool` (not just `Memory`) to be usable as `Agent(memory=...)`** — `BaseAgent.memory` is typed `MemoryTool | None`, since only `Tool`-capable instances can be registered:
+
+```python
+from ant_ai.tools.builtins.memory_tool import MemoryTool
+from ant_ai.core.message import Message
+from ant_ai.core.types import InvocationContext
+
+
+class MyMemory(MemoryTool):
+    async def retrieve(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        ctx: InvocationContext | None = None,
+        **kwargs,
+    ) -> list[Message]: ...
+
+    async def update(
+        self, messages: list[Message], *, ctx: InvocationContext | None = None, **kwargs
+    ) -> None: ...
+
+    # search/add are inherited automatically — no need to redefine them.
+```
+
+Both `retrieve` and `update` take `ctx: InvocationContext | None` as an explicit keyword-only parameter — the same one `search`/`add` receive, which `ToolStep` injects automatically from the current `InvocationContext` when the LLM calls the tool (see [How it works](#how-it-works)). Use `ctx.user_id` for cross-session scoping. `**kwargs` remains for backend-specific extras when calling `retrieve`/`update` directly, outside the tool path (e.g. `memory.retrieve(query, user_id="alice")`).
 
 ## Built-in backend: mem0
 
-[`Mem0Memory`][ant_ai.memory.backends.mem0.Mem0Memory] wraps the [mem0](https://app.mem0.ai/) cloud client. It requires a `MEM0_API_KEY` environment variable or an explicit `api_key` argument.
+[`Mem0Memory`][ant_ai.memory.backends.mem0.Mem0Memory] wraps the [mem0](https://app.mem0.ai/) cloud client (`Mem0Memory(MemoryTool)`). It requires a `MEM0_API_KEY` environment variable or an explicit `api_key` argument.
 
 ```python
 from ant_ai import Agent
@@ -69,9 +105,11 @@ async for event in agent.stream(state, ctx=ctx):
     ...
 ```
 
-On the next invocation with the same `user_id`, the agent will recall that preference automatically.
+On the next invocation with the same `user_id`, the agent can recall that preference (once the model chooses to call `<Backend>_search`).
 
 When `user_id` is absent the backend falls back to `session_id`, which gives run-scoped memory (useful for long single-session tasks).
+
+`Mem0Memory` requires scoping information: calling it with no `ctx` and no explicit `user_id`/`run_id`/`agent_id`/`app_id` raises `ValueError`, rather than silently pooling memory across every user and session. If a tool call triggers this, the LLM receives a clean `"ERROR: Mem0Memory requires scoping..."` tool result. `ctx` doesn't require running behind a server — any stable identifier works, even in a local script (`InvocationContext(session_id="local-script")`).
 
 ## A2A: passing `user_id` from metadata
 
@@ -98,7 +136,13 @@ from ant_ai.core import FinalAnswerEvent
 agent = Agent(
     name="Assistant",
     llm=LiteLLMChat("gpt-5-mini"),
-    system_prompt="You are a helpful assistant with long-term memory.",
+    system_prompt=(
+        "You are a helpful assistant with long-term memory, exposed via the "
+        "Mem0Memory_search and Mem0Memory_add tools. Save durable facts "
+        "about the user as soon as you learn them, and search memory before "
+        "answering questions that might depend on something you already "
+        "know about the user."
+    ),
     memory=Mem0Memory(),
 )
 

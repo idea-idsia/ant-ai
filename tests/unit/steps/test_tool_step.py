@@ -12,7 +12,7 @@ from ant_ai.core.result import (
     ToolOutput,
     TransitionAction,
 )
-from ant_ai.core.types import State
+from ant_ai.core.types import InvocationContext, State
 from ant_ai.steps.tool_step import ToolStep, _serialize_result
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import tool as tool_decorator
@@ -212,3 +212,79 @@ async def test_run_clarification_request_yields_clarification_events_and_ends():
     assert isinstance(result.output, ClarificationNeededOutput)
     assert result.output.question == "Which file?"
     assert result.transition.action == TransitionAction.END
+
+
+@pytest.mark.unit
+async def test_run_injects_ctx_for_tool_that_wants_it():
+    received: dict[str, Any] = {}
+
+    @tool_decorator
+    def needs_ctx(query: str, ctx: Any | None = None) -> str:
+        received["ctx"] = ctx
+        return query
+
+    registry = ToolRegistry(tools=[needs_ctx])
+    step = ToolStep(registry=registry)
+    state: State = _make_state(_make_tool_call("needs_ctx", '{"query": "hi"}'))
+    ctx = InvocationContext(session_id="s1", user_id="alice")
+
+    await _collect(step.run(state, ctx))
+
+    assert received["ctx"] is ctx
+
+
+@pytest.mark.unit
+async def test_run_does_not_pass_ctx_to_tool_that_does_not_want_it():
+    received: dict[str, Any] = {"called": False}
+
+    @tool_decorator
+    def no_ctx(query: str) -> str:
+        received["called"] = True
+        return query
+
+    registry = ToolRegistry(tools=[no_ctx])
+    step = ToolStep(registry=registry)
+    state: State = _make_state(_make_tool_call("no_ctx", '{"query": "hi"}'))
+    ctx = InvocationContext(session_id="s1", user_id="alice")
+
+    items = await _collect(step.run(state, ctx))
+
+    step_results = [i for i in items if isinstance(i, StepResult)]
+    output: ToolOutput = step_results[0].output
+    assert received["called"] is True
+    assert "ERROR" not in output.results[0]["content"]
+
+
+@pytest.mark.unit
+async def test_run_ctx_excluded_from_observability_span_input(monkeypatch):
+    captured_inputs: list[Any] = []
+
+    from ant_ai.observer import obs as obs_module
+
+    original_span = obs_module.span
+
+    class _CapturingSpanCtx:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            captured_inputs.append(kwargs.get("input"))
+            self._inner = original_span(*args, **kwargs)
+
+        async def __aenter__(self):
+            return await self._inner.__aenter__()
+
+        async def __aexit__(self, *exc):
+            return await self._inner.__aexit__(*exc)
+
+    monkeypatch.setattr(obs_module, "span", _CapturingSpanCtx)
+
+    @tool_decorator
+    def needs_ctx(query: str, ctx: Any | None = None) -> str:
+        return query
+
+    registry = ToolRegistry(tools=[needs_ctx])
+    step = ToolStep(registry=registry)
+    state: State = _make_state(_make_tool_call("needs_ctx", '{"query": "hi"}'))
+    ctx = InvocationContext(session_id="s1", user_id="alice")
+
+    await _collect(step.run(state, ctx))
+
+    assert captured_inputs == [{"query": "hi"}]
