@@ -1,6 +1,7 @@
 nav:
     - index.md
     - example.md
+    - streaming.md
     - memory.md
     - skills.md
     - visualize.md

@@ -137,3 +137,37 @@ async def test_stream_with_all_empty_produces_no_chunks(
     chunks_list, combined = await collect_stream_chunks(chat.stream(sample_messages))
     assert chunks_list == []
     assert combined == ""
+
+
+@pytest.mark.unit
+async def test_stream_yields_tool_call_fragments_in_order(
+    monkeypatch,
+    sample_messages,
+    openai_tool_call_chunk,
+    make_async_stream,
+):
+    chat = OpenAIChat(model="stream-model", api_key="dummy")
+
+    fragments = [
+        openai_tool_call_chunk(
+            index=0, call_id="call-1", name="my_tool", arguments='{"a"'
+        ),
+        openai_tool_call_chunk(index=0, arguments=": 1}"),
+    ]
+
+    async def fake_create(**kwargs):
+        return make_async_stream(fragments)
+
+    monkeypatch.setattr(
+        chat.async_client.chat.completions,
+        "create",
+        fake_create,
+        raising=False,
+    )
+
+    chunks: list[ChatLLMStreamChunk] = [c async for c in chat.stream(sample_messages)]
+
+    assert [c.tool_calls for c in chunks] == [
+        {"index": 0, "id": "call-1", "name": "my_tool", "arguments": '{"a"'},
+        {"index": 0, "id": None, "name": None, "arguments": ": 1}"},
+    ]

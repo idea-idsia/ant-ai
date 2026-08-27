@@ -39,6 +39,25 @@ class HookLayer(BaseModel):
         """Returns True when no hooks are registered."""
         return not self.hooks
 
+    def is_stream_safe(self) -> bool:
+        """Returns True when no registered hook can retry/block/fall back a response.
+
+        A hook that doesn't override `after_model` or `wrap_model_call` is
+        safe automatically — it can't affect the outcome. A hook that does
+        override either is unsafe unless it explicitly declares
+        `stream_safe = True` (see `AgentHook.stream_safe`), since such a hook
+        may need the complete response to decide, and tokens already
+        streamed to a client cannot be retracted.
+        """
+        return all(
+            h.stream_safe
+            or (
+                type(h).after_model is AgentHook.after_model
+                and type(h).wrap_model_call is AgentHook.wrap_model_call
+            )
+            for h in self.hooks
+        )
+
     async def run_before_agent(
         self, state: State, ctx: InvocationContext | None
     ) -> None:

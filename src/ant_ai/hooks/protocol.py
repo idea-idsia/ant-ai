@@ -74,6 +74,19 @@ class AgentHook:
 
     name: ClassVar[str] = "hook"
 
+    stream_safe: ClassVar[bool] = False
+    """Declares this hook safe for live token streaming despite overriding
+    `after_model`/`wrap_model_call`. Set True only if your override always
+    returns `PostModelPass` and never drops, delays, or rewrites events —
+    otherwise tokens already streamed to the caller could need to be
+    retracted, which isn't possible.
+
+    Hooks that don't override either method don't need this: they're
+    detected as stream-safe automatically (see `HookLayer.is_stream_safe()`).
+    This flag only matters for hooks that do override one of them but know
+    their override can't affect the outcome (e.g. read-only logging).
+    """
+
     async def before_agent(self, state: State, ctx: InvocationContext | None) -> None:
         """Called once before the agent starts processing.
 

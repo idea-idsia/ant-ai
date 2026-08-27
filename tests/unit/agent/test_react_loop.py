@@ -9,6 +9,7 @@ from ant_ai.agent.loop.react import (
     ToolRequest,
 )
 from ant_ai.core.events import (
+    ContentDeltaEvent,
     Event,
     EventOrigin,
     FinalAnswerEvent,
@@ -48,6 +49,11 @@ class FakeStep:
     async def run(self, state, ctx):
         for item in self._items:
             yield item
+
+    stream = run  # same fixed replay regardless of which method the loop calls
+
+    def model_copy(self, update: dict | None = None):
+        return self
 
 
 def make_llm_result(
@@ -528,3 +534,128 @@ async def test_max_steps_without_coerce_schema_still_emits_max_steps_reached():
         m.role == "assistant" and not isinstance(m, ToolCallMessage)
         for m in state.messages
     )
+
+
+@pytest.mark.unit
+async def test_streaming_active_forwards_content_deltas_live():
+    """With no unsafe hooks, the loop calls .stream() (not .run()) by default,
+    ContentDeltaEvents are forwarded, and the final answer content matches
+    what a buffered run would have produced."""
+    calls: list[str] = []
+
+    class RecordingStep:
+        name = "llm"
+
+        async def run(self, state, ctx):
+            calls.append("run")
+            yield make_llm_result("Hello")
+
+        async def stream(self, state, ctx):
+            calls.append("stream")
+            yield ContentDeltaEvent(delta="Hel", stream_id="s1", is_first=True)
+            yield ContentDeltaEvent(delta="lo", stream_id="s1")
+            # LLMStep.stream() yields its own FinalAnswerEvent (with
+            # stream_id set) before the StepResult, matching production.
+            yield FinalAnswerEvent(content="Hello", stream_id="s1")
+            yield make_llm_result("Hello")
+
+        def model_copy(self, *, update=None, **_):
+            return self
+
+    loop = make_loop(RecordingStep())
+    state = State(messages=[Message(role="user", content="hi")])
+
+    events = [e async for e in loop.stream(state, ctx=None)]
+
+    assert calls == ["stream"]
+    deltas = [e for e in events if isinstance(e, ContentDeltaEvent)]
+    assert [d.delta for d in deltas] == ["Hel", "lo"]
+
+    final = next(e for e in events if isinstance(e, FinalAnswerEvent))
+    assert final.content == "Hello"
+    # regression: ReActLoop rebuilds the terminal FinalAnswerEvent itself
+    # (to support schema coercion) -- it must carry over stream_id from the
+    # step's own FinalAnswerEvent so A2A can close the artifact.
+    assert final.stream_id == "s1"
+
+
+@pytest.mark.unit
+async def test_streaming_falls_back_to_buffered_when_hook_is_unsafe():
+    """A hook overriding after_model makes is_stream_safe() False, so the loop
+    must take the fully-buffered path even though streaming is otherwise
+    always attempted."""
+    reason_step = FakeStep(
+        "llm",
+        [
+            ContentDeltaEvent(delta="Hel", stream_id="s1", is_first=True),
+            make_llm_result("Hello"),
+        ],
+    )
+    loop = make_loop(reason_step, hooks=HookLayer(hooks=[_PassHook()]))
+    state = State(messages=[Message(role="user", content="hi")])
+
+    events = [e async for e in loop.stream(state, ctx=None)]
+
+    final = next(e for e in events if isinstance(e, FinalAnswerEvent))
+    assert final.content == "Hello"
+    # _PassHook overrides after_model, so is_stream_safe() is False and the
+    # loop must have gone through _consume_wrapped/_apply_hooks, not
+    # _stream_wrapped -- deltas still pass through unchanged either way since
+    # ReActLoop forwards any non-FinalAnswerEvent item regardless of path.
+    deltas = [e for e in events if isinstance(e, ContentDeltaEvent)]
+    assert [d.delta for d in deltas] == ["Hel"]
+
+
+@pytest.mark.unit
+async def test_coerce_schema_final_step_never_streams():
+    """The structured-output coercion branch must always call .run(), never
+    .stream(), even though streaming is otherwise always attempted, since
+    coercion may silently rewrite the raw text after the fact."""
+    calls: list[str] = []
+
+    class RecordingStep:
+        name = "llm"
+
+        async def run(self, state, ctx):
+            calls.append("run")
+            yield make_llm_result('{"x": 1}')
+
+        async def stream(self, state, ctx):
+            calls.append("stream")
+            yield make_llm_result('{"x": 1}')
+
+        def model_copy(self, *, update=None, **_):
+            return self
+
+    class DummySchema(BaseModel):
+        x: int
+
+    # act_step must be non-None for the loop to treat response_schema as
+    # coerce_schema (applied on the final step) rather than an eager override.
+    loop = make_loop(RecordingStep(), act_step=FakeStep("tool", []))
+    state = State(messages=[Message(role="user", content="hi")])
+
+    events = [
+        e
+        async for e in loop.stream(
+            state, ctx=None, max_steps=1, response_schema=DummySchema
+        )
+    ]
+
+    assert any(isinstance(e, FinalAnswerEvent) for e in events)
+    assert calls == ["run"]
+
+
+@pytest.mark.unit
+async def test_stream_wrapped_raises_if_hook_lies_about_stream_safety():
+    """If a hook's after_model somehow returns a non-Pass decision on the
+    streaming path, _stream_wrapped must raise loudly rather than silently
+    drop or duplicate already-forwarded tokens."""
+    reason_step = FakeStep("llm", [make_llm_result("Hello")])
+    loop = make_loop(reason_step, hooks=HookLayer(hooks=[_AlwaysRetryHook()]))
+    state = State(messages=[Message(role="user", content="hi")])
+    wrapped = loop.hooks.wrap_model_call(reason_step.run)
+
+    with pytest.raises(RuntimeError, match="stream-safe"):
+        async for _ in loop._stream_wrapped(reason_step, wrapped, state, ctx=None):
+            pass

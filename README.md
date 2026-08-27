@@ -18,7 +18,7 @@
 
 ---
 
-`ant-ai` is a lightweight Python framework for building multi-agent systems: graph-based workflow orchestration, first-class agent-to-agent (A2A) communication via the [A2A protocol](https://github.com/a2aproject/A2A), MCP tool integration, lifecycle hooks for guardrails, and built-in observability — all on top of an LLM-agnostic core.
+Agents that talk to each other, tools that just work, and a graph you can actually reason about — `ant-ai` is a lightweight Python framework for building multi-agent systems, from a single tool-using agent to a whole colony of them.
 
 ## Why ANT AI
 
@@ -38,32 +38,13 @@ Requires Python 3.14+. Install with [uv](https://docs.astral.sh/uv/):
 uv add ant-ai
 ```
 
-Or install with optional extras:
+Or grab everything at once:
 
 ```sh
 uv add "ant-ai[all]"
-uv add "ant-ai[openai]"
-uv add "ant-ai[langfuse]"
-uv add "ant-ai[mem0]"
-uv add "ant-ai[viz]"
-uv add "ant-ai[guardrails-ai]"
-uv add "ant-ai[datafog]"
 ```
 
-The `guardrails-ai` extra installs the core library. Validators (e.g. `ToxicLanguage`, `DetectPII`) are distributed via the [Guardrails Hub](https://hub.guardrailsai.com/) and must be installed separately after running `guardrails configure`:
-
-```sh
-# Run from outside the project directory so uv doesn't pick up exclude-newer
-(cd /tmp && guardrails hub install hub://guardrails/toxic_language hub://guardrails/detect_pii)
-# Copy the registry into the project root so imports resolve from here
-cp /tmp/.guardrails/hub_registry.json .guardrails/
-```
-
-> **Note:** hub validators are installed outside of uv's lockfile and must be reinstalled after `uv sync`.
-> The `cd /tmp` wrapper is required because these packages ship without upload dates, which conflicts with the project's `exclude-newer = "P2D"` supply-chain setting. Running from `/tmp` (where no `pyproject.toml` exists) lets uv install them without that constraint while still targeting the active virtualenv.
-> The `hub_registry.json` copy is needed because guardrails resolves hub imports from a `.guardrails/hub_registry.json` file relative to the current working directory.
-
-The `datafog` extra powers `PIIGuardrailHook`, a native, dependency-light guardrail hook that scans LLM output for PII and retries/blocks on detection — an alternative to `GuardrailsAIHook` + `DetectPII` that needs no separate hub install. For guardrailing on arbitrary criteria (e.g. "no medical advice"), subclass `LLMGuardrailHook` — an LLM-as-judge base class that needs no extra dependency.
+Need just a piece — OpenAI, Langfuse, mem0, guardrails, viz? See the [install guide](https://idea.idsia.ch/ant-ai/install/) for the full list of extras.
 
 Or clone and sync for local development:
 
@@ -104,12 +85,16 @@ print(answer)
 
 ### Streaming events
 
+`agent.stream()` interleaves live `ContentDeltaEvent`s (token by token) before the terminal event they build up to — match on it for live text, or ignore it and just take the final answer:
+
 ```python
-from ant_ai.core import FinalAnswerEvent
+from ant_ai.core import ContentDeltaEvent, FinalAnswerEvent
 
 async for event in agent.stream(state):
-    if isinstance(event, FinalAnswerEvent):
-        print(event.content)
+    if isinstance(event, ContentDeltaEvent):
+        print(event.delta, end="", flush=True)
+    elif isinstance(event, FinalAnswerEvent):
+        print()
 ```
 
 ### Structured output

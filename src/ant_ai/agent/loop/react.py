@@ -63,6 +63,7 @@ class ReActLoop(BaseAgentLoop):
 
         for loop_step in range(1, max_steps + 1):
             llm_result: StepResult | None = None
+            llm_stream_id: str | None = None
 
             await self.hooks.run_before_model(state, ctx)
 
@@ -70,20 +71,33 @@ class ReActLoop(BaseAgentLoop):
             # response_format so the LLM synthesizes a structured final answer
             # from the full accumulated context — no extra LLM call needed.
             is_last: bool = loop_step == max_steps
+            forcing_final_step: bool = is_last and coerce_schema is not None
             step_to_run: LLMStep = (
                 self.reason_step.model_copy(
                     update={"response_format": coerce_schema, "serialized_tools": []}
                 )
-                if is_last and coerce_schema is not None
+                if forcing_final_step
                 else active_step
             )
 
-            async for item in self._run_model_with_hooks(step_to_run, state, ctx):
+            # Whenever coerce_schema is set, any final response this iteration
+            # produces goes through _make_final_answer -> _coerce_to_schema,
+            # which may silently rewrite the raw text via a second LLM call —
+            # not just on the forced last step, but on an earlier iteration
+            # where the model answers directly instead of calling a tool. So
+            # streaming must stay off for the whole invocation in that case,
+            # not just on the forced-final step.
+            async for item in self._run_model_with_hooks(
+                step_to_run, state, ctx, allow_streaming=coerce_schema is None
+            ):
                 if isinstance(item, StepResult):
                     llm_result: StepResult = item
-                elif not isinstance(item, FinalAnswerEvent):
+                elif isinstance(item, FinalAnswerEvent):
                     # LLMStep emits a FinalAnswerEvent before its StepResult as a side-effect.
-                    # We emit the real FinalAnswerEvent below after optional schema handling.
+                    # We emit the real FinalAnswerEvent below after optional schema handling,
+                    # but keep its stream_id so a streamed answer's A2A artifact can be closed.
+                    llm_stream_id = item.stream_id
+                else:
                     yield item
 
             if llm_result is None:
@@ -132,7 +146,11 @@ class ReActLoop(BaseAgentLoop):
 
                 case FinalResponse():
                     final_event: FinalAnswerEvent = await self._make_final_answer(
-                        llm_result.output.raw, loop_step, coerce_schema, ctx
+                        llm_result.output.raw,
+                        loop_step,
+                        coerce_schema,
+                        ctx,
+                        stream_id=llm_stream_id,
                     )
                     assistant_msg = Message(
                         role="assistant", content=final_event.content
@@ -165,6 +183,8 @@ class ReActLoop(BaseAgentLoop):
         loop_step: int,
         response_schema: type[BaseModel] | None,
         ctx: InvocationContext | None,
+        *,
+        stream_id: str | None = None,
     ) -> FinalAnswerEvent:
         final_text: str = text
         if response_schema is not None:
@@ -173,6 +193,7 @@ class ReActLoop(BaseAgentLoop):
         return FinalAnswerEvent(
             origin=EventOrigin(layer="agent", run_step=loop_step),
             content=final_text,
+            stream_id=stream_id,
         )
 
     async def _coerce_to_schema(

@@ -90,6 +90,10 @@ class FinalAnswerEvent(AgentEvent):
     """Emitted when the agent produces its final answer."""
 
     kind: Literal["final_answer"] = "final_answer"
+    stream_id: str | None = Field(
+        default=None,
+        description="Correlates this event with the ContentDeltaEvents that preceded it, when streamed.",
+    )
 
 
 class MaxStepsReachedEvent(AgentEvent):
@@ -118,6 +122,10 @@ class ToolCallingEvent(AgentEvent):
         default=(),
         description="The tool calls requested by the model.",
     )
+    stream_id: str | None = Field(
+        default=None,
+        description="Correlates this event with the ContentDeltaEvents that preceded it, when streamed.",
+    )
 
 
 class ToolResultEvent(AgentEvent):
@@ -138,12 +146,57 @@ class ReasoningEvent(AgentEvent):
     """Emitted when the model produces reasoning/thinking content before its answer."""
 
     kind: Literal["reasoning"] = "reasoning"
+    stream_id: str | None = Field(
+        default=None,
+        description="Correlates this event with the ContentDeltaEvents that preceded it, when streamed.",
+    )
 
 
 class CompletedEvent(WorkflowEvent):
     """Emitted when a workflow completes successfully."""
 
     kind: Literal["completed"] = "completed"
+
+
+class ContentDeltaEvent(AgentEvent):
+    """Emitted for each incremental text fragment during live token-level streaming.
+
+    A generic delta bucket rather than one class per terminal event kind:
+    the model can interleave narrative text with tool calls, so whether a
+    fragment ultimately belongs to a `FinalAnswerEvent` or a
+    `ToolCallingEvent` is not knowable until the response finishes. Deltas
+    from one LLM generation share `stream_id`, which also appears on the
+    terminal whole event so consumers can correlate and close out a stream.
+    """
+
+    kind: Literal["content_delta"] = "content_delta"
+    target_kind: Literal["reasoning", "content", "tool_calling"] = Field(
+        default="content",
+        description="Best-effort classification of what this fragment is building toward.",
+    )
+    delta: str = Field(
+        default="",
+        description="The newly streamed text fragment, not the accumulated content so far.",
+    )
+    stream_id: str = Field(
+        description="Groups all deltas (and the terminal event) from one LLM generation call.",
+    )
+    is_first: bool = Field(
+        default=False,
+        description="True only for the first delta of this stream_id/tool_call_index group.",
+    )
+    tool_call_index: int | None = Field(
+        default=None,
+        description="Index of the tool call this fragment belongs to, when target_kind is 'tool_calling'.",
+    )
+    tool_call_id: str | None = Field(
+        default=None,
+        description="Tool call ID, populated on the first fragment of a tool-call group.",
+    )
+    tool_call_name: str | None = Field(
+        default=None,
+        description="Tool call name, populated on the first fragment of a tool-call group.",
+    )
 
 
 type AnyEvent = Annotated[
@@ -156,6 +209,7 @@ type AnyEvent = Annotated[
     | ToolCallingEvent
     | ToolResultEvent
     | ReasoningEvent
-    | CompletedEvent,
+    | CompletedEvent
+    | ContentDeltaEvent,
     Field(discriminator="kind"),
 ]

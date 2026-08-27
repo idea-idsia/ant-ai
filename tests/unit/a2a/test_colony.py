@@ -16,6 +16,7 @@ class PatchedAgentSpec:
     host: str
     port: int
     card: object
+    stream_artifacts: bool = False
 
 
 class FakeAgent:
@@ -55,13 +56,24 @@ class FakeTool:
 
 
 class FakeServer:
-    def __init__(self, *, agent, workflow, host, port, agent_card, task_store) -> None:
+    def __init__(
+        self,
+        *,
+        agent,
+        workflow,
+        host,
+        port,
+        agent_card,
+        task_store,
+        stream_artifacts: bool = False,
+    ) -> None:
         self.agent = agent
         self.workflow = workflow
         self.host = host
         self.port = port
         self.agent_card = agent_card
         self.task_store = task_store
+        self.stream_artifacts = stream_artifacts
         self._fastapi_app = object()
         self._starlette_app = object()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -9,7 +10,7 @@ from ant_ai.a2a.client import A2AClient
 from ant_ai.a2a.colony import Colony
 from ant_ai.a2a.config import A2AConfig
 from ant_ai.agent.agent import Agent
-from ant_ai.core.events import Event
+from ant_ai.core.events import ContentDeltaEvent, Event, FinalAnswerEvent
 from ant_ai.hooks.builtins.history_compression import HistoryCompressionHook
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat
 from ant_ai.tools.tool import tool
@@ -544,6 +545,226 @@ async def test_tool_call_structure_preserved_in_history(scripted_llm):
     assert any(m.get("tool_calls") for m in turn2_messages), (
         f"ToolCallMessage missing from history — _convert_history may be "
         f"flattening tool call requests to plain text. Messages: {turn2_messages}"
+    )
+
+
+def _stream_chunk(
+    content: str | None = None, tool_calls: list[SimpleNamespace] | None = None
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=content, reasoning_content=None, tool_calls=tool_calls
+                )
+            )
+        ]
+    )
+
+
+def _install_streaming_text_dispatch(scripted_llm, parts: list[str]) -> None:
+    """Install a dispatch that genuinely streams `parts` as separate chunks
+    when stream=True, so the turn produces multiple ContentDeltaEvents
+    instead of the single-chunk fallback `scripted_llm.install()` otherwise
+    adapts non-streaming dispatch fns into."""
+
+    async def dispatch(*, messages, stream=False, **_):
+        if not stream:
+            return make_text_response("".join(parts))
+
+        async def gen():
+            for part in parts:
+                yield _stream_chunk(content=part)
+
+        return gen()
+
+    scripted_llm.install(dispatch)
+
+
+@pytest.mark.integration
+@pytest.mark.a2a
+async def test_streamed_turn_produces_single_clean_history_message(
+    streaming_agent_hive, scripted_llm
+):
+    """Live token deltas (ContentDeltaEvent) must never leak into A2A history
+    as separate/fragmented/duplicated messages — only the terminal, fully
+    concatenated FinalAnswerEvent should land there, and it must be exactly
+    what the next turn's LLM call sees.
+    """
+    parts = ["Hel", "lo ", "world"]
+    _install_streaming_text_dispatch(scripted_llm, parts)
+
+    client = _client(streaming_agent_hive["port"])
+    turn1_events, task_1_id = await _send_turn(
+        client, "Say hello.", context_id=str(uuid4())
+    )
+
+    deltas = [e for e in turn1_events if isinstance(e, ContentDeltaEvent)]
+    assert len(deltas) >= len(parts), (
+        f"Expected turn 1 to genuinely stream multiple deltas, got {len(deltas)}: "
+        f"the test setup isn't exercising live streaming."
+    )
+    final = next(e for e in turn1_events if isinstance(e, FinalAnswerEvent))
+    assert final.content == "Hello world"
+
+    turn2_messages: list[dict] = []
+
+    async def dispatch_turn2(*, messages, **_):
+        turn2_messages.extend(messages)
+        return make_text_response("Got it.")
+
+    scripted_llm.install(dispatch_turn2)
+    await _send_turn(
+        client,
+        "What did you say?",
+        context_id=str(uuid4()),
+        reference_task_ids=[task_1_id],
+    )
+    await client.aclose()
+
+    assistant_messages = [m for m in turn2_messages if m.get("role") == "assistant"]
+    assert len(assistant_messages) == 1, (
+        f"Expected exactly one assistant message for turn 1 in history — deltas "
+        f"must not appear as separate entries. Got: {turn2_messages}"
+    )
+    assert assistant_messages[0].get("content") == "Hello world", (
+        f"Turn 1's streamed answer was not reconstructed intact in history "
+        f"(fragmented or corrupted). Got: {assistant_messages[0]}"
+    )
+    # system + user(turn1) + assistant(turn1) + user(turn2) -- no stray
+    # delta-derived entries from turn 1's ContentDeltaEvents.
+    assert len(turn2_messages) == 4, (
+        f"Unexpected message count in history — deltas may have leaked in "
+        f"as extra entries. Got {len(turn2_messages)}: {turn2_messages}"
+    )
+
+
+def _install_streaming_tool_call_dispatch(
+    scripted_llm, *, tool_name: str, call_id: str, arguments: str
+) -> None:
+    """Install a dispatch whose first LLM call streams one tool call with its
+    arguments split across two chunks (id/name on the first, none on the
+    second) -- mirroring how real providers fragment function-call argument
+    strings -- then answers with plain text on the second call (after the
+    tool result comes back). Exercises LLMStep's fragment reassembly
+    end-to-end through A2A, not just a single-shot tool call.
+    """
+    split = len(arguments) // 2
+    call_count = 0
+
+    async def dispatch(*, messages, stream=False, **_):
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            return make_text_response("Echo done.")
+        if not stream:
+            return make_tool_response(tool_name, arguments, call_id)
+
+        async def gen():
+            yield _stream_chunk(
+                tool_calls=[
+                    SimpleNamespace(
+                        index=0,
+                        id=call_id,
+                        function=SimpleNamespace(
+                            name=tool_name, arguments=arguments[:split]
+                        ),
+                    )
+                ]
+            )
+            yield _stream_chunk(
+                tool_calls=[
+                    SimpleNamespace(
+                        index=0,
+                        id=None,
+                        function=SimpleNamespace(
+                            name=None, arguments=arguments[split:]
+                        ),
+                    )
+                ]
+            )
+
+        return gen()
+
+    scripted_llm.install(dispatch)
+
+
+@pytest.mark.integration
+@pytest.mark.a2a
+async def test_streamed_tool_call_turn_preserves_structure_in_history(
+    streaming_agent_hive, scripted_llm
+):
+    """A tool call whose arguments arrive fragmented across live stream
+    chunks must still reassemble correctly and survive into the next turn's
+    history as a structured ToolCallMessage/ToolCallResultMessage — not
+    truncated, duplicated, or flattened to plain text.
+    """
+
+    @tool
+    def echo(message: str) -> str:
+        """Echo the message back."""
+        return f"echoed: {message}"
+
+    sock = _bound_socket()
+    port = sock.getsockname()[1]
+    agent = Agent(
+        name="sticky",
+        llm=LiteLLMChat("test-model"),
+        system_prompt=STICKY_AGENT_SYS,
+        description="Streamed tool-call history test agent",
+        tools=[echo],
+    )
+    colony = Colony()
+    colony.agent(
+        "sticky",
+        agent=agent,
+        workflow=build_single_node_workflow(),
+        card=_make_agent_card(port),
+        stream_artifacts=True,
+    )
+    server, srv_task = await _start_server(colony.asgi(agent_name="sticky"), sock)
+
+    arguments = '{"message": "hello"}'
+    try:
+        _install_streaming_tool_call_dispatch(
+            scripted_llm, tool_name="echo", call_id="tc-stream-1", arguments=arguments
+        )
+        client = _client(port)
+        _, task_1_id = await _send_turn(
+            client, "Call the echo tool.", context_id=str(uuid4())
+        )
+
+        turn2_messages: list[dict] = []
+
+        async def dispatch_turn2(*, messages, **_):
+            turn2_messages.extend(messages)
+            return make_text_response("Got it.")
+
+        scripted_llm.install(dispatch_turn2)
+        await _send_turn(
+            client,
+            "What happened?",
+            context_id=str(uuid4()),
+            reference_task_ids=[task_1_id],
+        )
+        await client.aclose()
+    finally:
+        await _stop_server(server, srv_task)
+
+    tool_call_messages = [m for m in turn2_messages if m.get("tool_calls")]
+    assert tool_call_messages, (
+        f"ToolCallMessage missing from history. Messages: {turn2_messages}"
+    )
+    reconstructed = tool_call_messages[0]["tool_calls"][0]
+    assert reconstructed["function"]["arguments"] == arguments, (
+        f"Fragmented tool-call arguments were not fully reassembled before "
+        f"landing in history — got {reconstructed['function']['arguments']!r}, "
+        f"expected {arguments!r}"
+    )
+
+    tool_result_messages = [m for m in turn2_messages if m.get("role") == "tool"]
+    assert tool_result_messages, (
+        f"ToolCallResultMessage missing from history. Messages: {turn2_messages}"
     )
 
 

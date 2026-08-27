@@ -33,6 +33,10 @@ class ChatLLMStreamChunk(BaseModel):
     delta: MessageChunk = Field(
         description="Newly streamed text fragment, not the accumulated response so far.",
     )
+    reasoning_delta: str | None = Field(
+        default=None,
+        description="Reasoning/thinking text fragment, if the provider streams it.",
+    )
     tool_calls: dict | None = Field(
         default=None,
         description="Partial tool call data streamed incrementally alongside the delta.",

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from types import SimpleNamespace
 
 import uvicorn
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
@@ -37,8 +38,26 @@ class _FakeResponse:
     usage = _FakeUsage()
 
 
-async def _stub_acompletion(**_) -> _FakeResponse:
-    return _FakeResponse()
+async def _stub_acompletion(
+    *, stream: bool = False, **_
+) -> _FakeResponse | AsyncIterator:
+    if not stream:
+        return _FakeResponse()
+
+    async def gen() -> AsyncIterator[SimpleNamespace]:
+        yield SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content="pong from codegen",
+                        reasoning_content=None,
+                        tool_calls=None,
+                    )
+                )
+            ]
+        )
+
+    return gen()
 
 
 _llm_mod.acompletion = _stub_acompletion

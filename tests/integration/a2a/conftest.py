@@ -8,8 +8,10 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from uuid import uuid4
 
 import a2a.server.tasks.database_task_store as _db_store_mod
@@ -130,6 +132,32 @@ def make_tool_response(
     return _FakeResponse(_FakeMessage(content="", tool_calls=[tc]))
 
 
+def _stream_chunk_from_response(resp: _FakeResponse) -> SimpleNamespace:
+    """Adapt a non-streaming `_FakeResponse` into one litellm-shaped stream chunk."""
+    message = resp.choices[0].message
+    tool_deltas = [
+        SimpleNamespace(
+            index=i,
+            id=tc.id,
+            function=SimpleNamespace(
+                name=tc.function.name, arguments=tc.function.arguments
+            ),
+        )
+        for i, tc in enumerate(message.tool_calls)
+    ]
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=message.get("content"),
+                    reasoning_content=None,
+                    tool_calls=tool_deltas or None,
+                )
+            )
+        ]
+    )
+
+
 def _free_port() -> int:
     """Ask the OS for an available TCP port on loopback.
 
@@ -229,7 +257,11 @@ def _make_agent_card(port: int) -> AgentCard:
     return card
 
 
-def _make_colony(db_url: str | None = None) -> tuple[Colony, Agent, socket.socket]:
+def _make_colony(
+    db_url: str | None = None,
+    *,
+    stream_artifacts: bool = False,
+) -> tuple[Colony, Agent, socket.socket]:
     """Build a Colony + agent on a free port. Does NOT start the server.
 
     Returns an open bound socket (not a bare port number) so the port stays
@@ -249,6 +281,7 @@ def _make_colony(db_url: str | None = None) -> tuple[Colony, Agent, socket.socke
         agent=agent,
         workflow=build_single_node_workflow(),
         card=_make_agent_card(port),
+        stream_artifacts=stream_artifacts,
     )
     return colony, agent, sock
 
@@ -277,7 +310,26 @@ def scripted_llm(monkeypatch: pytest.MonkeyPatch):
         make_text_response = staticmethod(make_text_response)
 
         def install(self, fn) -> None:
-            monkeypatch.setattr(_llm_mod, "acompletion", fn)
+            async def adapted(*, stream: bool = False, **kwargs) -> Any:
+                """Streaming is always attempted now (see ChatLLM.stream()'s
+                default and Agent's hook-safety gate). Most dispatch fns here
+                only know how to answer non-streaming calls; when one returns
+                a plain `_FakeResponse` for a `stream=True` call, adapt it into
+                a one-chunk stream instead of forcing every dispatch fn to
+                branch on `stream` itself. A dispatch fn that already returns
+                something iterable (i.e. it handles `stream` itself) passes
+                through unchanged.
+                """
+                result: Any = await fn(stream=stream, **kwargs)
+                if stream and not hasattr(result, "__aiter__"):
+
+                    async def gen() -> AsyncIterator[SimpleNamespace]:
+                        yield _stream_chunk_from_response(result)
+
+                    return gen()
+                return result
+
+            monkeypatch.setattr(_llm_mod, "acompletion", adapted)
 
     return _ScriptedLLM()
 
@@ -290,6 +342,23 @@ async def single_agent_hive(scripted_llm) -> AsyncGenerator[dict]:
     Yields ``{"port": int}``.
     """
     colony, _, sock = _make_colony(db_url=None)
+    port = sock.getsockname()[1]
+    app = colony.asgi(agent_name="sticky", use_fastapi=True)
+    server, task = await _start_server(app, sock)
+    yield {"port": port}
+    await _stop_server(server, task)
+
+
+@pytest.fixture
+async def streaming_agent_hive(scripted_llm) -> AsyncGenerator[dict]:
+    """
+    Single-agent colony with A2A stream_artifacts enabled (live token
+    streaming itself is always on), backed by InMemoryTaskStore. CI-safe, no
+    external deps.
+
+    Yields ``{"port": int}``.
+    """
+    colony, _, sock = _make_colony(db_url=None, stream_artifacts=True)
     port = sock.getsockname()[1]
     app = colony.asgi(agent_name="sticky", use_fastapi=True)
     server, task = await _start_server(app, sock)
