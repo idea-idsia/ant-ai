@@ -55,7 +55,18 @@ class OpenAIChat(ChatLLM):
         response_format: dict | type[BaseModel] | None,
         stream: bool = False,
     ) -> dict[str, Any]:
-        """Assemble kwargs for the OpenAI chat-completions call."""
+        """Assemble the kwargs for the OpenAI chat-completions call.
+
+        Args:
+            messages: Conversation history to send to the model.
+            ctx: Invocation context, or None if not available.
+            tools: Tool schemas to expose to the model, or None for no tools.
+            response_format: Constrain the output to a JSON schema or Pydantic model.
+            stream: Whether to request a streamed response.
+
+        Returns:
+            The keyword arguments for ``chat.completions.create``.
+        """
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": self._to_openai_messages(messages),

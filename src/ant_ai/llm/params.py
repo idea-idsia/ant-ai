@@ -10,18 +10,26 @@ def resolve_llm_params(
     base: LLMSettings,
     ctx: InvocationContext | None,
 ) -> dict[str, Any]:
-    """Merge the completion-parameter layers, lowest precedence first.
+    """Merge the completion-parameter layers into a single kwargs mapping.
 
-    1. ``default_params`` — the raw provider long-tail set on the integration
-       (``extra_body``, ``num_retries``, …). Untyped on purpose: it is the
-       escape hatch for anything outside the safe surface.
-    2. ``base`` — the instance's typed baseline, e.g.
-       ``LiteLLMChat(settings=LLMSettings(temperature=0.3))``.
-    3. ``ctx.llm_settings`` — the per-request override. Wins over the rest.
+    Layers are applied lowest precedence first, so each later layer overrides
+    the keys set by the earlier ones. Every layer is a flat mapping of
+    top-level completion kwargs, so a shallow merge is correct; a nested
+    ``extra_body`` in ``default_params`` is never clobbered because the typed
+    layers only carry scalar knobs.
 
-    Every layer is a flat mapping of top-level completion kwargs, so a shallow
-    merge is correct; a nested ``extra_body`` in ``default_params`` is never
-    clobbered because the typed layers only carry scalar knobs.
+    Args:
+        default_params: Raw provider long-tail set on the integration
+            (``extra_body``, ``num_retries``, …). Untyped on purpose: the
+            escape hatch for anything outside the safe surface. Lowest
+            precedence.
+        base: The instance's typed baseline, e.g.
+            ``LiteLLMChat(settings=LLMSettings(temperature=0.3))``.
+        ctx: Request-scoped context, or None. Its ``llm_settings``, when
+            present, is the per-request override and wins over the rest.
+
+    Returns:
+        A new dict of completion kwargs; ``default_params`` is not mutated.
     """
     params = {**default_params, **base.overrides()}
     if ctx is not None and ctx.llm_settings is not None:

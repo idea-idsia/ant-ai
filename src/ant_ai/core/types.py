@@ -16,7 +16,12 @@ class LLMSettings(BaseModel):
     reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
 
     def overrides(self) -> dict[str, Any]:
-        """The kwargs the caller actually set; fields left unset are omitted."""
+        """Return the completion kwargs the caller explicitly set.
+
+        Returns:
+            A mapping of the set fields; fields left unset are omitted so they
+            never override a lower-precedence layer.
+        """
         return self.model_dump(exclude_none=True)
 
 
