@@ -14,6 +14,7 @@ from ant_ai.acp.translator import HVEventToACP
 from ant_ai.core.events import (
     ClarificationNeededEvent,
     CompletedEvent,
+    ContentDeltaEvent,
     FinalAnswerEvent,
     MaxStepsReachedEvent,
     ReasoningEvent,
@@ -70,6 +71,53 @@ async def test_reasoning_sends_thought_chunk(translator):
     update = client.session_update.call_args.kwargs["update"]
     assert isinstance(update, AgentThoughtChunk)
     assert update.content.text == "Thinking..."
+
+
+@pytest.mark.asyncio
+async def test_content_delta_streams_message_chunk(translator):
+    client = _make_client()
+    await translator.apply(
+        ContentDeltaEvent(delta="Hel", stream_id="s1"), client, SESSION
+    )
+
+    update = client.session_update.call_args.kwargs["update"]
+    assert isinstance(update, AgentMessageChunk)
+    assert update.content.text == "Hel"
+
+
+@pytest.mark.asyncio
+async def test_content_delta_reasoning_streams_thought_chunk(translator):
+    client = _make_client()
+    await translator.apply(
+        ContentDeltaEvent(delta="hmm", stream_id="s1", target_kind="reasoning"),
+        client,
+        SESSION,
+    )
+
+    update = client.session_update.call_args.kwargs["update"]
+    assert isinstance(update, AgentThoughtChunk)
+    assert update.content.text == "hmm"
+
+
+@pytest.mark.asyncio
+async def test_content_delta_tool_calling_is_noop(translator):
+    client = _make_client()
+    await translator.apply(
+        ContentDeltaEvent(delta='{"x":', stream_id="s1", target_kind="tool_calling"),
+        client,
+        SESSION,
+    )
+    client.session_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_streamed_final_answer_not_resent(translator):
+    """A FinalAnswerEvent carrying a stream_id was already streamed as deltas."""
+    client = _make_client()
+    await translator.apply(
+        FinalAnswerEvent(content="Hello!", stream_id="s1"), client, SESSION
+    )
+    client.session_update.assert_not_awaited()
 
 
 @pytest.mark.asyncio

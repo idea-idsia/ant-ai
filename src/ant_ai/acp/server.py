@@ -43,7 +43,14 @@ def build_acp_ws_route(
             await websocket.close()
             return
 
-        conn = AgentSideConnection(adapter, writer_agent, reader_agent, listening=False)
+        # ``session/close``, ``session/fork`` and ``session/resume`` are gated behind the unstable protocol flag in acp; the adapter implements all three, so opt in to make them reachable.
+        conn = AgentSideConnection(
+            adapter,
+            writer_agent,
+            reader_agent,
+            listening=False,
+            use_unstable_protocol=True,
+        )
 
         async def _ws_to_pipe() -> None:
             try:
@@ -91,8 +98,9 @@ class ACPServer(BaseModel):
       editors such as Zed or Gemini CLI can spawn directly.
 
     To serve both A2A and ACP from a single process, combine the routes from each server's
-    ASGI app — they occupy disjoint paths and compose cleanly::
+    ASGI app — they occupy disjoint paths and compose cleanly:
 
+    ```python
         from starlette.applications import Starlette
 
         a2a = A2AServer(agent=agent, workflow=wf, agent_card=card)
@@ -101,6 +109,7 @@ class ACPServer(BaseModel):
         app = Starlette(routes=[*a2a.starlette_app().routes, *acp.starlette_app().routes])
         # A2A: POST /  and GET /.well-known/agent-card.json
         # ACP: WS  /acp/ws
+    ```
     """
 
     agent: Annotated[Agent, SkipValidation]
@@ -156,4 +165,4 @@ class ACPServer(BaseModel):
         adapter = ACPAdapter(
             self.agent, self.workflow, slash_commands=self.slash_commands or None
         )
-        asyncio.run(run_agent(adapter))
+        asyncio.run(run_agent(adapter, use_unstable_protocol=True))

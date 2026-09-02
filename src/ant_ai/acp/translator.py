@@ -14,6 +14,7 @@ from acp.schema import (
 from ant_ai.core.events import (
     ClarificationNeededEvent,
     CompletedEvent,
+    ContentDeltaEvent,
     Event,
     FinalAnswerEvent,
     MaxStepsReachedEvent,
@@ -83,6 +84,9 @@ class HVEventToACP:
     async def _agent_message(
         self, event: Event, client: Client, session_id: str
     ) -> None:
+        # If the text was already streamed token-by-token as ContentDeltaEvents (stream_id set on the terminal event), re-sending the whole thing would uplicate it in the client; the deltas already delivered the message.
+        if getattr(event, "stream_id", None):
+            return
         await client.session_update(
             session_id=session_id,
             update=AgentMessageChunk(
@@ -95,6 +99,8 @@ class HVEventToACP:
     async def _agent_thought(
         self, event: Event, client: Client, session_id: str
     ) -> None:
+        if getattr(event, "stream_id", None):
+            return
         await client.session_update(
             session_id=session_id,
             update=AgentThoughtChunk(
@@ -103,14 +109,34 @@ class HVEventToACP:
             ),
         )
 
+    @handler(ContentDeltaEvent)
+    async def _content_delta(
+        self, event: Event, client: Client, session_id: str
+    ) -> None:
+        assert isinstance(event, ContentDeltaEvent)
+        if not event.delta:
+            return
+        if event.target_kind == "reasoning":
+            update = AgentThoughtChunk(
+                session_update="agent_thought_chunk",
+                content=_text_block(event.delta),
+            )
+        elif event.target_kind == "content":
+            update = AgentMessageChunk(
+                session_update="agent_message_chunk",
+                content=_text_block(event.delta),
+            )
+        else:
+            # tool-calling fragments are surfaced via ToolCallingEvent instead
+            return
+        await client.session_update(session_id=session_id, update=update)
+
     @handler(ToolCallingEvent)
     async def _tool_call_start(
         self, event: Event, client: Client, session_id: str
     ) -> None:
         assert isinstance(event, ToolCallingEvent)
-        # acp-ui only attaches tool_call updates to an existing assistant message;
-        # if none exists yet the update is silently dropped. Send an empty chunk
-        # to create the message container before sending ToolCallStart events.
+        # acp-ui only attaches tool_call updates to an existing assistant message; if none exists yet the update is silently dropped. Send an empty chunk to create the message container before sending ToolCallStart events.
         await client.session_update(
             session_id=session_id,
             update=AgentMessageChunk(

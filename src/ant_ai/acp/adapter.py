@@ -44,7 +44,7 @@ from ant_ai.agent.agent import Agent
 from ant_ai.core.events import FinalAnswerEvent
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext, State
-from ant_ai.tools.tool import mcp_tools_from_url
+from ant_ai.tools.tool import Tool, mcp_tools_from_url
 from ant_ai.workflow.workflow import Workflow
 
 _McpServers = list[HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio] | None
@@ -82,7 +82,7 @@ class ACPAdapter(ACPAgent):
     ) -> None:
         self._agent: Agent = agent
         self._workflow: Workflow[State] = workflow
-        self._slash_commands = slash_commands or []
+        self._slash_commands: list[AvailableCommand] = slash_commands or []
         self._client: Client | None = None
         self._client_capabilities: ClientCapabilities | None = None
         self._sessions: dict[str, list[Message]] = {}
@@ -101,7 +101,7 @@ class ACPAdapter(ACPAgent):
         client_info: Implementation | None = None,
         **kwargs: Any,
     ) -> InitializeResponse:
-        self._client_capabilities = client_capabilities
+        self._client_capabilities: ClientCapabilities | None = client_capabilities
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_info=Implementation(name=self._agent.name, version="1.0.0"),
@@ -123,14 +123,16 @@ class ACPAdapter(ACPAgent):
         self._session_cwds[session_id] = cwd
         logger.debug("acp: new_session cwd='{}'", cwd)
 
-        session_agent = self._agent
+        session_agent: Agent = self._agent
         if mcp_servers:
-            extra_tools = []
+            extra_tools: list[Tool] = []
             for srv in mcp_servers:
                 if isinstance(srv, HttpMcpServer):
                     extra_tools.extend(await mcp_tools_from_url(srv.url))
                 elif isinstance(srv, SseMcpServer):
-                    headers = {h.name: h.value for h in (srv.headers or [])}
+                    headers: dict[str, str] = {
+                        h.name: h.value for h in (srv.headers or [])
+                    }
                     extra_tools.extend(
                         await mcp_tools_from_url(
                             srv.url, headers=headers, transport="sse"
@@ -138,7 +140,7 @@ class ACPAdapter(ACPAgent):
                     )
                 # McpServerStdio: subprocess management out of scope
             if extra_tools:
-                session_agent = self._agent.model_copy(
+                session_agent: Agent = self._agent.model_copy(
                     update={"tools": [*self._agent.tools, *extra_tools]}
                 )
         self._session_agents[session_id] = session_agent
@@ -163,7 +165,9 @@ class ACPAdapter(ACPAgent):
         cursor: str | None = None,
         **kwargs: Any,
     ) -> ListSessionsResponse:
-        sessions = [SessionInfo(session_id=sid, cwd="") for sid in self._sessions]
+        sessions: list[SessionInfo] = [
+            SessionInfo(session_id=sid, cwd="") for sid in self._sessions
+        ]
         return ListSessionsResponse(sessions=sessions)
 
     async def prompt(
@@ -176,9 +180,9 @@ class ACPAdapter(ACPAgent):
         _acp_client.set(self._client)
         _acp_session_id.set(session_id)
         _acp_capabilities.set(self._client_capabilities)
-        cwd = self._session_cwds.get(session_id)
+        cwd: str | None = self._session_cwds.get(session_id)
         _acp_cwd.set(cwd)
-        caps = self._client_capabilities
+        caps: ClientCapabilities | None = self._client_capabilities
         logger.debug(
             "acp: prompt session={} cwd='{}' fs_read={} fs_write={} terminal={}",
             session_id[:8],
@@ -188,7 +192,7 @@ class ACPAdapter(ACPAgent):
             bool(caps and caps.terminal),
         )
 
-        text = _extract_prompt_text(prompt)
+        text: str = _extract_prompt_text(prompt)
 
         if (
             self._slash_commands
@@ -208,7 +212,7 @@ class ACPAdapter(ACPAgent):
         history.append(Message(role="user", content=text))
 
         ctx = InvocationContext(session_id=session_id)
-        agent = self._session_agents.get(session_id, self._agent)
+        agent: Agent = self._session_agents.get(session_id, self._agent)
         state: State = self._workflow.create_state(messages=history)
 
         final_content = ""

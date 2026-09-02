@@ -284,7 +284,18 @@ async def main() -> None:
         "python",
         str(script),
         cwd=workdir,
+        env=dict(os.environ),
     ) as (agent, _proc):
+        # Surface the agent subprocess's stderr so tracebacks aren't swallowed.
+        async def _pipe_stderr() -> None:
+            if _proc.stderr is None:
+                return
+            async for line in _proc.stderr:
+                print(
+                    f"{_hdr('AGENT-ERR', RED)} {line.decode(errors='replace').rstrip()}"
+                )
+
+        asyncio.create_task(_pipe_stderr())
         init = await agent.initialize(
             protocol_version=1,
             client_capabilities=caps,
