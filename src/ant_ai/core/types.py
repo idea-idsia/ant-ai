@@ -1,10 +1,23 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from ant_ai.core.message import AnyMessage, Message
+
+
+class LLMSettings(BaseModel):
+    """Per-request overrides for a single LLM completion call."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    temperature: Annotated[float, Field(ge=0.0, le=2.0)] | None = None
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+
+    def overrides(self) -> dict[str, Any]:
+        """The kwargs the caller actually set; fields left unset are omitted."""
+        return self.model_dump(exclude_none=True)
 
 
 class InvocationContext(BaseModel):
@@ -16,7 +29,7 @@ class InvocationContext(BaseModel):
 
     session_id: str
     user_id: str | None = Field(default=None)
-    llm_settings: dict[str, Any] | None = Field(default=None)
+    llm_settings: LLMSettings | None = Field(default=None)
     workflow_settings: dict[str, Any] | None = Field(default=None)
 
 

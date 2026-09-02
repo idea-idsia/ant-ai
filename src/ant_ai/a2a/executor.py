@@ -18,7 +18,7 @@ from ant_ai.a2a.translator import A2AToHVEvent, HVEventToA2A
 from ant_ai.agent.agent import Agent
 from ant_ai.core.events import CompletedEvent, Event
 from ant_ai.core.message import Message
-from ant_ai.core.types import InvocationContext, State
+from ant_ai.core.types import InvocationContext, LLMSettings, State
 from ant_ai.observer import obs
 from ant_ai.workflow.workflow import Workflow
 
@@ -89,10 +89,13 @@ class A2AExecutor(AgentExecutor):
         updater: TaskUpdater,
         task: Task,
     ) -> None:
+        raw_llm_settings = context.metadata.get("llm_settings", None)
         ctx = InvocationContext(
             session_id=task.context_id,
             user_id=context.metadata.get("user_id", None),
-            llm_settings=context.metadata.get("llm_settings", None),
+            llm_settings=LLMSettings.model_validate(raw_llm_settings)
+            if raw_llm_settings is not None
+            else None,
             workflow_settings=context.metadata.get("workflow_settings", None),
         )
 

@@ -9,7 +9,8 @@ from pydantic import BaseModel
 
 from ant_ai.core.message import Message, MessageChunk, ToolFunction
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk, ToolCall
-from ant_ai.core.types import InvocationContext
+from ant_ai.core.types import InvocationContext, LLMSettings
+from ant_ai.llm.params import resolve_llm_params
 from ant_ai.llm.protocol import ChatLLM
 
 
@@ -47,8 +48,22 @@ def to_chatllm_response(
 class LiteLLMChat(ChatLLM):
     """LiteLLM-based chat model. Supports multiple endpoints via LiteLLM."""
 
-    def __init__(self, model: str) -> None:
+    def __init__(
+        self,
+        model: str,
+        *,
+        api_base: str | None = None,
+        api_key: str | None = None,
+        settings: LLMSettings | None = None,
+    ) -> None:
         self.model: str = model
+        # Endpoint/credentials: explicit arg wins, else the env default. Resolved
+        # once here so all construction-time config lives in one place.
+        self.api_base: str | None = api_base or os.getenv("LITELLM_API_BASE")
+        self.api_key: str | None = api_key or os.getenv("LITELLM_API_KEY")
+        # Typed per-instance baseline, merged under any per-request override.
+        self.settings: LLMSettings = settings or LLMSettings()
+        # Raw provider long-tail; the escape hatch for anything outside the `LLMSettings`' safe surface.
         self.default_params: dict = {}
 
     @staticmethod
@@ -60,6 +75,7 @@ class LiteLLMChat(ChatLLM):
         self,
         messages: list[Message],
         *,
+        ctx: InvocationContext | None = None,
         tools: list | None = None,
         response_format: dict | type[BaseModel] | None = None,
         stream: bool = False,
@@ -68,9 +84,9 @@ class LiteLLMChat(ChatLLM):
         kwargs: dict = {
             "model": self.model,
             "messages": self._to_litellm_messages(messages),
-            "api_base": os.getenv("LITELLM_API_BASE"),
-            "api_key": os.getenv("LITELLM_API_KEY"),
-            **self.default_params,
+            "api_base": self.api_base,
+            "api_key": self.api_key,
+            **resolve_llm_params(self.default_params, self.settings, ctx),
         }
 
         kwargs["stream"] = stream
@@ -91,6 +107,7 @@ class LiteLLMChat(ChatLLM):
     ) -> ChatLLMResponse:
         kwargs = self._build_completion_kwargs(
             messages,
+            ctx=ctx,
             tools=tools,
             response_format=response_format,
         )
@@ -106,6 +123,7 @@ class LiteLLMChat(ChatLLM):
     ) -> ChatLLMResponse:
         kwargs = self._build_completion_kwargs(
             messages,
+            ctx=ctx,
             tools=tools,
             response_format=response_format,
         )
@@ -122,6 +140,7 @@ class LiteLLMChat(ChatLLM):
         async def gen() -> AsyncIterator[ChatLLMStreamChunk]:
             kwargs = self._build_completion_kwargs(
                 messages,
+                ctx=ctx,
                 tools=tools,
                 response_format=response_format,
                 stream=True,

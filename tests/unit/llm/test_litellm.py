@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk
+from ant_ai.core.types import InvocationContext, LLMSettings
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat, to_chatllm_response
 
 
@@ -168,6 +169,117 @@ async def test_stream_yields_tool_call_fragments(
         "name": "my_tool",
         "arguments": "{}",
     }
+
+
+@pytest.mark.unit
+def test_per_request_llm_settings_reach_completion(
+    monkeypatch, sample_messages, litellm_response
+):
+    import ant_ai.llm.integrations.lite_llm as wrapper_module
+
+    captured: dict = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return litellm_response("ok")
+
+    monkeypatch.setattr(wrapper_module, "completion", fake_completion)
+
+    chat = LiteLLMChat(model="litellm-model")
+    ctx = InvocationContext(
+        session_id="s1",
+        llm_settings=LLMSettings(temperature=0.2, reasoning_effort="high"),
+    )
+    chat.invoke(sample_messages, ctx=ctx)
+
+    assert captured["temperature"] == 0.2
+    assert captured["reasoning_effort"] == "high"
+
+
+@pytest.mark.unit
+async def test_per_request_settings_override_instance_settings(
+    monkeypatch, sample_messages, litellm_response
+):
+    import ant_ai.llm.integrations.lite_llm as wrapper_module
+
+    captured: dict = {}
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        return litellm_response("ok")
+
+    monkeypatch.setattr(wrapper_module, "acompletion", fake_acompletion)
+
+    chat = LiteLLMChat(model="litellm-model", settings=LLMSettings(temperature=0.1))
+    ctx = InvocationContext(session_id="s1", llm_settings=LLMSettings(temperature=0.9))
+    await chat.ainvoke(sample_messages, ctx=ctx)
+
+    assert captured["temperature"] == 0.9
+
+
+@pytest.mark.unit
+def test_no_ctx_sends_no_sampling_kwargs(
+    monkeypatch, sample_messages, litellm_response
+):
+    import ant_ai.llm.integrations.lite_llm as wrapper_module
+
+    captured: dict = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return litellm_response("ok")
+
+    monkeypatch.setattr(wrapper_module, "completion", fake_completion)
+
+    LiteLLMChat(model="litellm-model").invoke(sample_messages)
+
+    assert "temperature" not in captured
+    assert "reasoning_effort" not in captured
+
+
+@pytest.mark.unit
+def test_api_base_and_key_explicit_arg_beats_env(
+    monkeypatch, sample_messages, litellm_response
+):
+    import ant_ai.llm.integrations.lite_llm as wrapper_module
+
+    monkeypatch.setenv("LITELLM_API_BASE", "http://from-env")
+    monkeypatch.setenv("LITELLM_API_KEY", "env-key")
+
+    captured: dict = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return litellm_response("ok")
+
+    monkeypatch.setattr(wrapper_module, "completion", fake_completion)
+
+    chat = LiteLLMChat(
+        model="litellm-model", api_base="http://explicit", api_key="explicit-key"
+    )
+    chat.invoke(sample_messages)
+
+    assert captured["api_base"] == "http://explicit"
+    assert captured["api_key"] == "explicit-key"
+
+
+@pytest.mark.unit
+def test_api_base_falls_back_to_env(monkeypatch, sample_messages, litellm_response):
+    import ant_ai.llm.integrations.lite_llm as wrapper_module
+
+    monkeypatch.setenv("LITELLM_API_BASE", "http://from-env")
+
+    captured: dict = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return litellm_response("ok")
+
+    monkeypatch.setattr(wrapper_module, "completion", fake_completion)
+
+    LiteLLMChat(model="litellm-model").invoke(sample_messages)
+
+    assert captured["api_base"] == "http://from-env"
 
 
 @pytest.mark.unit

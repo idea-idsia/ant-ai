@@ -7,7 +7,8 @@ from pydantic import BaseModel
 
 from ant_ai.core.message import Message, MessageChunk
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk
-from ant_ai.core.types import InvocationContext
+from ant_ai.core.types import InvocationContext, LLMSettings
+from ant_ai.llm.params import resolve_llm_params
 from ant_ai.llm.protocol import ChatLLM
 
 
@@ -20,10 +21,20 @@ class OpenAIChat(ChatLLM):
     Interface for a language model that generates chat responses using OpenAI's API.
     """
 
-    def __init__(self, model: str = "gpt-5-nano", api_key: str | None = None):
+    def __init__(
+        self,
+        model: str = "gpt-5-nano",
+        api_key: str | None = None,
+        *,
+        settings: LLMSettings | None = None,
+    ):
         self.model: str = model
         self.client = OpenAI(api_key=api_key)
         self.async_client = AsyncOpenAI(api_key=api_key)
+        # Typed per-instance baseline, merged under any per-request override.
+        self.settings: LLMSettings = settings or LLMSettings()
+        # Raw provider long-tail; the escape hatch for anything outside the `LLMSettings`' safe surface.
+        self.default_params: dict[str, Any] = {}
 
     @staticmethod
     def _to_openai_messages(
@@ -35,6 +46,26 @@ class OpenAIChat(ChatLLM):
             [m.model_dump(exclude={"kind"}) for m in messages],
         )
 
+    def _build_kwargs(
+        self,
+        messages: list[Message],
+        *,
+        ctx: InvocationContext | None,
+        tools: list | None,
+        response_format: dict | type[BaseModel] | None,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        """Assemble kwargs for the OpenAI chat-completions call."""
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": self._to_openai_messages(messages),
+            **resolve_llm_params(self.default_params, self.settings, ctx),
+            **_drop_none(tools=tools, response_format=response_format),
+        }
+        if stream:
+            kwargs["stream"] = True
+        return kwargs
+
     def invoke(
         self,
         messages: list[Message],
@@ -43,15 +74,10 @@ class OpenAIChat(ChatLLM):
         tools: list | None = None,
         response_format: dict | type[BaseModel] | None = None,
     ) -> ChatLLMResponse:
-        openai_messages = self._to_openai_messages(messages)
-
         response = self.client.chat.completions.create(
-            model=self.model,
-            messages=openai_messages,
-            **_drop_none(
-                tools=tools,
-                response_format=response_format,
-            ),
+            **self._build_kwargs(
+                messages, ctx=ctx, tools=tools, response_format=response_format
+            )
         )
         content = response.choices[0].message.content or ""
         return ChatLLMResponse(message=Message(role="assistant", content=content))
@@ -64,15 +90,10 @@ class OpenAIChat(ChatLLM):
         tools: list | None = None,
         response_format: dict | type[BaseModel] | None = None,
     ) -> ChatLLMResponse:
-        openai_messages = self._to_openai_messages(messages)
-
         response = await self.async_client.chat.completions.create(
-            model=self.model,
-            messages=openai_messages,
-            **_drop_none(
-                tools=tools,
-                response_format=response_format,
-            ),
+            **self._build_kwargs(
+                messages, ctx=ctx, tools=tools, response_format=response_format
+            )
         )
         content = response.choices[0].message.content or ""
         return ChatLLMResponse(message=Message(role="assistant", content=content))
@@ -85,17 +106,15 @@ class OpenAIChat(ChatLLM):
         tools: list | None = None,
         response_format: dict | type[BaseModel] | None = None,
     ) -> AsyncIterator[ChatLLMStreamChunk]:
-        openai_messages = self._to_openai_messages(messages)
-
         async def gen() -> AsyncIterator[ChatLLMStreamChunk]:
             stream = await self.async_client.chat.completions.create(
-                model=self.model,
-                messages=openai_messages,
-                stream=True,
-                **_drop_none(
+                **self._build_kwargs(
+                    messages,
+                    ctx=ctx,
                     tools=tools,
                     response_format=response_format,
-                ),
+                    stream=True,
+                )
             )
 
             async for chunk in stream:

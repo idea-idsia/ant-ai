@@ -38,7 +38,7 @@ from ant_ai.core.result import (
     Transition,
     TransitionAction,
 )
-from ant_ai.core.types import InvocationContext, State
+from ant_ai.core.types import InvocationContext, LLMSettings, State
 
 __all__ = [
     # events
@@ -86,5 +86,6 @@ __all__ = [
     "StepResult",
     # types
     "InvocationContext",
+    "LLMSettings",
     "State",
 ]
