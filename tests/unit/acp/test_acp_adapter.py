@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from acp.schema import (
-    AvailableCommand,
+    AgentMessageChunk,
     AvailableCommandsUpdate,
     ClientCapabilities,
     EmbeddedResourceContentBlock,
@@ -15,15 +15,17 @@ from acp.schema import (
 )
 
 from ant_ai.acp.adapter import ACPAdapter
+from ant_ai.acp.commands import ACPCommand, ACPCommandContext
 from ant_ai.core.events import FinalAnswerEvent, StartEvent
+from ant_ai.core.message import Message
 
 
-def _make_adapter(slash_commands=None) -> ACPAdapter:
+def _make_adapter(commands=None) -> ACPAdapter:
     agent = MagicMock()
     agent.name = "TestAgent"
     agent.tools = []
     workflow = MagicMock()
-    return ACPAdapter(agent=agent, workflow=workflow, slash_commands=slash_commands)
+    return ACPAdapter(agent=agent, workflow=workflow, commands=commands)
 
 
 @pytest.mark.asyncio
@@ -200,8 +202,8 @@ async def test_prompt_includes_embedded_resource_text():
 
 @pytest.mark.asyncio
 async def test_slash_commands_sent_on_first_prompt_only():
-    cmd = AvailableCommand(name="test-cmd", description="A test command")
-    adapter = _make_adapter(slash_commands=[cmd])
+    cmd = ACPCommand(name="test-cmd", description="A test command")
+    adapter = _make_adapter(commands=[cmd])
     session = await adapter.new_session(cwd="/tmp")
 
     client = MagicMock()
@@ -243,8 +245,8 @@ async def test_slash_commands_sent_on_first_prompt_only():
 
 @pytest.mark.asyncio
 async def test_close_session_cleans_up_state():
-    cmd = AvailableCommand(name="cmd", description="desc")
-    adapter = _make_adapter(slash_commands=[cmd])
+    cmd = ACPCommand(name="cmd", description="desc")
+    adapter = _make_adapter(commands=[cmd])
     session = await adapter.new_session(cwd="/project")
 
     # Simulate a prompt so commands_sent is populated
@@ -305,3 +307,174 @@ async def test_new_session_with_http_mcp_server_extends_agent_tools():
             )
         finally:
             adapter_mod.mcp_tools_from_url = original
+
+
+# ---------------------------------------------------------------------------
+# Hybrid command dispatch
+# ---------------------------------------------------------------------------
+
+
+def _connected_client(adapter: ACPAdapter) -> MagicMock:
+    client = MagicMock()
+    client.session_update = AsyncMock()
+    adapter.on_connect(client)
+    return client
+
+
+async def _one_event_stream(**_):
+    yield FinalAnswerEvent(content="ok")
+
+
+@pytest.mark.asyncio
+async def test_code_command_runs_handler_without_model_turn():
+    seen: dict = {}
+
+    async def _handler(ctx: ACPCommandContext) -> str:
+        seen["ctx"] = ctx
+        return "did the thing"
+
+    adapter = _make_adapter(
+        commands=[ACPCommand(name="do", description="d", kind="code", handler=_handler)]
+    )
+    session = await adapter.new_session(cwd="/tmp")
+    client = _connected_client(adapter)
+    adapter._workflow.stream = MagicMock()
+
+    result = await adapter.prompt(
+        prompt=[TextContentBlock(type="text", text="/do the thing now")],
+        session_id=session.session_id,
+    )
+
+    assert result.stop_reason == "end_turn"
+    adapter._workflow.stream.assert_not_called()
+    assert isinstance(seen["ctx"], ACPCommandContext)
+    assert seen["ctx"].args == "the thing now"
+    assert seen["ctx"].session_id == session.session_id
+    chunks = [
+        c.kwargs["update"]
+        for c in client.session_update.call_args_list
+        if isinstance(c.kwargs["update"], AgentMessageChunk)
+    ]
+    assert chunks and chunks[-1].content.text == "did the thing"
+
+
+@pytest.mark.asyncio
+async def test_code_command_handler_can_mutate_history():
+    async def _handler(ctx: ACPCommandContext) -> str:
+        ctx.history[:] = [Message(role="user", content="compacted")]
+        return "compacted"
+
+    adapter = _make_adapter(
+        commands=[
+            ACPCommand(name="compact", description="d", kind="code", handler=_handler)
+        ]
+    )
+    session = await adapter.new_session(cwd="/tmp")
+    sid = session.session_id
+    adapter._sessions[sid].append(Message(role="user", content="old turn"))
+    _connected_client(adapter)
+
+    await adapter.prompt(
+        prompt=[TextContentBlock(type="text", text="/compact")],
+        session_id=sid,
+    )
+
+    assert [m.content for m in adapter._sessions[sid]] == ["compacted"]
+
+
+@pytest.mark.asyncio
+async def test_code_command_handler_can_replace_agent():
+    replacement = MagicMock()
+
+    async def _handler(ctx: ACPCommandContext) -> str:
+        ctx.replace_agent(replacement)
+        return "swapped"
+
+    adapter = _make_adapter(
+        commands=[
+            ACPCommand(name="swap", description="d", kind="code", handler=_handler)
+        ]
+    )
+    session = await adapter.new_session(cwd="/tmp")
+    _connected_client(adapter)
+
+    await adapter.prompt(
+        prompt=[TextContentBlock(type="text", text="/swap")],
+        session_id=session.session_id,
+    )
+
+    assert adapter._session_agents[session.session_id] is replacement
+
+
+@pytest.mark.asyncio
+async def test_code_command_handler_exception_reported_generically():
+    async def _handler(ctx: ACPCommandContext) -> str:
+        raise RuntimeError("secret path /etc/foo")
+
+    adapter = _make_adapter(
+        commands=[
+            ACPCommand(name="boom", description="d", kind="code", handler=_handler)
+        ]
+    )
+    session = await adapter.new_session(cwd="/tmp")
+    client = _connected_client(adapter)
+
+    result = await adapter.prompt(
+        prompt=[TextContentBlock(type="text", text="/boom")],
+        session_id=session.session_id,
+    )
+
+    assert result.stop_reason == "end_turn"
+    text = client.session_update.call_args.kwargs["update"].content.text
+    assert text == "/boom failed - see server logs."
+    assert "secret" not in text
+
+
+@pytest.mark.asyncio
+async def test_prompt_command_expands_template_and_runs_workflow():
+    captured: list[str] = []
+
+    def _capture_state(messages):
+        captured.extend(m.content for m in messages if m.role == "user")
+        return MagicMock()
+
+    adapter = _make_adapter(
+        commands=[
+            ACPCommand(
+                name="plan", description="d", kind="prompt", template="PLAN:\n{args}"
+            )
+        ]
+    )
+    session = await adapter.new_session(cwd="/tmp")
+    _connected_client(adapter)
+    adapter._workflow.create_state.side_effect = _capture_state
+    adapter._workflow.stream = MagicMock(return_value=_one_event_stream())
+
+    await adapter.prompt(
+        prompt=[TextContentBlock(type="text", text="/plan ship the feature")],
+        session_id=session.session_id,
+    )
+
+    assert captured == ["PLAN:\nship the feature"]
+
+
+@pytest.mark.asyncio
+async def test_unknown_slash_command_passes_through_to_workflow():
+    captured: list[str] = []
+
+    def _capture_state(messages):
+        captured.extend(m.content for m in messages if m.role == "user")
+        return MagicMock()
+
+    adapter = _make_adapter(commands=[ACPCommand(name="known", description="d")])
+    session = await adapter.new_session(cwd="/tmp")
+    _connected_client(adapter)
+    adapter._workflow.create_state.side_effect = _capture_state
+    adapter._workflow.stream = MagicMock(return_value=_one_event_stream())
+
+    await adapter.prompt(
+        prompt=[TextContentBlock(type="text", text="/unknown do stuff")],
+        session_id=session.session_id,
+    )
+
+    assert captured == ["/unknown do stuff"]

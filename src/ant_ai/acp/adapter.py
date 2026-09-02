@@ -7,6 +7,7 @@ from acp.interfaces import Agent as ACPAgent, Client
 from acp.schema import (
     AcpMcpServer,
     AgentCapabilities,
+    AgentMessageChunk,
     AuthenticateResponse,
     AvailableCommand,
     AvailableCommandsUpdate,
@@ -33,6 +34,7 @@ from acp.schema import (
 )
 from loguru import logger
 
+from ant_ai.acp.commands import ACPCommand, ACPCommandContext, parse_slash_command
 from ant_ai.acp.tools import (
     _acp_capabilities,
     _acp_client,
@@ -78,11 +80,14 @@ class ACPAdapter(ACPAgent):
         agent: Agent,
         workflow: Workflow,
         *,
-        slash_commands: list[AvailableCommand] | None = None,
+        commands: list[ACPCommand] | None = None,
     ) -> None:
         self._agent: Agent = agent
         self._workflow: Workflow[State] = workflow
-        self._slash_commands: list[AvailableCommand] = slash_commands or []
+        self._commands: dict[str, ACPCommand] = {c.name: c for c in (commands or [])}
+        self._available_commands: list[AvailableCommand] = [
+            c.to_available_command() for c in (commands or [])
+        ]
         self._client: Client | None = None
         self._client_capabilities: ClientCapabilities | None = None
         self._sessions: dict[str, list[Message]] = {}
@@ -93,6 +98,9 @@ class ACPAdapter(ACPAgent):
 
     def on_connect(self, conn: Client) -> None:
         self._client: Client = conn
+
+    def _set_session_agent(self, session_id: str, agent: Agent) -> None:
+        self._session_agents[session_id] = agent
 
     async def initialize(
         self,
@@ -195,7 +203,7 @@ class ACPAdapter(ACPAgent):
         text: str = _extract_prompt_text(prompt)
 
         if (
-            self._slash_commands
+            self._available_commands
             and self._client
             and session_id not in self._session_commands_sent
         ):
@@ -203,10 +211,17 @@ class ACPAdapter(ACPAgent):
                 session_id=session_id,
                 update=AvailableCommandsUpdate(
                     session_update="available_commands_update",
-                    available_commands=self._slash_commands,
+                    available_commands=self._available_commands,
                 ),
             )
             self._session_commands_sent.add(session_id)
+
+        name, args = parse_slash_command(text)
+        command = self._commands.get(name) if name else None
+        if command is not None and command.kind == "code":
+            return await self._run_code_command(command, args, session_id)
+        if command is not None and command.kind == "prompt":
+            text = command.expand(args)
 
         history: list[Message] = list(self._sessions.get(session_id, []))
         history.append(Message(role="user", content=text))
@@ -229,6 +244,39 @@ class ACPAdapter(ACPAgent):
                     Message(role="assistant", content=final_content)
                 )
 
+        return PromptResponse(stop_reason="end_turn")
+
+    async def _run_code_command(
+        self, command: ACPCommand, args: str, session_id: str
+    ) -> PromptResponse:
+        """Dispatch a ``kind="code"`` command -- no model turn."""
+        assert command.handler is not None  # guaranteed by ACPCommand.__post_init__
+        ctx = ACPCommandContext(
+            args=args,
+            session_id=session_id,
+            client=self._client,
+            capabilities=self._client_capabilities,
+            cwd=self._session_cwds.get(session_id),
+            history=self._sessions.setdefault(session_id, []),
+            agent=self._session_agents.get(session_id, self._agent),
+            replace_agent=lambda a: self._set_session_agent(session_id, a),
+        )
+        try:
+            reply = await command.handler(ctx)
+        except Exception:
+            # Detail stays in the server log; the client gets a generic message so
+            # handler internals (paths, config) are not disclosed over the wire.
+            logger.exception("acp: /{} failed", command.name)
+            reply = f"/{command.name} failed - see server logs."
+
+        if reply and self._client:
+            await self._client.session_update(
+                session_id=session_id,
+                update=AgentMessageChunk(
+                    session_update="agent_message_chunk",
+                    content=TextContentBlock(type="text", text=reply),
+                ),
+            )
         return PromptResponse(stop_reason="end_turn")
 
     async def fork_session(

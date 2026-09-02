@@ -1,4 +1,10 @@
 from ant_ai.acp.adapter import ACPAdapter
+from ant_ai.acp.commands import (
+    ACPCommand,
+    ACPCommandContext,
+    CommandHandler,
+    parse_slash_command,
+)
 from ant_ai.acp.server import ACPServer
 from ant_ai.acp.tools import (
     ACP_ALL_TOOLS,
@@ -21,7 +27,11 @@ from ant_ai.acp.tools import (
 
 __all__ = [
     "ACPAdapter",
+    "ACPCommand",
+    "ACPCommandContext",
     "ACPServer",
+    "CommandHandler",
+    "parse_slash_command",
     "ACP_ALL_TOOLS",
     "ACP_FILESYSTEM_TOOLS",
     "ACP_PLAN_TOOLS",

@@ -7,8 +7,16 @@ Features demonstrated
 - **Terminal tools** – run shell commands in the IDE terminal via ``acp_terminal_run``
   (requires ``clientCapabilities.terminal``).
 - **Plan updates** – push a plan to the IDE UI via ``acp_send_plan``.
-- **Slash commands** – ``/read-file`` and ``/run`` are advertised to the IDE on the
-  first prompt of each session.
+- **Hybrid slash commands** – advertised to the IDE on the first prompt of each
+  session and handled two ways:
+    * ``/compact`` and ``/skill`` are ``kind="code"`` – a Python handler runs
+      against the live session (no model turn). ``/compact`` summarises the
+      transcript in place; ``/skill install|remove|list [name]`` manages the
+      session's agentskills.io skills, loaded from the catalog root
+      ``<cwd>/.skills`` (a ``SKILL.md`` body lands in the system prompt, so that
+      path check is the trust boundary).
+    * ``/plan`` is ``kind="prompt"`` – it expands into a templated instruction and
+      the normal agent turn runs.
 - **Per-session MCP servers** – HTTP or SSE MCP servers passed by the client in
   ``session/new`` are automatically loaded and made available as tools.
 
@@ -53,19 +61,22 @@ import math
 import os
 import sys
 from datetime import UTC, datetime
-
-from acp.schema import AvailableCommand, AvailableCommandInput
+from pathlib import Path
 
 from ant_ai.acp import (
     ACP_FILESYSTEM_TOOLS,
     ACP_PLAN_TOOLS,
     ACP_SESSION_TOOLS,
     ACP_TERMINAL_TOOLS,
+    ACPCommand,
+    ACPCommandContext,
     ACPServer,
 )
 from ant_ai.agent.agent import Agent
+from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat
+from ant_ai.skills import SkillLoader
 from ant_ai.tools.tool import tool
 from ant_ai.workflow.workflow import END, START, Workflow
 
@@ -94,6 +105,93 @@ def calculate(expression: str) -> str:
     except Exception as exc:
         return f"Error: {exc}"
     return str(result)
+
+
+async def _cmd_compact(ctx: ACPCommandContext) -> str:
+    """`/compact` — summarise the session transcript in place (no model turn)."""
+    convo = [m for m in ctx.history if m.role in ("user", "assistant")]
+    if len(convo) < 4:
+        return "Not enough conversation to compact yet."
+    transcript = "\n".join(f"{m.role}: {m.content}" for m in convo)
+    resp = await ctx.agent.llm.ainvoke(
+        [
+            Message(
+                role="user",
+                content=(
+                    "Summarise the conversation below into a compact briefing the "
+                    "assistant can continue from. Keep decisions, facts and open "
+                    f"threads; drop chit-chat.\n\n{transcript}"
+                ),
+            )
+        ]
+    )
+    summary = str(resp.message.content or "")
+    n = len(ctx.history)
+    ctx.history[:] = [
+        Message(role="user", content=f"[Conversation so far, compacted]\n{summary}")
+    ]
+    return f"Compacted {n} messages into a {len(summary)}-char summary."
+
+
+def _skills_root(ctx: ACPCommandContext) -> Path:
+    """Catalog directory this session may install skills from."""
+    return (Path(ctx.cwd or ".") / ".skills").resolve()
+
+
+def _rebuilt_with_skills(agent: Agent, skill_dirs: list[Path]) -> Agent:
+    # A fresh Agent is required: model_copy does not re-run the validator that
+    # loads `_skills`. Passing individual skill folders relies on SkillLoader
+    # accepting a dir that is itself a skill.
+    return Agent(
+        name=agent.name,
+        description=agent.description,
+        llm=agent.llm,
+        system_prompt=agent.system_prompt,
+        tools=list(agent.tools),
+        skills=skill_dirs or None,
+    )
+
+
+async def _cmd_skill(ctx: ACPCommandContext) -> str:
+    """`/skill install|remove|list [name]` — manage this session's skills.
+
+    Skills are installed from a per-session catalog root (``<cwd>/.skills``). The
+    body of a ``SKILL.md`` is injected into the agent's system prompt, so the
+    catalog-root check below is the trust boundary — never widen it to arbitrary
+    paths.
+    """
+    verb, _, name = ctx.args.strip().partition(" ")
+    verb, name = verb.strip(), name.strip()
+    installed: list[Path] = [s.skill_dir for s in ctx.agent._skills]
+
+    if verb in ("", "list"):
+        names = [s.name for s in ctx.agent._skills]
+        return "Installed skills: " + (", ".join(names) if names else "(none)")
+
+    if verb == "install":
+        if not name:
+            return "Usage: /skill install <name>"
+        root = _skills_root(ctx)
+        folder = (root / name).resolve()
+        if not folder.is_relative_to(root) or folder.is_symlink():
+            return f"'{name}' is outside the allowed skills root ({root})."
+        if not (folder / "SKILL.md").is_file():
+            return f"No skill '{name}' in {root}."
+        if not SkillLoader(folder).load():
+            return f"Skill '{name}' has an invalid SKILL.md."
+        if folder in installed:
+            return f"Skill '{name}' is already installed."
+        ctx.replace_agent(_rebuilt_with_skills(ctx.agent, [*installed, folder]))
+        return f"Installed skill '{name}' for this session."
+
+    if verb == "remove":
+        keep = [s.skill_dir for s in ctx.agent._skills if s.name != name]
+        if len(keep) == len(installed):
+            return f"Skill '{name}' is not installed."
+        ctx.replace_agent(_rebuilt_with_skills(ctx.agent, keep))
+        return f"Removed skill '{name}'."
+
+    return "Usage: /skill install <name> | /skill remove <name> | /skill list"
 
 
 async def _run_agent(agent, state: State, ctx: InvocationContext | None):
@@ -139,20 +237,29 @@ def main() -> None:
     server = ACPServer(
         agent=agent,
         workflow=workflow,
-        slash_commands=[
-            AvailableCommand(
-                name="read-file",
-                description="Read a file from the IDE filesystem",
-                input=AvailableCommandInput(hint="path/to/file.txt"),
+        commands=[
+            ACPCommand(
+                name="compact",
+                description="Summarise the conversation so far to free up context",
+                kind="code",
+                handler=_cmd_compact,
             ),
-            AvailableCommand(
-                name="run",
-                description="Run a shell command in the IDE terminal",
-                input=AvailableCommandInput(hint="ls -la"),
+            ACPCommand(
+                name="skill",
+                description="Manage this session's skills (from <cwd>/.skills)",
+                input_hint="install <name> | remove <name> | list",
+                kind="code",
+                handler=_cmd_skill,
             ),
-            AvailableCommand(
+            ACPCommand(
                 name="plan",
-                description="Ask the agent to create a plan before acting",
+                description="Draft a plan before acting",
+                input_hint="what you want done",
+                kind="prompt",
+                template=(
+                    "Draft a short step-by-step plan for the task below, then stop "
+                    "and wait for my approval:\n\n{args}"
+                ),
             ),
         ],
     )

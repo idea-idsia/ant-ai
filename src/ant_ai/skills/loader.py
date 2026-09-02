@@ -49,6 +49,13 @@ class SkillLoader:
         if not skills_dir.is_dir():
             return skills
 
+        # A path that is itself a skill folder (SKILL.md directly inside) loads as
+        # that single skill -- lets callers enable skills one folder at a time.
+        direct_md: Path = skills_dir / "SKILL.md"
+        if direct_md.is_file():
+            direct: AgentSkill | None = self._parse_skill(skills_dir, direct_md)
+            return [direct] if direct is not None else []
+
         for entry in sorted(skills_dir.iterdir()):
             if not entry.is_dir():
                 continue
