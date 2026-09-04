@@ -102,6 +102,10 @@ http://quality-agent:9003/
 
 See [Architecture](../architecture/index.md) for the full event-streaming sequence diagram, and [Streaming](../single-agent/streaming.md#over-a2a) for how live token deltas are forwarded (or not) between agents in a colony.
 
+## Adaptive topology
+
+`collab()` wires collaboration edges once. To recompute them at runtime — agents publishing what they need and what they offer each round, and reachability being matched from those self-descriptions — see [Adaptive topology](topology.md).
+
 ## Full example
 
 See the [Multi-agent example](example.md) for a complete software-engineering colony with three collaborating agents.

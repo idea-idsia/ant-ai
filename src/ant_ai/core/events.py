@@ -199,6 +199,58 @@ class ContentDeltaEvent(AgentEvent):
     )
 
 
+class TopologyLink(BaseModel):
+    """A directed edge in a round's agent topology.
+
+    Direction is **information flow**: `src` offers, `dst` needs. Delivery
+    pushes src's message into dst's inbox; visibility gives *dst* a tool that
+    calls *src*, so the tool binding is the reverse of this arrow.
+    """
+
+    src: str = Field(description="The participant offering information.")
+    dst: str = Field(description="The participant needing it.")
+    weight: float = Field(default=1.0, description="Relevance score for this edge.")
+    reason: str | None = Field(
+        default=None,
+        description="Why this edge exists, in words. Carried on the edge so replaying "
+        "a run reconstructs not just who talked to whom but why.",
+    )
+
+
+class TopologyEvent(WorkflowEvent):
+    """Emitted once per round when an adaptive topology is decided.
+
+    The entire public surface of "reachability changed, and here is why":
+    without it a stream consumer can see agents acting but not the wiring that
+    allowed it.
+    """
+
+    kind: Literal["topology"] = "topology"
+    round: int = Field(default=0, description="Round this topology applies to.")
+    links: tuple[TopologyLink, ...] = Field(
+        default=(), description="The directed edges decided for this round."
+    )
+
+
+class HealingEvent(WorkflowEvent):
+    """Emitted when a supervisor detects a structural failure in collaboration.
+
+    Healing that leaves no trace on the stream is indistinguishable from a run
+    that never needed it, so every finding surfaces here with the pattern that
+    fired, the detector that fired it, and what it prescribed.
+    """
+
+    kind: Literal["healing"] = "healing"
+    round: int = Field(default=0, description="Round the failure was detected in.")
+    pattern: str = Field(
+        default="", description="Short code for the failure pattern, e.g. 'ET'."
+    )
+    detector: str = Field(default="", description="Detector that raised it.")
+    interventions: tuple[str, ...] = Field(
+        default=(), description="Kinds of correction applied, in order."
+    )
+
+
 type AnyEvent = Annotated[
     Event
     | StartEvent
@@ -210,6 +262,8 @@ type AnyEvent = Annotated[
     | ToolResultEvent
     | ReasoningEvent
     | CompletedEvent
-    | ContentDeltaEvent,
+    | ContentDeltaEvent
+    | TopologyEvent
+    | HealingEvent,
     Field(discriminator="kind"),
 ]

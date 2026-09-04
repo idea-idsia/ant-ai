@@ -78,6 +78,10 @@ class LangfuseSink:
             "node.end": self._on_node_end,
             "workflow.end": self._on_workflow_end,
             "workflow.max_steps": self._on_workflow_end,
+            "topology.start": self._on_workflow_start,
+            "topology.round.start": self._on_node_start,
+            "topology.round.end": self._on_node_end,
+            "topology.end": self._on_workflow_end,
         }
 
     async def event(self, name: str, **fields) -> None:

@@ -29,4 +29,6 @@ class Agent(BaseAgent):
     def add_tool(self, tool: Tool) -> None:
         """Register a tool at runtime and hot-reload the loop's step."""
         self._registry.register(tool)
+        if tool not in self.tools:
+            self.tools.append(tool)
         self._loop.register_tool(self._registry)

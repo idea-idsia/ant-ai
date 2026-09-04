@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+import warnings
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from a2a.server.tasks import DatabaseTaskStore, InMemoryTaskStore, TaskStore
@@ -15,6 +16,15 @@ from ant_ai.a2a.config import A2AConfig
 from ant_ai.a2a.server import A2AServer
 from ant_ai.agent.agent import Agent
 from ant_ai.workflow.workflow import Workflow
+
+if TYPE_CHECKING:
+    # Type-only: `ant_ai.topology` imports `ant_ai.a2a.agent`, so importing it
+    # at module level would cycle. The names are still real to a type checker
+    # and to an IDE, which is the point — they used to be `Any`.
+    from ant_ai.topology.heal import Detector
+    from ant_ai.topology.materialise import TopologyMaterialiser
+    from ant_ai.topology.runtime import Ensemble
+    from ant_ai.topology.strategy import TopologyStrategy
 
 
 def _normalize_url(url: str) -> str:
@@ -37,6 +47,8 @@ class Colony(BaseModel):
     _specs: dict[str, AgentSpec] = PrivateAttr(default_factory=dict)
     _edges: dict[str, dict[str, A2AConfig]] = PrivateAttr(default_factory=dict)
     _db_engine: AsyncEngine | None = PrivateAttr(default=None)
+    _topology: Any = PrivateAttr(default=None)
+    _detectors: list[Any] = PrivateAttr(default_factory=list)
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def model_post_init(self, __context):
@@ -138,6 +150,153 @@ class Colony(BaseModel):
             _config: A2AConfig = config or A2AConfig(endpoint=self._specs[source].url)
             self._add_edge(target, source, config=_config)
         return self
+
+    def topology(
+        self,
+        strategy: TopologyStrategy,
+        *,
+        detectors: list[Detector] | None = None,
+    ) -> Colony:
+        """Declare an adaptive topology for this colony.
+
+        Without this call the colony behaves exactly as before: `collab()` edges
+        are the static topology.
+
+        Args:
+            strategy: A `TopologyStrategy` — see `ant_ai.topology.builtins`.
+                Compose two with `DyTopo(...) | DigToHeal()`.
+            detectors: Structural failure detectors appended as one extra `Heal`
+                stage, for a one-off that does not warrant its own strategy.
+
+        Returns:
+            The Colony instance, for chaining.
+        """
+        self._topology = strategy
+        self._detectors = list(detectors or [])
+        return self
+
+    def ensemble(
+        self,
+        *,
+        local: bool = True,
+        use_workflows: bool | None = None,
+        max_rounds: int | None = None,
+        materialiser: TopologyMaterialiser | None = None,
+    ) -> Ensemble:
+        """Build an `Ensemble` over the registered agents.
+
+        Args:
+            local: True builds `LocalParticipant`s that run in this process, so no
+                servers are needed. False builds `A2AParticipant`s that drive the
+                deployed colony over the wire.
+            use_workflows: Whether each participant's turn runs its registered
+                workflow. Running it is faithful to how a colony serves a request,
+                but `Workflow.stream` takes no response schema, so such a
+                participant answers with one plain public message: no query/key
+                descriptors, no addressed messages, no declared reactions and
+                nothing ever submitted. None therefore means *pick*: the agent is
+                invoked directly when the pipeline has a component that reads any
+                of those, and the workflow runs when it does not. Pass True or
+                False to state the choice yourself; True with such a strategy is
+                honoured, and a matcher warns once its fallback is total.
+            max_rounds: Override the strategy's round cap.
+            materialiser: Override how the topology is realised.
+
+        Returns:
+            A configured `Ensemble`.
+        """
+        # Imported lazily: `ant_ai.topology` imports `ant_ai.a2a.agent`, which
+        # initialises this package, so a module-level import would cycle.
+        from ant_ai.topology.builtins.shapes import Baseline
+        from ant_ai.topology.heal import Heal
+        from ant_ai.topology.materialise import VisibilityMaterialiser
+        from ant_ai.topology.participant import A2AParticipant, LocalParticipant
+        from ant_ai.topology.runtime import Ensemble
+
+        strategy = self._topology or Baseline()
+        pipeline = strategy.pipeline()
+        if max_rounds is not None:
+            pipeline = pipeline.model_copy(update={"max_rounds": max_rounds})
+        if materialiser is not None:
+            pipeline = pipeline.model_copy(update={"materialiser": materialiser})
+        if self._detectors:
+            pipeline = pipeline.model_copy(
+                update={"stages": [*pipeline.stages, Heal(detectors=self._detectors)]}
+            )
+
+        if use_workflows is None:
+            # A workflow-driven turn cannot carry a response schema, so it degrades
+            # to one plain public message: no descriptors, no addressing, no
+            # reactions, nothing ever submitted. A strategy built on any of those
+            # would run to completion and do nothing — a matcher scoring static
+            # card text, or a detector that never sees a symptom. Deciding here
+            # rather than defaulting to True is what keeps `colony.ensemble()` from
+            # quietly being a static, unsupervised baseline.
+            use_workflows = not pipeline.needs_structured_turns
+
+        if (
+            not local
+            and pipeline.stages
+            and isinstance(pipeline.materialiser, VisibilityMaterialiser)
+        ):
+            # Visibility means reachability *is* the peer tool set, and there is no
+            # A2A operation for attaching a tool to an agent in another process, so
+            # every remote participant reports itself unbindable and the decided
+            # topology constrains nothing at all. Gated on there being a stage: a
+            # colony with no strategy decides nothing, and its remote agents stay
+            # wired as their servers wired them, which is the pre-topology
+            # behaviour rather than a silent failure.
+            warnings.warn(
+                "Remote (A2A) participants cannot be rebound, so a topology "
+                "materialised as peer tools has no effect on them. Pass "
+                "`materialiser=DeliveryMaterialiser()` to route their messages "
+                "instead, or build local participants.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+        participants: dict[str, Any] = {}
+        for name, spec in self._specs.items():
+            if local:
+                participants[name] = LocalParticipant(
+                    spec.agent,
+                    workflow=spec.workflow if use_workflows else None,
+                    name=name,
+                    max_depth=pipeline.max_depth,
+                )
+            else:
+                participants[name] = A2AParticipant(
+                    A2AConfig(endpoint=spec.url),
+                    spec.card,
+                    name=name,
+                    max_depth=pipeline.max_depth,
+                )
+
+        return Ensemble(
+            participants=participants,
+            pipeline=pipeline,
+            # Round 0 is seeded from the declared collab() edges, so the very
+            # first turn behaves exactly as a colony does today. A colony with no
+            # strategy has no stage writing links, so these govern every round —
+            # which is precisely the pre-topology behaviour.
+            seed=self._declared_links(),
+            provenance=strategy.provenance(),
+        )
+
+    def _declared_links(self) -> tuple[Any, ...]:
+        """`collab()` edges as information-flow links.
+
+        Note the reversal. `collab(source, target)` means *source may call
+        target*, so target is the one offering — and `Link` direction is
+        information flow. The edge therefore becomes `Link(src=target, dst=source)`.
+        """
+        from ant_ai.topology.graph import Link
+
+        return tuple(
+            Link(src=target, dst=source, reason="declared via Colony.collab()")
+            for source, targets in self._edges.items()
+            for target in targets
+        )
 
     def asgi(
         self,

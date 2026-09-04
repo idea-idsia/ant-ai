@@ -47,6 +47,7 @@ guardrails-ai = ["guardrails-ai>=0.11.0", "tokenizers>=0.23.1", "huggingface-hub
 langfuse = ["langfuse>=4.14.4"]
 mem0 = ["mem0ai>=2.0.18"]
 openai = ["openai>=2.54.0"]
+topology = ["sentence-transformers>=3.0"]
 viz = ["graphviz>=0.21"]
 all = [
     "datafog>=4.8.1",
@@ -57,6 +58,7 @@ all = [
     "mem0ai>=2.0.18",
     "openai>=2.54.0",
     "graphviz>=0.21",
+    "sentence-transformers>=3.0",
 ]
 
 [dependency-groups]

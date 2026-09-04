@@ -13,6 +13,8 @@ from ant_ai.core.events import (
     StartEvent,
     ToolCallingEvent,
     ToolResultEvent,
+    TopologyEvent,
+    TopologyLink,
     UpdateEvent,
     WorkflowEvent,
 )
@@ -57,6 +59,8 @@ __all__ = [
     "ReasoningEvent",
     "CompletedEvent",
     "ContentDeltaEvent",
+    "TopologyEvent",
+    "TopologyLink",
     "AnyEvent",
     # exceptions
     "HookBlockedError",

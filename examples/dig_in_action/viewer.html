@@ -1,0 +1,440 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>DIG in action</title>
+<script src="https://cdn.plot.ly/plotly-3.3.0.min.js" charset="utf-8"></script>
+<style>
+  :root {
+    --ink: #1c1c1e;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --bg: #ffffff;
+    --panel: #fafafa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; }
+  header .task { color: var(--muted); flex: 1; min-width: 240px; }
+  button {
+    font: inherit;
+    padding: 5px 11px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+  }
+  button:hover { border-color: #b9bcc2; }
+  button.on { background: #1c1c1e; color: #fff; border-color: #1c1c1e; }
+  label.follow { color: var(--muted); user-select: none; }
+  main { display: flex; height: calc(100vh - 49px); }
+  #plot { flex: 1; min-width: 0; }
+  aside {
+    width: 340px;
+    border-left: 1px solid var(--line);
+    background: var(--panel);
+    overflow-y: auto;
+    padding: 14px;
+  }
+  aside h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--muted);
+    margin: 18px 0 7px;
+  }
+  aside h2:first-child { margin-top: 0; }
+  .pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #eef2ff;
+    color: #3730a3;
+  }
+  .pill.run { background: #ecfdf5; color: #047857; }
+  .pill.done { background: #f3f4f6; color: #374151; }
+  .pill.err { background: #fef2f2; color: #b91c1c; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+  .grid div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px dotted var(--line); min-width: 0; }
+  .grid span:first-child { color: var(--muted); white-space: nowrap; }
+  .grid span:last-child {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .finding {
+    border-left: 3px solid #d62728;
+    background: #fff;
+    padding: 6px 9px;
+    margin-bottom: 7px;
+    border-radius: 0 5px 5px 0;
+  }
+  .finding .code {
+    font-weight: 700;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #b91c1c;
+  }
+  .finding .meta { color: var(--muted); font-size: 11px; }
+  .answer { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 9px; }
+  .verdict.ok { color: #047857; font-weight: 650; }
+  .verdict.bad { color: #b91c1c; font-weight: 650; }
+  .log { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #4b5563; }
+  .log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .warn { padding: 24px; color: #b91c1c; }
+</style>
+
+<header>
+  <h1>DIG in action</h1>
+  <span class="task" id="task"></span>
+  <span class="pill" id="status">connecting</span>
+  <button id="heal-on">Run with healing</button>
+  <button id="heal-off">Run without healing</button>
+  <label class="follow"><input type="checkbox" id="follow" checked /> follow</label>
+</header>
+
+<main>
+  <div id="plot"></div>
+  <aside>
+    <h2>Run</h2>
+    <div class="grid" id="run"></div>
+    <h2>Graph</h2>
+    <div class="grid" id="stats"></div>
+    <h2>Findings <span id="fcount" class="pill"></span></h2>
+    <div id="findings"><em style="color:var(--muted)">none yet</em></div>
+    <h2>Answer</h2>
+    <div class="answer" id="answer"><em style="color:var(--muted)">still running</em></div>
+    <h2>Stream</h2>
+    <div class="log" id="log"></div>
+  </aside>
+</main>
+
+<script>
+// Encoding, kept in one table: the paper's own colours, so a reader who has
+// seen the figure on the DIG page recognises this one without a key.
+const ACTIONS = {
+  generate: { name: "Generate", color: "rgba(128,128,128,0.45)", dash: "solid", width: 1,   clean: true  },
+  deliver:  { name: "Deliver",  color: "rgba(128,128,128,0.6)",  dash: "dot",   width: 1,   clean: true  },
+  consume:  { name: "Consume",  color: "#2ca02c",                dash: "solid", width: 1.3, clean: true  },
+  reroute:  { name: "Reroute",  color: "#9370db",                dash: "dash",  width: 1.4, clean: false },
+  discard:  { name: "Discard",  color: "#d62728",                dash: "dash",  width: 1.4, clean: false },
+  inject:   { name: "Inject",   color: "#e377c2",                dash: "dash",  width: 1.4, clean: false },
+  wait:     { name: "Wait",     color: "#ff8c00",                dash: "dash",  width: 1.5, clean: false },
+};
+
+const NODES = {
+  quiet:      { name: "Activation",        color: "#1f77b4",  symbol: "circle",      size: 9,  edge: "white" },
+  reducing:   { name: "Problem-Reducing",  color: "#2ca02c",  symbol: "circle",      size: 9,  edge: "white" },
+  expanding:  { name: "Problem-Expanding", color: "#DAA520",  symbol: "circle",      size: 9,  edge: "white" },
+  live:       { name: "Running now",       color: "#1f77b4",  symbol: "circle-open", size: 14, edge: "#1f77b4" },
+  error:      { name: "Failed",            color: "#d62728",  symbol: "x",           size: 11, edge: "#d62728" },
+  event:      { name: "Event",             color: "lightgray",symbol: "square",      size: 7,  edge: "#333" },
+  orphan:     { name: "Orphaned event",    color: "lightgray",symbol: "square",      size: 8,  edge: "#d62728" },
+  terminal:   { name: "Submit",            color: "#4CAF50",  symbol: "square",      size: 9,  edge: "#222" },
+  supervisor: { name: "Supervisor event",  color: "#8B008B",  symbol: "square",      size: 8,  edge: "#222" },
+};
+
+const PANELS = [
+  { axis: "y",  xaxis: "x",  clean: false, title: "DIG" },
+  { axis: "y2", xaxis: "x2", clean: true,  title: "DIG (clean) — supervision stripped out" },
+];
+
+let seenLegend = new Set();
+
+function edgeTraces(fig, panel) {
+  const traces = [];
+  for (const [action, style] of Object.entries(ACTIONS)) {
+    if (panel.clean && !style.clean) continue;
+    const xs = [], ys = [], hx = [], hy = [], ht = [];
+    for (const e of fig.edges) {
+      if (e.action !== action) continue;
+      xs.push(e.x[0], e.x[1], null);
+      ys.push(e.y[0], e.y[1], null);
+      hx.push((e.x[0] + e.x[1]) / 2);
+      hy.push((e.y[0] + e.y[1]) / 2);
+      ht.push(e.hover);
+    }
+    const first = !seenLegend.has(action);
+    if (first) seenLegend.add(action);
+    traces.push({
+      type: "scatter", mode: "lines", x: xs, y: ys,
+      line: { color: style.color, dash: style.dash, width: style.width },
+      hoverinfo: "skip", name: style.name, legendgroup: action,
+      showlegend: first, xaxis: panel.xaxis, yaxis: panel.axis,
+    });
+    // Edges are lines, and a line is a poor hover target, so every edge also
+    // carries an invisible point at its midpoint: "hover on edges to see the
+    // action type" is a promise the original figure makes too.
+    traces.push({
+      type: "scatter", mode: "markers", x: hx, y: hy,
+      marker: { size: 9, color: style.color, opacity: 0.01 },
+      hovertext: ht, hoverinfo: "text", showlegend: false,
+      legendgroup: action, xaxis: panel.xaxis, yaxis: panel.axis,
+    });
+  }
+  return traces;
+}
+
+function nodeTraces(fig, panel) {
+  const traces = [];
+  for (const [state, style] of Object.entries(NODES)) {
+    const pts = fig.nodes.filter((n) => n.state === state);
+    const first = !seenLegend.has(state);
+    if (first && pts.length) seenLegend.add(state);
+    traces.push({
+      type: "scatter", mode: "markers",
+      x: pts.map((n) => n.x), y: pts.map((n) => n.y),
+      marker: {
+        symbol: style.symbol, size: style.size, color: style.color,
+        line: { color: style.edge, width: 1 },
+      },
+      hovertext: pts.map((n) => n.hover), hoverinfo: "text",
+      name: style.name, legendgroup: state,
+      showlegend: first && pts.length > 0,
+      xaxis: panel.xaxis, yaxis: panel.axis,
+    });
+  }
+  traces.push({
+    type: "scatter", mode: "markers+text",
+    x: fig.sys.map((s) => s.x), y: fig.sys.map((s) => s.y),
+    text: fig.sys.map(() => "SYS"), textposition: "top center",
+    textfont: { size: 9, color: "#8B008B", family: "monospace" },
+    marker: { symbol: "square", size: 9, color: "#ff1493", line: { color: "#8B008B", width: 1 } },
+    hovertext: fig.sys.map((s) => s.hover), hoverinfo: "text",
+    name: "System", legendgroup: "system",
+    showlegend: !panel.clean && fig.sys.length > 0,
+    xaxis: panel.xaxis, yaxis: panel.axis,
+  });
+  return traces;
+}
+
+function ganttTraces(fig) {
+  const traces = [];
+  for (const live of [false, true]) {
+    const xs = [], ys = [], hx = [], hy = [], ht = [];
+    for (const b of fig.bars) {
+      if (!!b.live !== live) continue;
+      xs.push(b.x0, b.x1, null);
+      ys.push(b.y, b.y, null);
+      hx.push((b.x0 + b.x1) / 2); hy.push(b.y); ht.push(b.hover);
+    }
+    traces.push({
+      type: "scatter", mode: "lines", x: xs, y: ys,
+      line: { color: live ? "#9ec5fe" : "#4C78C8", width: 8 },
+      hoverinfo: "skip", name: live ? "Running" : "Agent Activation",
+      legendgroup: live ? "live" : "quiet", showlegend: false,
+      xaxis: "x3", yaxis: "y3",
+    });
+    traces.push({
+      type: "scatter", mode: "markers", x: hx, y: hy,
+      marker: { size: 10, opacity: 0.01, color: "#4C78C8" },
+      hovertext: ht, hoverinfo: "text", showlegend: false,
+      xaxis: "x3", yaxis: "y3",
+    });
+  }
+  return traces;
+}
+
+function laneAxis(fig, domain, anchor, extra) {
+  return Object.assign({
+    tickvals: fig.lanes.map((_, i) => i),
+    ticktext: fig.lanes,
+    range: [-0.7, fig.lanes.length - 0.3],
+    domain, anchor,
+    showgrid: true, gridcolor: "#f1f2f4", zeroline: false,
+    tickfont: { size: 10 },
+  }, extra || {});
+}
+
+function draw(fig) {
+  if (!window.Plotly) return;
+  seenLegend = new Set();
+  const traces = [];
+  for (const panel of PANELS) {
+    traces.push(...edgeTraces(fig, panel), ...nodeTraces(fig, panel));
+  }
+  traces.push(...ganttTraces(fig));
+
+  const follow = document.getElementById("follow").checked;
+  const span = Math.max(fig.now + 2.5, 8);
+  const xrange = follow ? [-1.2, span] : undefined;
+  const xcommon = {
+    showgrid: false, zeroline: false, matches: "x",
+    range: xrange, autorange: follow ? false : undefined,
+  };
+
+  const layout = {
+    margin: { l: 92, r: 16, t: 44, b: 44 },
+    hovermode: "closest",
+    hoverlabel: { font: { size: 11, family: "monospace" }, align: "left", bgcolor: "rgba(255,255,255,0.94)", namelength: -1 },
+    plot_bgcolor: "rgba(0,0,0,0)", paper_bgcolor: "rgba(0,0,0,0)",
+    dragmode: "pan",
+    uirevision: "dig",
+    legend: { orientation: "h", yanchor: "bottom", y: 1.005, xanchor: "right", x: 1, font: { size: 10 } },
+    xaxis:  Object.assign({}, xcommon, { domain: [0, 1], anchor: "y",  showticklabels: false, matches: undefined }),
+    xaxis2: Object.assign({}, xcommon, { domain: [0, 1], anchor: "y2", showticklabels: false }),
+    xaxis3: Object.assign({}, xcommon, { domain: [0, 1], anchor: "y3", title: { text: "Time (s)", font: { size: 11 } } }),
+    yaxis:  laneAxis(fig, [0.60, 1.0], "x"),
+    yaxis2: laneAxis(fig, [0.26, 0.55], "x2"),
+    yaxis3: laneAxis(fig, [0.0, 0.21], "x3"),
+    shapes: [{
+      type: "line", xref: "x", yref: "paper",
+      x0: fig.now, x1: fig.now, y0: 0, y1: 1,
+      line: { color: "#c0c4cc", width: 1, dash: "dot" },
+    }],
+    annotations: [
+      ...PANELS.map((p, i) => ({
+        text: p.title, xref: "paper", yref: "paper", x: 0, y: [1.0, 0.555][i],
+        xanchor: "left", yanchor: "bottom", showarrow: false,
+        font: { size: 11, color: "#6b7280" },
+      })),
+      {
+        text: "Activation Time", xref: "paper", yref: "paper", x: 0, y: 0.215,
+        xanchor: "left", yanchor: "bottom", showarrow: false,
+        font: { size: 11, color: "#6b7280" },
+      },
+      {
+        text: `Time so far: ${fig.stats.elapsed.toFixed(2)}s<br>` +
+              `Sum of activation time: ${fig.stats.busy.toFixed(2)}s`,
+        xref: "paper", yref: "paper", x: 0.005, y: 0.20,
+        xanchor: "left", yanchor: "top", showarrow: false, align: "left",
+        font: { size: 10, family: "monospace" },
+        bgcolor: "rgba(255,251,235,0.95)", bordercolor: "#e5e7eb", borderwidth: 1, borderpad: 4,
+      },
+    ],
+  };
+
+  Plotly.react("plot", traces, layout, { displayModeBar: false, responsive: true, scrollZoom: true });
+}
+
+// -- side panel ------------------------------------------------------------
+
+const PATTERNS = {
+  ET: "Early Termination", MC: "Missing Completion", OE: "Orphaned Event",
+  DL: "Deadlock", ER: "Excessive Rerouting", CLA: "Cross-Lineage Aggregation",
+  RSP: "Repeated Subproblem", JUDGE: "LLM Judge",
+};
+
+function rows(target, pairs) {
+  document.getElementById(target).innerHTML = pairs
+    .map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`)
+    .join("");
+}
+
+function panel(state) {
+  const s = state.figure.stats;
+  document.getElementById("task").textContent = state.task;
+
+  const chip = document.getElementById("status");
+  const running = state.status === "running";
+  chip.textContent = running ? `round ${s.round} · running` : state.status;
+  chip.className = "pill " + (running ? "run" : state.status.startsWith("error") ? "err" : "done");
+
+  document.getElementById("heal-on").className = state.heal ? "on" : "";
+  document.getElementById("heal-off").className = state.heal ? "" : "on";
+
+  rows("run", [
+    ["strategy", state.provenance.strategy || "—"],
+    ["healing", state.heal ? "DigToHeal" : "off"],
+    ["round", `${s.round} / ${state.max_rounds - 1}`],
+    ["elapsed", `${s.elapsed.toFixed(1)}s`],
+    ["agent-seconds", `${s.busy.toFixed(1)}s`],
+  ]);
+  rows("stats", [
+    ["activations", s.activations],
+    ["events", s.events],
+    ["consumed", s.consumed],
+    ["outstanding", s.outstanding],
+    ["undelivered", s.undelivered],
+    ["rounds", s.rounds],
+  ]);
+
+  const fc = document.getElementById("fcount");
+  fc.textContent = state.findings.length || "";
+  document.getElementById("findings").innerHTML = state.findings.length
+    ? state.findings.map((f) => `
+        <div class="finding">
+          <span class="code">${f.pattern}</span>
+          <span class="meta">${PATTERNS[f.pattern] || f.detector} · round ${f.round} · ${f.at.toFixed(1)}s</span>
+          <div>${escape_(f.explanation)}</div>
+          <div class="meta">→ ${f.interventions.join(", ") || "no correction"}</div>
+        </div>`).join("")
+    : '<em style="color:var(--muted)">none yet</em>';
+
+  const v = state.verdict;
+  const answer = document.getElementById("answer");
+  if (!v.answered) {
+    answer.innerHTML = '<em style="color:var(--muted)">no answer submitted yet</em>';
+  } else {
+    answer.innerHTML =
+      `<div>${escape_(state.answer || "—")}</div>` +
+      `<div style="margin-top:7px" class="verdict ${v.correct ? "ok" : "bad"}">` +
+      (v.correct
+        ? `correct — ${v.counted.toLocaleString()} of ${v.expected.toLocaleString()} values counted`
+        : `wrong — ${v.counted.toLocaleString()} of ${v.expected.toLocaleString()} values counted ` +
+          `(${v.chunks} of ${v.chunks_expected} chunks)`) +
+      "</div>";
+  }
+
+  document.getElementById("log").innerHTML = state.log
+    .map((l) => `<div>${l.at.toFixed(1)}s · ${l.kind} · ${escape_(l.content).slice(0, 90)}</div>`)
+    .reverse().join("");
+}
+
+function escape_(text) {
+  return String(text ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+// -- live feed -------------------------------------------------------------
+
+function connect() {
+  const source = new EventSource("/stream");
+  source.onmessage = (message) => {
+    const state = JSON.parse(message.data);
+    draw(state.figure);
+    panel(state);
+  };
+  source.onerror = () => {
+    document.getElementById("status").textContent = "reconnecting";
+  };
+}
+
+async function restart(heal) {
+  await fetch(`/api/run?heal=${heal}`, { method: "POST" });
+}
+document.getElementById("heal-on").onclick = () => restart(true);
+document.getElementById("heal-off").onclick = () => restart(false);
+
+// `?once=1` draws the current state and stops: a still frame, for when you
+// want to keep one rather than watch the next.
+if (new URLSearchParams(location.search).has("once")) {
+  fetch("/api/snapshot").then((r) => r.json()).then((state) => {
+    draw(state.figure);
+    panel(state);
+    document.getElementById("status").textContent = "snapshot";
+  });
+} else {
+  connect();
+}
+
+if (!window.Plotly) {
+  document.getElementById("plot").innerHTML =
+    '<p class="warn">Plotly could not be loaded from the CDN, so the diagram is ' +
+    "unavailable offline. The live overview on the right still works.</p>";
+}
+</script>

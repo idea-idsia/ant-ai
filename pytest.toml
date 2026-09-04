@@ -22,4 +22,5 @@ markers = [
     "graphviz: tests that require the graphviz package and dot CLI to be installed",
     "mem0: tests that require the mem0 cloud service (set MEM0_API_KEY)",
     "guardrailsai: tests for the GuardrailsAI hook adapter",
+    "topology: tests for adaptive topology (Ensemble, policies, interaction graph)",
 ]

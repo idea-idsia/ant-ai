@@ -10,11 +10,13 @@ from ant_ai.core import (
     StepResult,
     configure_logging,
 )
+from ant_ai.embeddings import Embedder
 from ant_ai.memory import Memory
 from ant_ai.observer import CompositeSink, ObservabilitySink, obs
 from ant_ai.skills import AgentSkill
 from ant_ai.tools import Tool, ToolRegistry
 from ant_ai.tools.tool import tool
+from ant_ai.topology import Ensemble, InteractionGraph, TopologyStrategy
 from ant_ai.workflow import BaseAction, Workflow
 
 __all__ = [
@@ -46,4 +48,10 @@ __all__ = [
     "BaseAction",
     # skills
     "AgentSkill",
+    # topology (strategies live in ant_ai.topology.builtins)
+    "Ensemble",
+    "InteractionGraph",
+    "TopologyStrategy",
+    # embeddings
+    "Embedder",
 ]

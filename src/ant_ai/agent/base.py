@@ -265,6 +265,21 @@ class BaseAgent(BaseModel):
         """Register a tool with the agent."""
         ...
 
+    def remove_tool(self, name: str) -> None:
+        """Unregister the tool named *name* and hot-reload the loop's step.
+
+        The counterpart to `add_tool`, needed wherever an agent's tool set changes during a run — an adaptive topology rebinding which peers are reachable, for instance.
+
+        Args:
+            name: Name of the tool to remove.
+
+        Raises:
+            KeyError: If no such tool is registered.
+        """
+        self._registry.remove(name)
+        self.tools: list[Tool] = [t for t in self.tools if t.name != name]
+        self._loop.register_tool(self._registry)
+
     @property
     def registry(self) -> ToolRegistry:
         """Return the tool registry for this agent."""
