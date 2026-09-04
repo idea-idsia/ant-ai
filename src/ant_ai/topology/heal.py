@@ -9,13 +9,14 @@ never a reimplementation of delivery.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Annotated, Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 
 from ant_ai.observer import obs
-from ant_ai.topology.graph import InteractionGraph
+from ant_ai.topology.graph import EdgeAction, InteractionGraph
 from ant_ai.topology.participant import Envelope, Turn
 from ant_ai.topology.plan import (
     SUPERVISOR,
@@ -140,124 +141,169 @@ def apply_interventions(
     said in the last round — makes the corrections for a stalled or ignored
     message unreachable exactly when they are needed.
     """
-    graph = ctx.graph
-    turns = dict(plan.turns)
-    notices = {k: list(v) for k, v in plan.notices.items()}
-
+    edit = _Edit.of(plan, ctx)
     for action in interventions:
-        if action.kind == "emit":
-            envelope = Envelope(
-                sender=SUPERVISOR,
-                content=action.content or "",
-                visibility="private",
-                round=ctx.round,
-            )
-            graph.record_emission(envelope, reason=action.reason)
-            for name in action.recipients or ctx.names:
-                notices.setdefault(name, []).append(envelope)
-            continue
-
-        located = _locate(turns, action.message)
-        envelope = located[2] if located else graph.messages.get(action.message or "")
-        if envelope is None:
-            continue
-
-        if action.kind == "inject":
-            content = (
-                f"{envelope.content}\n\n[{action.reason}] {action.content}".strip()
-            )
-            envelope = _rewrite(turns, graph, located, envelope, {"content": content})
-            graph.record_intervention(
-                envelope.id,
-                envelope.sender,
-                action="inject",
-                round=ctx.round,
-                reason=action.reason,
-            )
-
-        elif action.kind == "drop":
-            _rewrite(turns, graph, located, envelope, None)
-            graph.record_intervention(
-                envelope.id,
-                envelope.sender,
-                action="discard",
-                round=ctx.round,
-                reason=action.reason,
-            )
-
-        elif action.kind == "reroute":
-            update: dict[str, Any] = {}
-            if envelope.terminal:
-                # "Reroute the submit back to the issuing agent" is only a
-                # correction if it also stops the run ending: an un-terminated
-                # submit is what gives the agent another round to finish.
-                update["terminal"] = False
-                if located is not None:
-                    turns[located[0]] = turns[located[0]].model_copy(
-                        update={"submitted": False}
-                    )
-            envelope = _rewrite(turns, graph, located, envelope, update)
-            for recipient in action.recipients:
-                # Carried as a notice rather than as a link, because a link says
-                # "whatever this agent says next goes to that one" — which
-                # delivers the wrong message when the agent has moved on, and
-                # nothing at all when it has fallen silent, which is the case
-                # every stall-shaped repair is trying to fix. The notice moves
-                # *this* message, which is what was prescribed.
-                notices.setdefault(recipient, []).append(envelope)
-                graph.record_intervention(
-                    envelope.id,
-                    recipient,
-                    action="reroute",
-                    round=ctx.round,
-                    reason=action.reason,
-                )
-
-    # `links` is deliberately untouched: repair moves messages, and leaves
-    # deciding who may reach whom to the stage whose job that is.
-    return plan.model_copy(
-        update={
-            "turns": turns,
-            "notices": {k: tuple(v) for k, v in notices.items()},
-        }
-    )
+        edit.apply(action)
+    return edit.into(plan)
 
 
-def _locate(
-    turns: Mapping[str, Turn], message_id: str | None
-) -> tuple[str, int, Envelope] | None:
-    """Where a message sits in this round's turns, if it is in one at all."""
-    for name, turn in turns.items():
-        for index, envelope in enumerate(turn.outputs):
-            if envelope.id == message_id:
-                return name, index, envelope
-    return None
+@dataclass(frozen=True, slots=True)
+class _Site:
+    """Where a message sits in this round's turns, when it sits in one at all."""
+
+    participant: str
+    index: int
 
 
-def _rewrite(
-    turns: dict[str, Turn],
-    graph: InteractionGraph,
-    located: tuple[str, int, Envelope] | None,
-    envelope: Envelope,
-    update: dict[str, Any] | None,
-) -> Envelope:
-    """Apply an edit to one message, keeping every copy of it in step.
+@dataclass(slots=True)
+class _Edit:
+    """The mutable half of a plan, while interventions are being applied.
 
-    Envelopes are immutable value objects, so an edit produces a new one under
-    the same id. The graph holds the authoritative copy — `terminal_message`
-    and `reachable_work` read it — so failing to write back would leave a submit
-    that healing cancelled still looking terminal, and `EarlyTermination` would
-    re-fire on it for the rest of the run.
+    An object rather than three locals threaded through four branches: every
+    prescription needs the same trio — the turns to rewrite, the notices to add
+    to, and the graph to record against — and giving them one owner is what let
+    each `kind` become a three-line method.
     """
-    replacement = envelope.model_copy(update=update) if update is not None else None
-    if replacement is not None:
-        graph.messages[replacement.id] = replacement
-    if located is not None:
-        name, index, _ = located
-        outputs = list(turns[name].outputs)
-        if replacement is None:
-            outputs.pop(index)
-        else:
-            outputs[index] = replacement
-        turns[name] = turns[name].model_copy(update={"outputs": tuple(outputs)})
-    return replacement if replacement is not None else envelope
+
+    graph: InteractionGraph
+    round: int
+    names: tuple[str, ...]
+    turns: dict[str, Turn]
+    notices: dict[str, list[Envelope]] = field(default_factory=dict)
+
+    @classmethod
+    def of(cls, plan: RoundPlan, ctx: RunContext) -> _Edit:
+        return cls(
+            graph=ctx.graph,
+            round=ctx.round,
+            names=ctx.names,
+            turns=dict(plan.turns),
+            notices={k: list(v) for k, v in plan.notices.items()},
+        )
+
+    def into(self, plan: RoundPlan) -> RoundPlan:
+        # `links` is deliberately untouched: repair moves messages, and leaves deciding who may reach whom to the stage whose job that is.
+        return plan.model_copy(
+            update={
+                "turns": self.turns,
+                "notices": {k: tuple(v) for k, v in self.notices.items()},
+            }
+        )
+
+    def apply(self, action: Intervention) -> None:
+        """Carry out one prescription, ignoring one that names no live message."""
+        if action.kind == "emit":
+            self._emit(action)
+            return
+        site = self._locate(action.message)
+        envelope = (
+            self.turns[site.participant].outputs[site.index]
+            if site
+            else self.graph.messages.get(action.message or "")
+        )
+        if envelope is not None:
+            _HANDLERS[action.kind](self, action, envelope, site)
+
+    def _emit(self, action: Intervention) -> None:
+        envelope = Envelope(
+            sender=SUPERVISOR,
+            content=action.content or "",
+            visibility="private",
+            round=self.round,
+        )
+        self.graph.record_emission(envelope, reason=action.reason)
+        self._notify(action.recipients or self.names, envelope)
+
+    def _inject(
+        self, action: Intervention, envelope: Envelope, site: _Site | None
+    ) -> None:
+        content = f"{envelope.content}\n\n[{action.reason}] {action.content}".strip()
+        envelope = self._rewrite(site, envelope, {"content": content})
+        self._record(envelope.id, envelope.sender, "inject", action.reason)
+
+    def _drop(
+        self, action: Intervention, envelope: Envelope, site: _Site | None
+    ) -> None:
+        self._rewrite(site, envelope, None)
+        self._record(envelope.id, envelope.sender, "discard", action.reason)
+
+    def _reroute(
+        self, action: Intervention, envelope: Envelope, site: _Site | None
+    ) -> None:
+        update: dict[str, Any] = {}
+        if envelope.terminal:
+            # "Reroute the submit back to the issuing agent" is only a correction
+            # if it also stops the run ending: an un-terminated submit is what
+            # gives the agent another round to finish.
+            update["terminal"] = False
+            if site is not None:
+                self._update_turn(site.participant, {"submitted": False})
+        envelope = self._rewrite(site, envelope, update)
+        # Carried as a notice rather than as a link, because a link says
+        # "whatever this agent says next goes to that one" — which delivers the
+        # wrong message when the agent has moved on, and nothing at all when it
+        # has fallen silent, which is the case every stall-shaped repair is
+        # trying to fix. The notice moves *this* message, which is what was
+        # prescribed.
+        self._notify(action.recipients, envelope)
+        for recipient in action.recipients:
+            self._record(envelope.id, recipient, "reroute", action.reason)
+
+    # -- the shared mechanics ------------------------------------------------
+
+    def _locate(self, message_id: str | None) -> _Site | None:
+        for name, turn in self.turns.items():
+            for index, envelope in enumerate(turn.outputs):
+                if envelope.id == message_id:
+                    return _Site(name, index)
+        return None
+
+    def _rewrite(
+        self, site: _Site | None, envelope: Envelope, update: dict[str, Any] | None
+    ) -> Envelope:
+        """Apply an edit to one message, keeping every copy of it in step.
+
+        Envelopes are immutable value objects, so an edit produces a new one under
+        the same id; `update=None` removes it instead. The graph holds the
+        authoritative copy — `terminal_message` and `reachable_work` read it — so
+        failing to write back would leave a submit that healing cancelled still
+        looking terminal, and `EarlyTermination` would re-fire on it for the rest
+        of the run.
+        """
+        replacement = envelope.model_copy(update=update) if update is not None else None
+        if replacement is not None:
+            self.graph.messages[replacement.id] = replacement
+        if site is not None:
+            outputs = list(self.turns[site.participant].outputs)
+            if replacement is None:
+                outputs.pop(site.index)
+            else:
+                outputs[site.index] = replacement
+            self._update_turn(site.participant, {"outputs": tuple(outputs)})
+        return replacement if replacement is not None else envelope
+
+    def _update_turn(self, participant: str, update: dict[str, Any]) -> None:
+        self.turns[participant] = self.turns[participant].model_copy(update=update)
+
+    def _notify(self, recipients: tuple[str, ...], envelope: Envelope) -> None:
+        for recipient in recipients:
+            self.notices.setdefault(recipient, []).append(envelope)
+
+    def _record(
+        self, message_id: str, actor: str, action: EdgeAction, reason: str
+    ) -> None:
+        self.graph.record_intervention(
+            message_id, actor, action=action, round=self.round, reason=reason
+        )
+
+
+type _Handler = Callable[[_Edit, Intervention, Envelope, _Site | None], None]
+
+_HANDLERS: dict[str, _Handler] = {
+    "inject": _Edit._inject,
+    "drop": _Edit._drop,
+    "reroute": _Edit._reroute,
+}
+"""Dispatch by `Intervention.kind`. A table rather than a chain of `elif`s so
+that adding a kind is adding a method and a row, and `Intervention`'s literal
+type is the only place the vocabulary is spelled out."""

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Protocol, runtime_checkable
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass
+from itertools import chain
+from typing import NamedTuple, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
 from ant_ai.observer import obs
-from ant_ai.topology.participant import Envelope, Participant
+from ant_ai.topology.participant import Envelope, Participant, Turn
 from ant_ai.topology.plan import RoundPlan
 
 __all__ = [
@@ -72,6 +74,55 @@ class VisibilityMaterialiser(BaseModel):
         return {n: plan.notices.get(n, ()) for n in participants}
 
 
+class _Delivery(NamedTuple):
+    """One message about to land in one inbox, with the rank it lands at."""
+
+    recipient: str
+    weight: float
+    sender: str
+    envelope: Envelope
+
+
+@dataclass(frozen=True, slots=True)
+class _Reachability:
+    """Who a round's links let reach whom, as a lookup.
+
+    Built once per round rather than re-scanned per message: the rule below is
+    asked about every (sender, recipient) pair a turn produces.
+    """
+
+    weights: Mapping[tuple[str, str], float]
+    known: frozenset[str]
+
+    @classmethod
+    def of(cls, plan: RoundPlan, participants: Iterable[str]) -> _Reachability:
+        return cls(
+            weights={(link.src, link.dst): link.weight for link in plan.links},
+            known=frozenset(participants),
+        )
+
+    @property
+    def constrained(self) -> bool:
+        """False when no stage wrote links, i.e. nobody has an opinion yet."""
+        return bool(self.weights)
+
+    def delivers(self, sender: str, recipient: str) -> bool:
+        if recipient not in self.known or recipient == sender:
+            return False
+        return not self.constrained or (sender, recipient) in self.weights
+
+    def weight(self, sender: str, recipient: str) -> float:
+        return self.weights.get((sender, recipient), 1.0)
+
+    def audience(self, sender: str) -> tuple[str, ...]:
+        """Whom *sender* may reach — the routing for a message it did not address."""
+        return tuple(
+            recipient
+            for (src, recipient) in self.weights
+            if src == sender and self.delivers(sender, recipient)
+        )
+
+
 class DeliveryMaterialiser(BaseModel):
     """Reachability as routed messages, addressing as the sender's own choice.
 
@@ -108,49 +159,65 @@ class DeliveryMaterialiser(BaseModel):
     async def apply(
         self, plan: RoundPlan, participants: Mapping[str, Participant]
     ) -> Inboxes:
-        ranked = {(link.src, link.dst): link.weight for link in plan.links}
-        constrained = bool(plan.links)
-        picked: dict[str, list[tuple[float, str, Envelope]]] = {
-            name: [] for name in participants
+        reach = _Reachability.of(plan, participants)
+        picked: dict[str, list[_Delivery]] = {name: [] for name in participants}
+        for sender, turn in plan.turns.items():
+            for delivery in self._route(turn, sender=sender, reach=reach):
+                picked[delivery.recipient].append(delivery)
+
+        return {
+            name: _inbox(picked[name], plan.notices.get(name, ()))
+            for name in participants
         }
 
-        for sender, turn in plan.turns.items():
-            addressed = [e for e in turn.outputs if e.recipients]
+    def _route(
+        self, turn: Turn, *, sender: str, reach: _Reachability
+    ) -> Iterator[_Delivery]:
+        """Where one turn's messages go — selection first, reachability always."""
+        addressed = [e for e in turn.outputs if e.recipients]
+        if addressed:
+            # The sender said who this was for. Its public message is its
+            # contribution to the record, not a second copy for everyone it
+            # happens to be wired to.
             for envelope in addressed:
-                for name in envelope.recipients:
-                    if name not in picked or name == sender:
-                        continue
-                    if constrained and (sender, name) not in ranked:
-                        continue
-                    picked[name].append(
-                        (ranked.get((sender, name), 1.0), sender, envelope)
-                    )
-            if addressed:
-                # The sender said who this was for. Its public message is its
-                # contribution to the record, not a second copy for everyone
-                # it happens to be wired to.
-                continue
-            fallback = turn.private or (turn.public if self.include_public else None)
-            if fallback is None:
-                continue
-            for name in picked:
-                if (sender, name) in ranked:
-                    picked[name].append((ranked[(sender, name)], sender, fallback))
+                yield from self._addressed_to(
+                    envelope.recipients, envelope, sender, reach
+                )
+            return
 
-        inboxes: Inboxes = {}
-        for name in participants:
-            seen: set[str] = set()
-            delivered: list[Envelope] = []
-            for _, _, envelope in sorted(
-                picked[name], key=lambda item: (-item[0], item[1])
-            ):
-                if envelope.id not in seen:
-                    seen.add(envelope.id)
-                    delivered.append(envelope)
-            for envelope in plan.notices.get(name, ()):
-                if envelope.id not in seen:
-                    seen.add(envelope.id)
-                    delivered.append(envelope)
-            inboxes[name] = tuple(delivered)
+        fallback = turn.private or (turn.public if self.include_public else None)
+        if fallback is not None:
+            yield from self._addressed_to(
+                reach.audience(sender), fallback, sender, reach
+            )
 
-        return inboxes
+    @staticmethod
+    def _addressed_to(
+        recipients: Iterable[str],
+        envelope: Envelope,
+        sender: str,
+        reach: _Reachability,
+    ) -> Iterator[_Delivery]:
+        for recipient in recipients:
+            if reach.delivers(sender, recipient):
+                yield _Delivery(
+                    recipient, reach.weight(sender, recipient), sender, envelope
+                )
+
+
+def _inbox(
+    deliveries: list[_Delivery], notices: tuple[Envelope, ...]
+) -> tuple[Envelope, ...]:
+    """One participant's inbox: ranked deliveries, then notices, deduplicated.
+
+    Ties break on sender name so an ablation reproduces, and a message routed
+    twice — addressed *and* rerouted, say — is still delivered once.
+    """
+    ranked = sorted(deliveries, key=lambda d: (-d.weight, d.sender))
+    seen: set[str] = set()
+    inbox: list[Envelope] = []
+    for envelope in chain((d.envelope for d in ranked), notices):
+        if envelope.id not in seen:
+            seen.add(envelope.id)
+            inbox.append(envelope)
+    return tuple(inbox)

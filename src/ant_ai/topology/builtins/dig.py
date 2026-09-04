@@ -19,6 +19,7 @@ them.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from itertools import combinations
 from typing import Annotated, Any, ClassVar
 
@@ -302,58 +303,71 @@ class CrossLineageAggregation(Detector):
     async def detect(self, graph: InteractionGraph, ctx: RunContext) -> list[Finding]:
         findings: list[Finding] = []
         for activation in graph.activations_in(ctx.round):
-            inputs = graph.inputs_of(activation.id)
-            if len(inputs) < 2:
-                continue
-            # A message with no parents is the root of its own lineage, and two
-            # roots are not evidence of anything: at the start of a run every
-            # message is a root, so comparing them would report the whole first
-            # exchange as cross-lineage. Only messages that have ancestry can be
-            # shown to have *different* ancestry.
-            lineages = {
-                mid: graph.ancestors(mid)
-                for mid in inputs
-                if mid in graph.messages
-                and graph.messages[mid].parents
-                and graph.messages[mid].sender != SUPERVISOR
-            }
-            unrelated = [
-                (a, b)
+            merged = _unrelated_inputs(graph, graph.inputs_of(activation.id))
+            if merged:
+                findings.append(
+                    self._finding(ctx, graph, activation.participant, merged)
+                )
+        return findings
+
+    def _finding(
+        self,
+        ctx: RunContext,
+        graph: InteractionGraph,
+        participant: str,
+        merged: tuple[str, ...],
+    ) -> Finding:
+        senders = sorted({graph.messages[mid].sender for mid in merged})
+        return self.finding(
+            ctx,
+            f"{participant} is aggregating messages from "
+            f"unrelated lineages ({', '.join(senders)}).",
+            *[
+                Intervention(
+                    kind="inject",
+                    message=mid,
+                    content=(
+                        "This message comes from a different line of work than "
+                        f"the others {participant} received; do not "
+                        "assume they share a premise."
+                    ),
+                    reason="cross-lineage aggregation",
+                )
+                for mid in merged
+            ],
+        )
+
+
+def _unrelated_inputs(
+    graph: InteractionGraph, inputs: Iterable[str]
+) -> tuple[str, ...]:
+    """The consumed messages that share no ancestry with each other.
+
+    A message with no parents is the root of its own lineage, and two roots are
+    not evidence of anything: at the start of a run every message is a root, so
+    comparing them would report the whole first exchange as cross-lineage. Only
+    messages that have ancestry can be shown to have *different* ancestry.
+    """
+    lineages = {mid: graph.ancestors(mid) for mid in inputs if _has_lineage(graph, mid)}
+    if len(lineages) < 2:
+        return ()
+    return tuple(
+        sorted(
+            {
+                mid
                 for a, b in combinations(sorted(lineages), 2)
                 if not (lineages[a] & lineages[b])
-            ]
-            if not unrelated:
-                continue
+                for mid in (a, b)
+            }
+        )
+    )
 
-            senders = sorted(
-                {
-                    graph.messages[mid].sender
-                    for pair in unrelated
-                    for mid in pair
-                    if mid in graph.messages
-                }
-            )
-            findings.append(
-                self.finding(
-                    ctx,
-                    f"{activation.participant} is aggregating messages from "
-                    f"unrelated lineages ({', '.join(senders)}).",
-                    *[
-                        Intervention(
-                            kind="inject",
-                            message=mid,
-                            content=(
-                                "This message comes from a different line of work than "
-                                f"the others {activation.participant} received; do not "
-                                "assume they share a premise."
-                            ),
-                            reason="cross-lineage aggregation",
-                        )
-                        for mid in sorted({m for pair in unrelated for m in pair})
-                    ],
-                )
-            )
-        return findings
+
+def _has_lineage(graph: InteractionGraph, message_id: str) -> bool:
+    message = graph.messages.get(message_id)
+    return (
+        message is not None and bool(message.parents) and message.sender != SUPERVISOR
+    )
 
 
 class RepeatedSubproblem(Detector):

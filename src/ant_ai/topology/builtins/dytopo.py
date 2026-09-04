@@ -15,7 +15,8 @@ from __future__ import annotations
 import math
 import random
 import warnings
-from typing import Annotated, ClassVar
+from collections.abc import Callable
+from typing import Annotated, ClassVar, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SkipValidation
 
@@ -58,38 +59,21 @@ class Semantic(BaseModel):
         if not names:
             return plan
 
-        queries: list[str] = []
-        keys: list[str] = []
-        mute: list[str] = []
-        for profile in ctx.participants:
-            turn = plan.turns.get(profile.name)
-            fallback = profile.as_text()
-            query = (turn.query if turn else "") or ""
-            key = (turn.key if turn else "") or ""
-            if not query and not key:
-                mute.append(profile.name)
-            queries.append(query or fallback)
-            keys.append(key or fallback)
+        declared = _Descriptors.of(plan, ctx)
+        if declared.mute:
+            await self._report_fallback(declared.mute, names, ctx)
 
-        if mute:
-            await self._report_fallback(mute, names, ctx)
+        q = _l2_normalise(await self.embedder.aembed(declared.queries))
+        k = _l2_normalise(await self.embedder.aembed(declared.keys))
 
-        q = _l2_normalise(await self.embedder.aembed(queries))
-        k = _l2_normalise(await self.embedder.aembed(keys))
+        def score(i: int, j: int) -> tuple[float, str]:
+            r = _dot(q[i], k[j])
+            return r, (
+                f"'{_clip(declared.queries[i])}' <- "
+                f"'{_clip(declared.keys[j])}' (sim={r:.2f})"
+            )
 
-        matrix = ScoreMatrix()
-        for i, dst in enumerate(names):
-            matrix.scores[dst] = {}
-            matrix.reasons[dst] = {}
-            for j, src in enumerate(names):
-                if i == j:
-                    continue
-                r = _dot(q[i], k[j])
-                matrix.scores[dst][src] = r
-                matrix.reasons[dst][src] = (
-                    f"'{_clip(queries[i])}' <- '{_clip(keys[j])}' (sim={r:.2f})"
-                )
-        return plan.model_copy(update={"scores": matrix})
+        return plan.model_copy(update={"scores": _score_matrix(names, score)})
 
     async def _report_fallback(
         self, mute: list[str], names: list[str], ctx: RunContext
@@ -131,17 +115,10 @@ class RandomScores(BaseModel):
     seed: int | None = None
 
     async def apply(self, plan: RoundPlan, ctx: RunContext) -> RoundPlan:
-        names = list(ctx.names)
         rng = random.Random(None if self.seed is None else self.seed + ctx.round)
-        matrix = ScoreMatrix()
-        for dst in names:
-            matrix.scores[dst] = {}
-            matrix.reasons[dst] = {}
-            for src in names:
-                if src == dst:
-                    continue
-                matrix.scores[dst][src] = rng.uniform(-1.0, 1.0)
-                matrix.reasons[dst][src] = "random baseline"
+        matrix = _score_matrix(
+            list(ctx.names), lambda i, j: (rng.uniform(-1.0, 1.0), "random baseline")
+        )
         return plan.model_copy(update={"scores": matrix})
 
 
@@ -214,6 +191,52 @@ class RandomTopology(TopologyStrategy):
             stages=[RandomScores(seed=self.seed), TopK(tau=None, k_in=self.k_in)],
             materialiser=DeliveryMaterialiser(),
         )
+
+
+class _Descriptors(NamedTuple):
+    """What each participant said it needs and offers, one entry per name.
+
+    A participant that declared neither falls back to its profile text and is
+    listed in `mute`, which is what `Semantic._report_fallback` warns about.
+    """
+
+    queries: list[str]
+    keys: list[str]
+    mute: list[str]
+
+    @classmethod
+    def of(cls, plan: RoundPlan, ctx: RunContext) -> _Descriptors:
+        declared = cls([], [], [])
+        for profile in ctx.participants:
+            turn = plan.turns.get(profile.name)
+            fallback = profile.as_text()
+            query = (turn.query if turn else "") or ""
+            key = (turn.key if turn else "") or ""
+            if not query and not key:
+                declared.mute.append(profile.name)
+            declared.queries.append(query or fallback)
+            declared.keys.append(key or fallback)
+        return declared
+
+
+def _score_matrix(
+    names: list[str], score: Callable[[int, int], tuple[float, str]]
+) -> ScoreMatrix:
+    """Dense pairwise scores, self-pairs excluded. `score(i, j)` is `r_ij` and why.
+
+    Shared by every scorer so that a control differs from the method it controls
+    for in the scoring function alone — the paper's random baseline is honest
+    only if the matrix around it is built identically.
+    """
+    matrix = ScoreMatrix()
+    for i, dst in enumerate(names):
+        matrix.scores[dst] = {}
+        matrix.reasons[dst] = {}
+        for j, src in enumerate(names):
+            if i == j:
+                continue
+            matrix.scores[dst][src], matrix.reasons[dst][src] = score(i, j)
+    return matrix
 
 
 def _l2_normalise(vectors: list[list[float]]) -> list[list[float]]:

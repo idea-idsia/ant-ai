@@ -481,13 +481,7 @@ class LocalParticipant(_BaseParticipant):
         async for event in stream:
             if isinstance(event, ToolCallingEvent):
                 tool_names.extend(tc.function.name for tc in event.tool_calls)
-            if (
-                isinstance(event, FinalAnswerEvent)
-                and event.content
-                or event.kind == "completed"
-                and event.content
-            ):
-                final = event.content
+            final = _completion_text(event) or final
             yield event
 
         yield _build_turn(
@@ -586,13 +580,7 @@ def _build_turn(
     than failing the round: a participant that ignores the schema should cost
     the matcher its descriptors, not abort the run.
     """
-    payload: TurnPayload | None = None
-    if structured and raw:
-        try:
-            payload = TurnPayload.model_validate_json(raw)
-        except Exception:
-            payload = None
-
+    payload = _parse_payload(raw) if structured else None
     if payload is None:
         return Turn(
             participant=participant,
@@ -604,56 +592,10 @@ def _build_turn(
             invoked=invoked,
         )
 
-    outputs = [
-        Envelope(
-            sender=participant,
-            content=payload.message,
-            visibility="public",
-            round=round,
-        )
-    ]
-    if payload.private:
-        outputs.append(
-            Envelope(
-                sender=participant,
-                content=payload.private,
-                visibility="private",
-                round=round,
-            )
-        )
-    outputs += [
-        Envelope(
-            sender=participant,
-            content=addressed.content,
-            visibility="private",
-            round=round,
-            recipients=tuple(addressed.to),
-        )
-        for addressed in payload.messages
-        if addressed.content
-    ]
-
-    # Tags are per-brief handles, so they are resolved back to ids here — the
-    # record keeps ids, and a participant that answered with an id rather than
-    # a tag is understood either way.
-    reactions: dict[str, Reaction] = {}
-    rerouted: dict[str, tuple[str, ...]] = {}
-    if brief is not None:
-        for tag, label in payload.reactions.items():
-            message_id = brief.resolve(tag)
-            reaction = REACTIONS.get(label)
-            if message_id is not None and reaction is not None:
-                reactions[message_id] = reaction
-        for tag, targets in payload.reroute.items():
-            message_id = brief.resolve(tag)
-            if message_id is None or not targets:
-                continue
-            rerouted[message_id] = tuple(targets)
-            reactions[message_id] = "reroute"
-
+    reactions, rerouted = _reactions(payload, brief)
     return Turn(
         participant=participant,
-        outputs=tuple(outputs),
+        outputs=_outputs(payload, sender=participant, round=round),
         reactions=reactions,
         rerouted=rerouted,
         query=payload.query,
@@ -661,3 +603,80 @@ def _build_turn(
         invoked=invoked,
         submitted=payload.submitted,
     )
+
+
+def _completion_text(event: Event) -> str:
+    """The answer an event carries, if it is one that ends an agent's turn.
+
+    Both shapes count: a `FinalAnswerEvent`, and any event a stream marks
+    `completed`. An empty one is not an answer, so the caller keeps what it had.
+    """
+    if isinstance(event, FinalAnswerEvent) or event.kind == "completed":
+        return event.content
+    return ""
+
+
+def _parse_payload(raw: str) -> TurnPayload | None:
+    if not raw:
+        return None
+    try:
+        return TurnPayload.model_validate_json(raw)
+    except Exception:
+        return None
+
+
+def _outputs(payload: TurnPayload, *, sender: str, round: int) -> tuple[Envelope, ...]:
+    """The messages a payload declares: the record's copy, then the addressed ones."""
+
+    def envelope(
+        content: str,
+        visibility: Literal["public", "private"],
+        recipients: tuple[str, ...] = (),
+    ) -> Envelope:
+        return Envelope(
+            sender=sender,
+            content=content,
+            visibility=visibility,
+            round=round,
+            recipients=recipients,
+        )
+
+    outputs = [envelope(payload.message, "public")]
+    if payload.private:
+        outputs.append(envelope(payload.private, "private"))
+    outputs.extend(
+        envelope(addressed.content, "private", tuple(addressed.to))
+        for addressed in payload.messages
+        if addressed.content
+    )
+    return tuple(outputs)
+
+
+def _reactions(
+    payload: TurnPayload, brief: Brief | None
+) -> tuple[dict[str, Reaction], dict[str, tuple[str, ...]]]:
+    """What the payload says it did with each delivered message, keyed by id.
+
+    Tags are per-brief handles, so they are resolved back to ids here — the
+    record keeps ids, and a participant that answered with an id rather than a
+    tag is understood either way. Anything that resolves to no live message, or
+    to no known reaction, is dropped rather than guessed at.
+    """
+    reactions: dict[str, Reaction] = {}
+    rerouted: dict[str, tuple[str, ...]] = {}
+    if brief is None:
+        return reactions, rerouted
+
+    for tag, label in payload.reactions.items():
+        message_id = brief.resolve(tag)
+        reaction = REACTIONS.get(label)
+        if message_id is not None and reaction is not None:
+            reactions[message_id] = reaction
+
+    for tag, targets in payload.reroute.items():
+        message_id = brief.resolve(tag)
+        if message_id is not None and targets:
+            rerouted[message_id] = tuple(targets)
+            reactions[message_id] = "reroute"
+
+    return reactions, rerouted
