@@ -3,15 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
+import time
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import acp
 import pytest
 import uvicorn
+import websockets
 from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
-from starlette.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 from ant_ai.acp.adapter import ACPAdapter
 from ant_ai.acp.server import ACPServer, build_acp_ws_route
@@ -56,6 +58,10 @@ def test_acp_server_routes_contain_ws_endpoint():
 
 # ---------------------------------------------------------------------------
 # WebSocket bridge
+#
+# These run against a real uvicorn server rather than starlette's TestClient:
+# TestClient cancels its portal task on exit, which surfaces as a spurious
+# CancelledError once the machine is slow enough.
 # ---------------------------------------------------------------------------
 
 
@@ -73,49 +79,79 @@ def _ws_app() -> Starlette:
     return Starlette(routes=[build_acp_ws_route(agent, workflow)])
 
 
-def _rpc(ws, request_id: int, method: str, params: dict) -> None:
-    ws.send_text(
+@pytest.fixture
+def acp_ws_url() -> Iterator[str]:
+    """Serve the ACP route on an ephemeral port and yield its WebSocket URL."""
+    server = uvicorn.Server(
+        uvicorn.Config(_ws_app(), host="127.0.0.1", port=0, log_level="error")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    deadline = time.monotonic() + 10
+    while not server.started:
+        if time.monotonic() > deadline:
+            server.should_exit = True
+            pytest.fail("uvicorn did not start within 10s")
+        time.sleep(0.01)
+
+    port = server.servers[0].sockets[0].getsockname()[1]
+    try:
+        yield f"ws://127.0.0.1:{port}/acp/ws"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
+async def _rpc(ws, request_id: int, method: str, params: dict) -> None:
+    await ws.send(
         json.dumps(
             {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
         )
     )
 
 
-def _await_response(ws, request_id: int) -> tuple[dict, list[dict]]:
+async def _await_response(ws, request_id: int) -> tuple[dict, list[dict]]:
     """Read until the response for request_id arrives; return it plus notifications."""
     notifications: list[dict] = []
     while True:
-        message = json.loads(ws.receive_text())
+        message = json.loads(await ws.recv())
         if message.get("id") == request_id:
             return message, notifications
         notifications.append(message)
 
 
-def test_ws_route_serves_initialize_and_new_session():
-    with TestClient(_ws_app()).websocket_connect("/acp/ws") as ws:
-        _rpc(ws, 1, "initialize", {"protocolVersion": 1, "clientCapabilities": {}})
-        init, _ = _await_response(ws, 1)
+async def _open_session(ws) -> str:
+    await _rpc(ws, 1, "initialize", {"protocolVersion": 1, "clientCapabilities": {}})
+    await _await_response(ws, 1)
+    await _rpc(ws, 2, "session/new", {"cwd": "/tmp", "mcpServers": []})
+    response, _ = await _await_response(ws, 2)
+    return response["result"]["sessionId"]
+
+
+async def test_ws_route_serves_initialize_and_new_session(acp_ws_url):
+    async with websockets.connect(acp_ws_url) as ws:
+        await _rpc(
+            ws, 1, "initialize", {"protocolVersion": 1, "clientCapabilities": {}}
+        )
+        init, _ = await _await_response(ws, 1)
         assert init["result"]["agentInfo"]["name"] == "TestAgent"
 
-        _rpc(ws, 2, "session/new", {"cwd": "/tmp", "mcpServers": []})
-        new_session, _ = _await_response(ws, 2)
+        await _rpc(ws, 2, "session/new", {"cwd": "/tmp", "mcpServers": []})
+        new_session, _ = await _await_response(ws, 2)
         assert new_session["result"]["sessionId"]
 
 
-def test_ws_route_streams_prompt_updates_before_response():
-    with TestClient(_ws_app()).websocket_connect("/acp/ws") as ws:
-        _rpc(ws, 1, "initialize", {"protocolVersion": 1, "clientCapabilities": {}})
-        _await_response(ws, 1)
-        _rpc(ws, 2, "session/new", {"cwd": "/tmp", "mcpServers": []})
-        session_id = _await_response(ws, 2)[0]["result"]["sessionId"]
-
-        _rpc(
+async def test_ws_route_streams_prompt_updates_before_response(acp_ws_url):
+    async with websockets.connect(acp_ws_url) as ws:
+        session_id = await _open_session(ws)
+        await _rpc(
             ws,
             3,
             "session/prompt",
             {"sessionId": session_id, "prompt": [{"type": "text", "text": "hello"}]},
         )
-        response, notifications = _await_response(ws, 3)
+        response, notifications = await _await_response(ws, 3)
 
     assert response["result"]["stopReason"] == "end_turn"
     updates = [n["params"]["update"] for n in notifications]
@@ -123,6 +159,19 @@ def test_ws_route_streams_prompt_updates_before_response():
         "sessionUpdate": "agent_message_chunk",
         "content": {"type": "text", "text": "hi there"},
     } in updates
+
+
+async def test_ws_route_closes_when_the_socket_bridge_cannot_start(
+    acp_ws_url, monkeypatch
+):
+    async def _boom(**_):
+        raise OSError("no file descriptors available")
+
+    monkeypatch.setattr(asyncio, "open_connection", _boom)
+
+    async with websockets.connect(acp_ws_url) as ws:
+        with pytest.raises(websockets.exceptions.ConnectionClosed):
+            await ws.recv()
 
 
 # ---------------------------------------------------------------------------
@@ -182,16 +231,3 @@ def test_serve_stdio_runs_adapter_for_the_agent(monkeypatch):
 
     assert isinstance(seen["adapter"], ACPAdapter)
     assert seen["kwargs"]["use_unstable_protocol"] is True
-
-
-def test_ws_route_closes_when_the_socket_bridge_cannot_start(monkeypatch):
-    async def _boom(**_):
-        raise OSError("no file descriptors available")
-
-    monkeypatch.setattr(asyncio, "open_connection", _boom)
-
-    with (
-        TestClient(_ws_app()).websocket_connect("/acp/ws") as ws,
-        pytest.raises(WebSocketDisconnect),
-    ):
-        ws.receive_text()
