@@ -99,3 +99,35 @@ async def test_default_transport_is_http_backward_compatible():
 
     mock_http.assert_called_once()
     mock_sse.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sse_tool_call_reuses_sse_transport():
+    """Calling the produced Tool opens an SSE connection, not an HTTP one."""
+    import mcp.types as mt
+
+    fake_session = _make_mcp_session(["search"])
+    fake_session.call_tool = AsyncMock(
+        return_value=mt.CallToolResult(content=[mt.TextContent(type="text", text="ok")])
+    )
+
+    with (
+        patch(
+            "ant_ai.tools.tool.sse_client", side_effect=_make_transport_ctx()
+        ) as mock_sse,
+        patch("ant_ai.tools.tool.streamable_http_client") as mock_http,
+        patch("ant_ai.tools.tool.MCPClientSession", return_value=fake_session),
+    ):
+        tools = await mcp_tools_from_url(
+            "http://localhost:8000/sse",
+            transport="sse",
+            headers={"Authorization": "Bearer token"},
+        )
+        result = await tools[0].ainvoke(query="acp")
+
+    assert result == "ok"
+    mock_http.assert_not_called()
+    assert mock_sse.call_count == 2  # once to list tools, once for the call
+    fake_session.call_tool.assert_awaited_once_with(
+        "search", arguments={"query": "acp"}
+    )

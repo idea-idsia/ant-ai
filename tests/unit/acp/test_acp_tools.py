@@ -514,3 +514,27 @@ async def test_list_directory_raises_on_file_path(tmp_path):
             await acp_list_directory("file.txt")
     finally:
         _acp_cwd.reset(t)
+
+
+@pytest.mark.asyncio
+async def test_fs_read_file_propagates_client_error():
+    client = MagicMock()
+    client.read_text_file = AsyncMock(side_effect=RuntimeError("file is gone"))
+    tokens = _inject(client)
+    try:
+        with pytest.raises(RuntimeError, match="file is gone"):
+            await acp_fs_read_file("/tmp/missing.txt")
+    finally:
+        _reset(*tokens)
+
+
+@pytest.mark.asyncio
+async def test_fs_write_file_propagates_client_error():
+    client = MagicMock()
+    client.write_text_file = AsyncMock(side_effect=PermissionError("read-only"))
+    tokens = _inject(client)
+    try:
+        with pytest.raises(PermissionError, match="read-only"):
+            await acp_fs_write_file("/tmp/locked.txt", "content")
+    finally:
+        _reset(*tokens)

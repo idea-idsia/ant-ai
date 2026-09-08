@@ -9,7 +9,10 @@ from acp.schema import (
     ClientCapabilities,
     EmbeddedResourceContentBlock,
     FileSystemCapabilities,
+    HttpHeader,
     HttpMcpServer,
+    McpServerStdio,
+    SseMcpServer,
     TextContentBlock,
     TextResourceContents,
 )
@@ -478,3 +481,82 @@ async def test_unknown_slash_command_passes_through_to_workflow():
     )
 
     assert captured == ["/unknown do stuff"]
+
+
+@pytest.mark.asyncio
+async def test_new_session_with_sse_mcp_server_forwards_headers(monkeypatch):
+    import ant_ai.acp.adapter as adapter_mod
+    from ant_ai.tools.tool import Tool
+
+    fake_tool = MagicMock(spec=Tool)
+    fake_tool.name = "mcp_tool"
+    loader = AsyncMock(return_value=[fake_tool])
+    monkeypatch.setattr(adapter_mod, "mcp_tools_from_url", loader)
+
+    adapter = _make_adapter()
+    srv = SseMcpServer(
+        type="sse",
+        name="my-sse",
+        url="http://localhost:8000/sse",
+        headers=[HttpHeader(name="Authorization", value="Bearer token")],
+    )
+    resp = await adapter.new_session(cwd="/tmp", mcp_servers=[srv])
+
+    loader.assert_awaited_once_with(
+        "http://localhost:8000/sse",
+        headers={"Authorization": "Bearer token"},
+        transport="sse",
+    )
+    assert adapter._session_agents[resp.session_id] is not adapter._agent
+
+
+@pytest.mark.asyncio
+async def test_new_session_ignores_stdio_mcp_servers(monkeypatch):
+    import ant_ai.acp.adapter as adapter_mod
+
+    loader = AsyncMock()
+    monkeypatch.setattr(adapter_mod, "mcp_tools_from_url", loader)
+
+    adapter = _make_adapter()
+    srv = McpServerStdio(type="stdio", name="local", command="run-mcp", args=[], env=[])
+    resp = await adapter.new_session(cwd="/tmp", mcp_servers=[srv])
+
+    loader.assert_not_awaited()
+    assert adapter._session_agents[resp.session_id] is adapter._agent
+
+
+@pytest.mark.asyncio
+async def test_fork_session_copies_history_without_aliasing_it():
+    adapter = _make_adapter()
+    parent = (await adapter.new_session(cwd="/tmp")).session_id
+    adapter._sessions[parent].append(Message(role="user", content="first"))
+
+    forked = (await adapter.fork_session(session_id=parent, cwd="/tmp")).session_id
+
+    assert forked != parent
+    assert [m.content for m in adapter._sessions[forked]] == ["first"]
+    assert adapter._session_agents[forked] is adapter._session_agents[parent]
+
+    adapter._sessions[forked].append(Message(role="user", content="second"))
+    assert len(adapter._sessions[parent]) == 1
+
+
+@pytest.mark.asyncio
+async def test_resume_session_returns_response():
+    adapter = _make_adapter()
+    session = await adapter.new_session(cwd="/tmp")
+    assert await adapter.resume_session(session_id=session.session_id, cwd="/tmp")
+
+
+@pytest.mark.asyncio
+async def test_optional_protocol_methods_are_noops():
+    adapter = _make_adapter()
+    assert await adapter.authenticate(method_id="none") is None
+    assert await adapter.set_session_mode(session_id="s", mode_id="default") is None
+    assert (
+        await adapter.set_config_option(config_id="c", session_id="s", value=True)
+        is None
+    )
+    assert await adapter.cancel(session_id="s") is None
+    assert await adapter.ext_method("custom/method", {}) == {}
+    assert await adapter.ext_notification("custom/notify", {}) is None

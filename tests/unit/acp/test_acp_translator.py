@@ -181,3 +181,20 @@ async def test_unknown_event_raises(translator):
     client = _make_client()
     with pytest.raises(ValueError, match="No handler registered"):
         await translator.apply(Event(), client, SESSION)
+
+
+@pytest.mark.asyncio
+async def test_reasoning_with_stream_id_is_not_resent(translator):
+    """Its text already reached the client as deltas."""
+    client = _make_client()
+    await translator.apply(
+        ReasoningEvent(content="Thinking...", stream_id="s1"), client, SESSION
+    )
+    client.session_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_empty_content_delta_is_skipped(translator):
+    client = _make_client()
+    await translator.apply(ContentDeltaEvent(delta="", stream_id="s1"), client, SESSION)
+    client.session_update.assert_not_awaited()
