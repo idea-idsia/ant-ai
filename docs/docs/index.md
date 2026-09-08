@@ -30,6 +30,14 @@ title: Docs
 
     [:octicons-arrow-right-24: Build a Colony](multi-agent/index.md)
 
+- :material-application-brackets-outline:{ .lg .middle } **ACP**
+
+    ***
+
+    Serve an agent to Zed, VSCode, or any editor over the Agent Client Protocol.
+
+    [:octicons-arrow-right-24: Connect an editor](acp/index.md)
+
 - :material-layers-outline:{ .lg .middle } **Architecture**
 
     ***

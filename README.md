@@ -24,6 +24,8 @@ Agents that talk to each other, tools that just work, and a graph you can actual
 
 **Multi-agent by design.** Agents communicate and delegate via the [A2A protocol](https://github.com/a2aproject/A2A) — no custom glue code required.
 
+**Editor-native.** Serve any agent to Zed, VSCode, or the Gemini CLI over the [Agent Client Protocol](https://agentclientprotocol.com/), with filesystem, terminal, and slash-command support built in.
+
 **No lock-in.** Swap LLMs, tools, or observability backends without touching your agent logic.
 
 **Structured, not scripted.** Model complex behavior as graphs — know exactly what runs, when, and why.

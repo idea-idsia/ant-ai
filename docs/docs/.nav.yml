@@ -5,3 +5,4 @@ nav:
     - Architecture: architecture
     - Single-agent: single-agent
     - Multi-agent: multi-agent
+    - ACP: acp
