@@ -153,11 +153,25 @@ class Addressed(BaseModel):
 
 
 class TurnPayload(BaseModel):
-    """Structured output requested from a participant in a single pass.
+    """Structured output requested from a participant.
 
-    Message, addressing, reactions, query and key come back in one forward
-    pass; asking for any of it in a second call would double the cost of every
-    round for nothing.
+    Message, addressing, reactions, query and key come back together rather than
+    being asked for separately — but whether that is one LLM call or two is not
+    this schema's choice, and the difference matters more than the cost.
+
+    `Agent` builds a tool step only when its registry is non-empty, and the ReAct
+    loop applies a response schema natively only when there is no tool step. So:
+
+    - **No tools** (delivery mode, plain agents): one constrained call. Every
+      field below is the participant's own.
+    - **Tools bound** (visibility mode, or an agent with its own tools): the turn
+      is generated as prose and a *second* model converts it to this schema. The
+      fields are then filled by something that never saw the topology contract —
+      a `submitted` it inferred ends the run, a `query` it invented steers the
+      matcher.
+
+    `preflight`'s W003 reports the second case rather than leaving the
+    difference to be discovered from a bill or a wrong answer.
     """
 
     message: str = Field(

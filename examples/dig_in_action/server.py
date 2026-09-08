@@ -16,7 +16,7 @@ colony of real agents is a change of one function:
 
     def factory(*, heal):
         colony = build_colony()
-        colony.topology(DyTopo(embedder=embedder) | DigToHeal())
+        colony.evolve(DyTopo(embedder=embedder) | DigToHeal())
         return scenario, colony.ensemble()
 """
 

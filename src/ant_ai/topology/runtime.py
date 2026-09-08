@@ -24,10 +24,14 @@ from ant_ai.core.events import (
 )
 from ant_ai.core.types import InvocationContext
 from ant_ai.observer import obs
+from ant_ai.topology.activate import record_support
 from ant_ai.topology.graph import InteractionGraph, Link
 from ant_ai.topology.heal import Heal
+from ant_ai.topology.log import RewriteLog
 from ant_ai.topology.participant import Brief, Envelope, Participant, Turn
 from ant_ai.topology.plan import Finding, RoundPlan, RunContext
+from ant_ai.topology.rewrite import Rewrite
+from ant_ai.topology.state import StateGraph
 from ant_ai.topology.strategy import Pipeline
 
 _SENTINEL = object()
@@ -61,9 +65,30 @@ class Ensemble(BaseModel):
         "edges, so the very first turn behaves exactly as a colony does today.",
     )
     graph: InteractionGraph = Field(default_factory=InteractionGraph)
+    state: StateGraph = Field(
+        default_factory=StateGraph,
+        description="The typed agent-state graph every rewrite is applied to. "
+        "Passed in to carry memories, tools and skills that outlive this run; "
+        "left at its default it starts with the participants and nothing else.",
+    )
+    log: RewriteLog = Field(
+        default_factory=RewriteLog,
+        description="Every edit this run made, in order, with its inverse.",
+    )
+    record_reachability: bool = Field(
+        default=True,
+        description="Record each round's bound peers as a support subgraph. On "
+        "by default because it is what makes reachability measurable rather than "
+        "merely decided; off for a long run where one entry per participant per "
+        "round is more record than the question being asked needs.",
+    )
     provenance: dict[str, Any] = Field(
         default_factory=dict,
         description="Which strategy and hyperparameters produced this run.",
+    )
+    halt_reason: str = Field(
+        default="",
+        description="Why the run stopped. Empty until it has.",
     )
 
     async def stream(
@@ -78,6 +103,10 @@ class Ensemble(BaseModel):
                 origin=EventOrigin(layer="workflow", run_step=0),
                 content="Ensemble started",
             )
+            # The participants have to be nodes before any edge between them can
+            # be checked against the schema, and the seed has to be in the graph
+            # before the first round's diff can be honest about what changed.
+            self.state.ensure("agent", *sorted(self.participants))
             await self._seed_round_zero()
 
             for rnd in range(self.pipeline.max_rounds):
@@ -104,8 +133,14 @@ class Ensemble(BaseModel):
                     participants=tuple(p.profile for p in self.participants.values()),
                     active=active,
                     graph=self.graph,
+                    state=self.state,
                 )
                 plan = await self._plan(rnd, outcome.turns, run_ctx)
+                # Before the halt check, not after: a repair applied in the final
+                # round is an edit that happened, and a log that drops it makes
+                # the run that was corrected and the run that ended cleanly look
+                # the same afterwards.
+                self._evolve(plan)
 
                 for finding in plan.findings:
                     yield HealingEvent(
@@ -125,10 +160,12 @@ class Ensemble(BaseModel):
                 if rnd == self.pipeline.max_rounds - 1:
                     stop = stop or "round budget exhausted"
                 if stop:
+                    self.halt_reason = stop
                     await self._round_end(rnd, stop)
                     break
 
                 self.graph.record_links(plan.links, round=plan.round)
+                self._record_reachability(plan)
                 yield TopologyEvent(
                     origin=EventOrigin(layer="workflow", run_step=plan.round),
                     content=f"Topology for round {plan.round}",
@@ -161,6 +198,48 @@ class Ensemble(BaseModel):
             for finding in stage.history
         ]
 
+    def report(self) -> RunReport:
+        """What this run actually did, in the terms the layer is configured in.
+
+        The layer's failure mode is a run that completes and looks fine: a
+        topology that never moved, messages that reached nobody, detectors
+        firing every round on defaults. All of that is visible in the graph and
+        none of it is visible in the answer string, so reading the answer alone
+        is how a broken configuration gets believed. This is the two-line check.
+        """
+        graph = self.graph
+        per_round = {r: len(graph.links(r)) for r in sorted(_rounds_with_links(graph))}
+        shapes = {
+            frozenset((link.src, link.dst) for link in graph.links(r))
+            for r in per_round
+        }
+        findings: dict[str, int] = {}
+        for finding in self.findings:
+            findings[finding.pattern] = findings.get(finding.pattern, 0) + 1
+
+        return RunReport(
+            strategy=str(self.provenance.get("strategy", "") or "none"),
+            rounds=len(graph.rounds()),
+            participants=sorted(self.participants),
+            halt_reason=self.halt_reason,
+            messages=len(graph.messages),
+            delivered=len(graph.delivered()),
+            consumed=len(graph.consumed()),
+            outstanding=len(graph.unsettled()),
+            links_per_round=per_round,
+            topology_changed=len(shapes) > 1,
+            findings=findings,
+            unused_visibility=sum(
+                len(graph.unused_visibility(r)) for r in graph.rounds()
+            ),
+            rewrites=self.log.by_op(),
+            components=self.log.by_kind(),
+            cascades=len(self.log.cascades()),
+            cross_component=len(self.log.cross_component()),
+            activations=len(self.state.supports),
+            rejected=len(self.log.rejected()),
+        )
+
     async def _announce(self, task: str, ctx: InvocationContext | None) -> None:
         # Field names match the workflow lifecycle events so existing sinks
         # (LangfuseSink keys spans on node/run_step) pick these up unchanged.
@@ -191,6 +270,54 @@ class Ensemble(BaseModel):
             RoundPlan(round=0, links=self.seed), self.participants
         )
         self.graph.record_links(self.seed, round=0)
+        self.log.extend(
+            (
+                Rewrite.link(
+                    link.src,
+                    link.dst,
+                    weight=link.weight,
+                    reason=link.reason or "declared topology",
+                ).caused_by("seed", at=0)
+                for link in self.seed
+            ),
+            self.state,
+        )
+
+    def _evolve(self, plan: RoundPlan) -> None:
+        """Apply the round's edits to the persistent graph, and log them.
+
+        The one place a `Rewrite` becomes a fact. Stages decide, this applies —
+        which is what keeps a stage replayable against a recorded trace with
+        nothing running, and what makes an edit the schema rejects a logged
+        finding about the strategy rather than a crash in the middle of a run.
+        """
+        if not plan.rewrites:
+            return
+        self.log.extend(plan.rewrites, self.state)
+
+    def _record_reachability(self, plan: RoundPlan) -> None:
+        """Record what each participant may reach as a read-only activation.
+
+        Binding peers *is* subgraph activation — a query (this participant, this
+        round) selecting a subset of the agent graph that the next decision is
+        made from — and writing it down is the difference between a topology
+        that was decided and one that can be scored. It is also the only place
+        `Activate` appears in a run with no memory in it, which is why it is on
+        by default.
+        """
+        if not self.record_reachability:
+            return
+        for name in sorted(self.participants):
+            record_support(
+                self.state,
+                kind="agent",
+                id=f"reach:{plan.round}:{name}",
+                nodes=plan.sources_for(name),
+                at=plan.round,
+                query=name,
+                reason="peers bound for the round",
+                log=self.log,
+            )
 
     async def _deliver(
         self, plan: RoundPlan, outcome: RoundOutcome
@@ -289,6 +416,23 @@ class Ensemble(BaseModel):
             )
         for envelope in turn.outputs:
             self.graph.record_message(envelope, activation_id=activation)
+            # Mirrored into the state graph as a node, not through the log: a
+            # message an agent produced is not an edit a strategy made, and
+            # logging it would bury the strategy's own edits under one entry per
+            # message. The node has to exist all the same — a repair that
+            # rewrites or drops a message is a `feature_update` or `delete` on
+            # it, and against a graph that has never heard of the message both
+            # are silent no-ops that still count as edits in the report.
+            self.state.apply(
+                Rewrite.insert(
+                    "message",
+                    envelope.id,
+                    label=envelope.content[:80],
+                    content=envelope.content,
+                    sender=envelope.sender,
+                    visibility=envelope.visibility,
+                ).model_copy(update={"at": envelope.round})
+            )
         for callee in turn.invoked:
             self.graph.record_invocation(name, callee, round=brief.round)
 
@@ -301,11 +445,114 @@ class Ensemble(BaseModel):
         under, so it is numbered and recorded against that round rather than the
         one that produced it.
         """
-        plan = RoundPlan(round=rnd + 1, turns=turns)
+        # Seeded with the declared edges rather than empty. A stage that writes
+        # links overwrites them; one that does not — a pure repair strategy —
+        # leaves the colony's own `collab()` topology standing, which is what
+        # makes `DigToHeal` alone route anything at all.
+        plan = RoundPlan(
+            round=rnd + 1, turns=turns, links=self.seed, base_links=self.seed
+        )
         for stage in self.pipeline.stages:
             plan = await stage.apply(plan, ctx)
         await obs.event("topology.match", round=plan.round, links=len(plan.links))
         return plan
+
+
+class RunReport(BaseModel):
+    """A run summarised in the terms its configuration was written in.
+
+    Every field is here because its absence hid a real failure: a topology that
+    never changed, messages that reached nobody, a detector firing on every
+    round, reachability granted to peers nobody called.
+    """
+
+    strategy: str
+    rounds: int
+    participants: list[str]
+    halt_reason: str = ""
+    messages: int = 0
+    delivered: int = 0
+    consumed: int = 0
+    outstanding: int = 0
+    links_per_round: dict[int, int] = Field(default_factory=dict)
+    topology_changed: bool = False
+    """False with a routing strategy configured means the matcher decided the
+    same graph every round — usually descriptors that never varied."""
+    findings: dict[str, int] = Field(default_factory=dict)
+    unused_visibility: int = 0
+    """Reachability granted that nobody called. Persistently high means the
+    matcher is wiring peers the agents have no use for."""
+    rewrites: dict[str, int] = Field(default_factory=dict)
+    """Applied edits by operator. Empty with a strategy configured means every
+    stage decided the same graph it was given — the same failure
+    `topology_changed` reports, seen from the other side."""
+    components: dict[str, int] = Field(default_factory=dict)
+    """Applied edits by component type. A run that only ever shows `agent` here
+    evolved its wiring and nothing else, which is worth knowing when the strategy
+    claimed otherwise."""
+    cascades: int = 0
+    cross_component: int = 0
+    """Cascades that touched two or more component types. Zero with a
+    co-evolution strategy configured means the coupling never fired."""
+    activations: int = 0
+    """Read-only subgraph selections recorded — retrievals, bound peers."""
+    rejected: int = 0
+    """Edits the schema refused. Never zero by accident: a strategy emitting
+    them is emitting edits that did nothing, every round, in silence."""
+
+    def render(self) -> str:
+        lines = [
+            f"strategy       : {self.strategy}",
+            f"rounds         : {self.rounds}  ({self.halt_reason or 'still running'})",
+            f"participants   : {', '.join(self.participants)}",
+            f"messages       : {self.messages} generated, {self.delivered} delivered, "
+            f"{self.consumed} consumed, {self.outstanding} outstanding",
+            "links/round    : "
+            + (
+                ", ".join(f"r{r}={n}" for r, n in self.links_per_round.items())
+                or "none decided"
+            ),
+        ]
+        if self.links_per_round and not self.topology_changed:
+            lines.append("  ! the topology never changed — check that descriptors vary")
+        if self.unused_visibility:
+            lines.append(
+                f"unused links   : {self.unused_visibility} granted, never called"
+            )
+        if self.rewrites:
+            detail = ", ".join(f"{k}x{v}" for k, v in sorted(self.rewrites.items()))
+            lines.append(f"rewrites       : {detail}")
+        if self.components:
+            detail = ", ".join(f"{k}x{v}" for k, v in sorted(self.components.items()))
+            lines.append(f"components     : {detail}")
+        if self.cascades:
+            lines.append(
+                f"cascades       : {self.cascades} "
+                f"({self.cross_component} cross-component)"
+            )
+        if self.activations:
+            lines.append(f"activations    : {self.activations} recorded")
+        if self.rejected:
+            lines.append(
+                f"  ! {self.rejected} edit(s) were refused by the schema and did "
+                "nothing — check what the strategy is emitting"
+            )
+        if self.findings:
+            detail = ", ".join(f"{k}x{v}" for k, v in sorted(self.findings.items()))
+            lines.append(f"findings       : {detail}")
+            if max(self.findings.values()) >= self.rounds and self.rounds > 1:
+                lines.append(
+                    "  ! a detector fired every round — likely reading defaults, "
+                    "not the collaboration"
+                )
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        return self.render()
+
+
+def _rounds_with_links(graph: InteractionGraph) -> set[int]:
+    return {e.round for e in graph.edges if e.kind == "visible"}
 
 
 @dataclass(slots=True)

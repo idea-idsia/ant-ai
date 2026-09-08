@@ -9,7 +9,7 @@ and layering is `|`.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, ClassVar, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 
@@ -20,7 +20,10 @@ from ant_ai.topology.materialise import (
 from ant_ai.topology.plan import RoundPlan, RunContext, Stage
 from ant_ai.topology.schedule import RoundScheduler, Scheduler
 
-__all__ = ["Halt", "HaltPolicy", "Pipeline", "TopologyStrategy"]
+if TYPE_CHECKING:
+    from ant_ai.topology.problem import Problem
+
+__all__ = ["EvolutionStrategy", "Halt", "HaltPolicy", "Pipeline"]
 
 
 @runtime_checkable
@@ -141,6 +144,59 @@ class Pipeline(BaseModel):
             for component in (*self.stages, self.materialiser, self.scheduler)
         )
 
+    @property
+    def writes_links(self) -> bool:
+        """Whether any stage decides reachability.
+
+        Declared by a stage with `writes_links = True` in its class body and read
+        with `getattr`, exactly as `needs_structured_turns` is — a stage that has
+        never heard of the flag is simply one that decides nothing.
+
+        Asked by the preflight checks: in delivery mode, a pipeline that writes no
+        links and has no declared edges to fall back on can only move messages
+        that agents addressed themselves.
+        """
+        return any(getattr(stage, "writes_links", False) for stage in self.stages)
+
+    @property
+    def writes_nodes(self) -> bool:
+        """Whether any stage edits a component rather than the wiring between them.
+
+        Declared with `writes_nodes = True` and read with `getattr`, exactly as
+        the other two flags are. Not consulted by any check yet — it is what a
+        report and an ablation table need in order to say which branch a
+        configuration is actually exercising, which is otherwise only visible
+        after the run in `RunReport.components`.
+        """
+        return any(getattr(stage, "writes_nodes", False) for stage in self.stages)
+
+    def check(
+        self,
+        *,
+        structured_turns: bool,
+        local: bool = True,
+        seeded: bool = False,
+        participants: int = 0,
+        agents_have_tools: bool = False,
+        unrunnable_workflows: tuple[str, ...] = (),
+    ) -> list[Problem]:
+        """Everything provably wrong with this configuration, errors first.
+
+        See `ant_ai.topology.preflight` for the rules. `Colony.ensemble()` calls
+        this and raises; constructing an `Ensemble` directly does not.
+        """
+        from ant_ai.topology import preflight
+
+        return preflight.check(
+            self,
+            structured_turns=structured_turns,
+            local=local,
+            seeded=seeded,
+            participants=participants,
+            agents_have_tools=agents_have_tools,
+            unrunnable_workflows=unrunnable_workflows,
+        )
+
     def __or__(self, other: Pipeline) -> Pipeline:
         """Concatenate stages; the right-hand side wins on every other field.
 
@@ -158,7 +214,7 @@ class Pipeline(BaseModel):
         )
 
 
-class TopologyStrategy(BaseModel):
+class EvolutionStrategy(BaseModel):
     """A published approach: its hyperparameters, and how they assemble.
 
     Hyperparameters stay pydantic fields rather than function arguments because
@@ -175,42 +231,103 @@ class TopologyStrategy(BaseModel):
 
     name: ClassVar[str] = ""
     citation: ClassVar[str] = ""
+    branch: ClassVar[str] = ""
+    """Which kind of evolution this method's delta is, as arXiv:2608.18104
+    labels them: `"A.1"` node/feature, `"A.2"` edge/topology, `"A.3"` subgraph
+    activation, `"A.4"` cross-component co-evolution.
+
+    Metadata for the run record, deliberately not structure. The survey's own
+    caveat is that the branches "are not mutually exclusive system labels; they
+    identify the primary graph-rewrite role", and a package layout built on a
+    taxonomy that may not outlive the survey would be a worse organising
+    principle than the one already here — one module per published method.
+    """
 
     max_rounds: int = Field(default=10, ge=1)
     max_depth: int = Field(default=3, ge=1)
 
-    _registry: ClassVar[dict[str, type[TopologyStrategy]]] = {}
+    _registry: ClassVar[dict[str, type[EvolutionStrategy]]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         name = cls.__dict__.get("name") or ""
         if not name:
             return
-        existing = TopologyStrategy._registry.get(name)
+        existing = EvolutionStrategy._registry.get(name)
         if existing is not None and existing is not cls:
             raise ValueError(
                 f"Topology strategy '{name}' is already registered by {existing.__name__}."
             )
-        TopologyStrategy._registry[name] = cls
+        EvolutionStrategy._registry[name] = cls
+
+    @staticmethod
+    def _load_builtins() -> None:
+        """Import the shipped strategies so that they are registered.
+
+        A strategy registers itself when its class body executes, so a lookup by
+        name only works once something has imported the module defining it. That
+        makes `colony.evolve("dytopo")` depend on an import the caller has no
+        reason to make — and the whole point of naming a strategy is not having
+        to import it. Done here rather than in this package's `__init__` so that
+        importing `ant_ai.topology` stays cheap for anyone not using the registry.
+        """
+        import ant_ai.topology.builtins  # noqa: F401
 
     @classmethod
-    def get(cls, name: str) -> type[TopologyStrategy]:
+    def get(cls, name: str) -> type[EvolutionStrategy]:
+        if name not in EvolutionStrategy._registry:
+            cls._load_builtins()
         try:
-            return TopologyStrategy._registry[name]
+            return EvolutionStrategy._registry[name]
         except KeyError:
-            known = ", ".join(sorted(TopologyStrategy._registry)) or "none"
+            known = ", ".join(sorted(EvolutionStrategy._registry)) or "none"
             raise KeyError(
                 f"Unknown topology strategy '{name}'. Known: {known}."
             ) from None
 
     @classmethod
-    def create(cls, name: str, **kwargs: Any) -> TopologyStrategy:
+    def create(cls, name: str, **kwargs: Any) -> EvolutionStrategy:
         """Build a strategy by name — the path config-driven ablations take."""
         return cls.get(name)(**kwargs)
 
     @classmethod
     def known(cls) -> list[str]:
-        return sorted(TopologyStrategy._registry)
+        """Every registered strategy name, the shipped ones included."""
+        cls._load_builtins()
+        return sorted(EvolutionStrategy._registry)
+
+    @classmethod
+    def parse(cls, spec: str, **kwargs: Any) -> EvolutionStrategy:
+        """Build from a registered name, or a `|`-composed chain of them.
+
+        `"dytopo"`, or `"dytopo|dig"` for the layered pair. The composed form
+        takes no hyperparameters — which member would they belong to? — so
+        compose objects when you need to configure one:
+
+            DyTopo(tau=0.4) | DigToHeal()
+
+        Raises:
+            KeyError: If a name is not registered.
+            ValueError: If the spec is empty, or hyperparameters are passed
+                alongside a composed spec.
+        """
+        names = [part.strip() for part in spec.split("|") if part.strip()]
+        if not names:
+            raise ValueError(
+                f"Empty topology strategy spec {spec!r}. "
+                f"Known: {', '.join(cls.known()) or 'none'}."
+            )
+        if len(names) == 1:
+            return cls.create(names[0], **kwargs)
+        if kwargs:
+            raise ValueError(
+                "Hyperparameters apply to a single strategy only. Compose "
+                "objects instead, e.g. `DyTopo(tau=0.4) | DigToHeal()`."
+            )
+        strategy = cls.create(names[0])
+        for name in names[1:]:
+            strategy = strategy | cls.create(name)
+        return strategy
 
     # -- the one hook -----------------------------------------------------
 
@@ -237,7 +354,7 @@ class TopologyStrategy(BaseModel):
         }
         return built.model_copy(update=settings) if settings else built
 
-    def __or__(self, other: TopologyStrategy) -> TopologyStrategy:
+    def __or__(self, other: EvolutionStrategy) -> EvolutionStrategy:
         """Layer *other* on top of this one."""
         return Composite(members=[self, other])
 
@@ -249,13 +366,17 @@ class TopologyStrategy(BaseModel):
         difference between a reproducible result and a directory of unlabelled
         graphs.
         """
-        data: dict[str, Any] = {"strategy": self.name, "citation": self.citation}
+        data: dict[str, Any] = {
+            "strategy": self.name,
+            "citation": self.citation,
+            "branch": self.branch,
+        }
         for field in type(self).model_fields:
             data[field] = _serialise(getattr(self, field))
         return data
 
 
-class Composite(TopologyStrategy):
+class Composite(EvolutionStrategy):
     """Two or more strategies layered, as produced by `a | b`.
 
     A class rather than a bare `Pipeline` so that provenance survives composition:
@@ -263,7 +384,7 @@ class Composite(TopologyStrategy):
     lose which published methods and hyperparameters produced them.
     """
 
-    members: list[Annotated[TopologyStrategy, SkipValidation]] = Field(
+    members: list[Annotated[EvolutionStrategy, SkipValidation]] = Field(
         default_factory=list
     )
 
@@ -273,7 +394,7 @@ class Composite(TopologyStrategy):
             pipeline = pipeline | member.pipeline()
         return pipeline
 
-    def __or__(self, other: TopologyStrategy) -> TopologyStrategy:
+    def __or__(self, other: EvolutionStrategy) -> EvolutionStrategy:
         return Composite(members=[*self.members, other])
 
     def provenance(self) -> dict[str, Any]:

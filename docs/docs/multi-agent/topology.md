@@ -25,23 +25,38 @@ descriptors are the *dynamic* half. What changes each round is which cards are i
 
 ```python
 from ant_ai.a2a import Colony
-from ant_ai.embeddings.backends.sentence_transformer import SentenceTransformerEmbedder
-from ant_ai.topology.builtins import DyTopo
 
 colony = Colony()
 colony.agent("architect", agent=architect, workflow=wf, card=card_a)
 colony.agent("developer", agent=developer, workflow=wf, card=card_d)
 colony.agent("reviewer", agent=reviewer, workflow=wf, card=card_r)
 
-colony.collab("architect", "developer", mutual=True)  # still the round-0 seed
+colony.collab("architect", "developer", mutual=True)  # the round-0 seed
 
-colony.topology(DyTopo(embedder=SentenceTransformerEmbedder()))
+colony.evolve("dytopo")
 
-async for event in colony.ensemble().stream("Build a CSV parser"):
+ensemble = colony.ensemble()
+async for event in ensemble.stream("Build a CSV parser"):
     ...
+
+print(ensemble.report())
 ```
 
-`SentenceTransformerEmbedder` needs the optional extra:
+A strategy is named, not imported. `"dytopo"` is semantic rewiring, `"dig"` is structural repair,
+and `"dytopo|dig"` is both layered — the same thing `DyTopo() | DigToHeal()` builds, and the form
+an ablation sweep varies. `EvolutionStrategy.known()` lists them.
+
+Pass an instance instead when you need to configure one:
+
+```python
+from ant_ai.topology.builtins import DyTopo
+
+colony.evolve(DyTopo(tau=0.4, k_in=5))
+colony.evolve("dytopo", tau=0.4)  # equivalent, for a single name
+```
+
+`"dytopo"` embeds with `all-MiniLM-L6-v2` — the encoder the paper used — which needs the optional
+extra:
 
 ```bash
 pip install 'ant-ai[topology]'
@@ -49,6 +64,60 @@ pip install 'ant-ai[topology]'
 
 A colony with no `topology()` call behaves exactly as before: `collab()` edges are the static
 topology, materialised as peer tools.
+
+### The configuration is checked before it runs
+
+`colony.ensemble()` validates what you assembled and raises
+[`TopologyConfigurationError`][ant_ai.topology.problem.TopologyConfigurationError] on a
+combination that provably cannot work:
+
+```
+This topology cannot run as configured:
+[E001] Semantic, Heal read fields only a structured turn carries, but
+       workflow-driven participants cannot be invoked with a response schema.
+  Fix: Use `ensemble(local=True)` with the default `use_workflows=False`, or
+       choose a strategy that does not need structured turns.
+```
+
+| | |
+| --- | --- |
+| `E001` | a component reads declared fields that nothing will declare |
+| `E002` | delivery mode with no links, no declared edges and no addressing — nothing can reach anyone |
+| `E003` | remote participants with a topology materialised as peer tools, which cannot bind |
+| `E004` | a workflow that will drive the turns and cannot run — every activation would fail |
+| `W001` | nothing can declare `submitted`, so the round budget decides the length |
+| `W002` | a strategy configured over fewer than two participants |
+| `W003` | the response schema will be coerced, not constrained: a second LLM call per turn, with the declared fields filled by a repair model |
+| `W004` | a stage on a cadence whose period does not fit inside the round budget, so it fires at most once |
+
+Two more are reported by [`StateGraph`][ant_ai.topology.state.StateGraph] about an *edit* rather
+than a configuration — `E101` for an edge between node kinds the schema forbids, `E102` for a
+deletion that would leave edges dangling. Those never raise during a run: the edit is logged as
+unapplied and surfaces as `RunReport.rejected`.
+
+Each check fires only where the outcome follows from the configuration alone. Construct
+[`Ensemble`][ant_ai.topology.runtime.Ensemble] directly to bypass them.
+
+### Reading the result
+
+The layer's failure mode is a run that completes and looks fine. A topology that never moved and a
+detector firing every round are both invisible in the answer string, so
+[`report()`][ant_ai.topology.runtime.Ensemble.report] is the two-line check:
+
+```
+strategy       : dytopo|dig
+rounds         : 4  (reviewer submitted)
+participants   : architect, developer, reviewer
+messages       : 30 generated, 21 delivered, 21 consumed, 9 outstanding
+links/round    : r1=6, r2=4, r3=5
+rewrites       : feature_updatex2, insertx1, linkx16, unlinkx11
+components     : messagex3
+activations    : 12 recorded
+findings       : MCx1
+```
+
+It flags the failures worth catching by eye: a topology that never changed, a detector that fired on
+every round, reachability granted that nobody used, and edits the schema refused.
 
 ## How a round runs
 
@@ -81,9 +150,9 @@ A strategy is an ordered list of **stages**, each transforming the plan for the 
 | [`Detector`][ant_ai.topology.heal.Detector] | Finds one structural failure pattern. Hosted by the `Heal` stage, which owns applying corrections. |
 | [`TopologyMaterialiser`][ant_ai.topology.materialise.TopologyMaterialiser] | Turns a plan into reality: `VisibilityMaterialiser` rebinds peer tools, `DeliveryMaterialiser` routes messages. |
 | [`Scheduler`][ant_ai.topology.schedule.Scheduler] | Who activates on a tick. `RoundScheduler` is the synchronous barrier; `BufferScheduler` activates only agents whose inbox changed. |
-| [`Halt`][ant_ai.topology.halt.Halt] | Who may end a run, and not before which round. |
+| [`Halt`][ant_ai.topology.strategy.Halt] | Who may end a run, and not before which round. |
 | [`InteractionGraph`][ant_ai.topology.graph.InteractionGraph] | The run record: activations, messages, and both granted and exercised edges. |
-| [`TopologyStrategy`][ant_ai.topology.strategy.TopologyStrategy] | A published method's hyperparameters plus how they assemble, via one hook: `build()`. |
+| [`EvolutionStrategy`][ant_ai.topology.strategy.EvolutionStrategy] | A published method's hyperparameters plus how they assemble, via one hook: `build()`. |
 | [`Ensemble`][ant_ai.topology.runtime.Ensemble] | The round loop. |
 
 The record answers *what happened*; a strategy says *what it means*. `InteractionGraph` will tell
@@ -143,14 +212,14 @@ bounced whether the bouncing was an agent's decision or a supervisor's.
 
 ## Using a strategy
 
-Strategies live in `ant_ai.topology.builtins`, one module per paper.
+Strategies live in `ant_ai.topology.builtins`, one module per paper. Import them when you need to
+configure or compose one; name them as a string otherwise.
 
 ```python
-from ant_ai.topology import Halt
-from ant_ai.topology.builtins import DigToHeal, DyTopo, chain, mesh, star
+from ant_ai.topology.builtins import DyTopo, chain, mesh, star
 
-colony.topology(mesh(["architect", "developer", "reviewer"]))
-colony.topology(DyTopo(embedder=embedder, tau=0.35, k_in=3))
+colony.evolve(mesh(["architect", "developer", "reviewer"]))
+colony.evolve(DyTopo(tau=0.35, k_in=3))
 ```
 
 Hyperparameters are validated fields, so `DyTopo(tau=2.0)` fails at construction rather than
@@ -164,7 +233,7 @@ wins, but **only** where it set that component explicitly — so composing never
 to a default:
 
 ```python
-strategy = DyTopo(embedder=embedder) | DigToHeal()
+strategy = DyTopo() | DigToHeal()  # or: colony.evolve("dytopo|dig")
 ```
 
 That yields DyTopo's `Semantic` and `TopK` stages followed by DIG's `Heal`, DIG's scheduler and
@@ -176,15 +245,15 @@ A new method answers up to four questions, and overrides only the ones its paper
 
 | Question | Seam |
 | --- | --- |
-| What changes reachability? | a `Stage` |
+| What changes — reachability, or anything else? | a `Stage`, returning `Rewrite`s |
 | What counts as broken? | a `Detector`, hosted by `Heal` |
-| Who acts when? | a `Scheduler` |
+| Who acts when? | a `Scheduler`, and `Every` for a slower second clock |
 | Who says stop? | a `Halt` |
 
-Then one module under `builtins/`, with a `TopologyStrategy` whose single hook assembles them:
+Then one module under `builtins/`, with a `EvolutionStrategy` whose single hook assembles them:
 
 ```python
-class MyMethod(TopologyStrategy):
+class MyMethod(EvolutionStrategy):
     name = "mine"
     citation = "arXiv:..."
 
@@ -197,7 +266,7 @@ class MyMethod(TopologyStrategy):
 Nothing in the core changes, and the strategy registers itself by name:
 
 ```python
-strategy = TopologyStrategy.create("mine", threshold=0.7)
+strategy = EvolutionStrategy.create("mine", threshold=0.7)
 ```
 
 A stage is one async method. It holds no participant handles, performs no I/O on the run and
@@ -223,6 +292,76 @@ Scoring and sparsifying are separate stages because nearly every routing method 
 steps. `RandomTopology` reuses DyTopo's own `TopK` unchanged, so a random control holds sparsity
 constant by construction rather than by careful reimplementation.
 
+
+## Evolving more than the wiring
+
+A stage's output is a typed **rewrite**, and reachability is only its communication-edge case. The
+same nine operators — `insert`, `delete`, `feature_update`, `merge`, `link`, `unlink`, `rewire`,
+`edge_feature_update` and the read-only `activate` — apply to memories, tools, skills and workflows,
+which is what a method whose delta is not the wiring needs in order to be a stage at all.
+
+```python
+from ant_ai.topology import Every, Rewrite
+
+
+class Distil:
+    """Turn what worked this round into a reusable skill."""
+
+    writes_nodes = True
+
+    async def apply(self, plan, ctx):
+        return plan.with_rewrites(
+            Rewrite.insert("skill", f"skill-r{ctx.round}", label="distilled").caused_by(
+                "distil", at=ctx.round
+            ),
+        )
+
+
+colony.evolve(DyTopo() | MyMethod())  # every round
+Pipeline(stages=[Semantic(...), TopK(...), Every(stage=Distil(), k=3)])  # every third
+```
+
+`with_links()` is unchanged and still replaces the graph wholesale — it now also records the diff
+that got there, which is what `RewriteLog` needs. Nodes live in
+[`StateGraph`][ant_ai.topology.state.StateGraph], which is passed *into* an `Ensemble`, so what a
+run evolves can outlive it:
+
+```python
+state = StateGraph()
+ensemble = colony.ensemble()
+ensemble.state = state  # or Ensemble(..., state=state)
+await ensemble.ainvoke("first task")
+
+ensemble.log.cascade(cause)  # the edits one finding produced
+ensemble.log.cross_component()  # causes touching two or more component types
+ensemble.log.rollback(state, to=2)  # undo everything from round 2 on
+state.affected("some-tool")  # what a change to it would reach
+state.at(2)  # the graph as it was, for a leakage-free question
+```
+
+### Recording what a decision was grounded in
+
+Retrieval, tool selection and peer binding are the same read-only operation: a query picks a subset
+of a persistent graph, and nothing changes. Recorded, that subset is a `SupportSubgraph` — and
+without it there is no way to ask whether a decision used the right evidence, or evidence that did
+not exist yet.
+
+```python
+from ant_ai.topology import RecordingMemory
+
+memory = RecordingMemory(inner=Mem0Memory(...), state=state, log=ensemble.log)
+memory.tick(round)  # decision time; retrieval past it is dropped
+
+support_accuracy(state, gold={"mem:act:3:1": {"mem:abc123"}})  # Dice against a gold set
+leaked(state, state.supports[-1])  # evidence written after the fact
+locality(
+    ensemble.log, since=2, probes=["some-skill"]
+)  # what an edit could not have reached
+```
+
+Peer binding is recorded the same way, on by default — `Ensemble(record_reachability=False)` turns
+it off for a long run where one entry per participant per round is more record than the question
+needs.
 
 ## Halting
 
@@ -254,10 +393,8 @@ mechanics of rewriting a message.
 ```python
 from ant_ai.topology.builtins import DigToHeal, dig_detectors
 
-colony.topology(DyTopo(embedder=embedder) | DigToHeal())  # routing plus repair
-colony.topology(
-    strategy, detectors=dig_detectors()[:2]
-)  # a one-off subset, or your own
+colony.evolve("dytopo|dig")  # routing plus repair
+colony.evolve(strategy, detectors=dig_detectors()[:2])  # a one-off subset, or your own
 ```
 
 `DigToHeal` implements [arXiv:2603.00309](https://arxiv.org/abs/2603.00309). Its seven detectors:
@@ -314,7 +451,7 @@ yours, and it is short:
 from ant_ai.topology import Ensemble
 from ant_ai.topology.builtins import Baseline, DigToHeal, DyTopo
 
-dytopo = DyTopo(embedder=embedder, max_rounds=6)
+dytopo = DyTopo(max_rounds=6)
 
 for label, strategy in {
     "no method": Baseline(max_rounds=6),
@@ -382,17 +519,19 @@ function.
 
 - **Workflows and structured turns.** `Workflow.stream` takes no response schema, so a
   workflow-driven participant answers with one plain public message: no query/key descriptors, no
-  addressed messages, no declared reactions and nothing ever submitted. Every strategy built on
-  those degrades to something that runs and does nothing — a matcher scoring unchanging AgentCard
-  text, or a detector that never sees a symptom. `ensemble()` therefore decides for you: it invokes
-  agents directly when the pipeline reads any of it (`Pipeline.needs_structured_turns`), and runs
-  the workflow when it does not. Pass `use_workflows=True` to override that; a matcher whose
-  fallback ends up total warns once.
+  addressed messages, no declared reactions and nothing ever submitted. A strategy built on any of
+  those does not go quiet — it reports on the defaults instead: a matcher scores unchanging
+  AgentCard text, and the structural detectors fire every round on deliveries nobody declared. So
+  `use_workflows` defaults to False, and asking for the combination raises `E001` rather than
+  running. A component opts into the requirement with `needs_structured_turns = True`.
 - **Remote peers cannot be rebound.** A2A has no operation for attaching a tool to an agent in
-  another process, so `A2AParticipant` adapts under `DeliveryMaterialiser`; under visibility its
-  reachability stays as the colony wired it, and the materialiser reports it as unbindable rather
-  than pretending. Asking for both at once — `ensemble(local=False)` with a deciding stage and a
-  visibility materialiser — is a topology that constrains nothing, and warns at build time.
+  another process, and it carries no response schema either — so a remote run is unstructured
+  however the colony is configured. `A2AParticipant` adapts under `DeliveryMaterialiser` with a
+  strategy that reads nothing declared; anything else raises at build time (`E001` for a strategy
+  needing structured turns, `E003` for a topology materialised as peer tools).
+- **Declared edges are the fallback, not a floor.** `collab()` edges seed round 0 and stand in
+  every later round no stage overwrites, which is what lets a repair-only strategy route at all. A
+  stage that writes links replaces them outright rather than adding to them.
 - **Synchronous rounds.** Both schedulers still advance on a round barrier, so `BufferScheduler`
   gives event-driven *activation* but not event-driven *timing*: an agent acts at the next barrier
   rather than the instant its buffer changes, and turns that share a round start together. That
@@ -403,9 +542,10 @@ function.
   at a finer grain; the queries themselves are unchanged by that.
 - **Message-level healing needs delivery mode.** DIG detects when an event is generated, before it
   is delivered. Under `VisibilityMaterialiser` a peer call collapses generation, delivery and
-  activation into one synchronous tool call, so there is nothing to inspect in between;
-  [`SupervisorHook`][ant_ai.topology.heal.SupervisorHook] applies the two rewrites a tool call
-  can express (`inject`, `reroute`) at that boundary, and `drop`/`emit` stay with the round loop.
+  activation into one synchronous tool call, so there is nothing to inspect in between. This is why
+  [`DigToHeal`][ant_ai.topology.builtins.dig.DigToHeal] pairs its detectors with
+  `DeliveryMaterialiser`: every intervention kind (`inject`, `reroute`, `drop`, `emit`) is applied
+  by the round loop, against messages that exist as messages.
 - **Unaddressed output still needs a topology.** A message that names no recipients is delivered by
   the links, so a run with neither addressing nor a routing stage moves nothing. Structural
   accounting settles a turn's outputs together (see `InteractionGraph.siblings`), which is what
@@ -414,3 +554,12 @@ function.
 - **Stage order is load-bearing.** A sparsifier must follow the scorer whose `plan.scores` it
   reads. That is the honest cost of composing by concatenation: it is visible in the list, but
   nothing type-checks it.
+- **Rollback undoes the graph, not the world.** `RewriteLog.rollback` restores `StateGraph` from the
+  inverses it recorded. It does not un-send a message, un-call a tool, or reach into the backend a
+  `RecordingMemory` wraps — those are effects the log observed rather than owns.
+- **`purge` is the only real deletion.** `delete` tombstones, which is right for audit and wrong for
+  compliance: the content is still in `attrs`. `StateGraph.purge` drops the record and returns the
+  components whose derivations still carry its influence, which is the set the caller has to
+  revalidate.
+- **Locality is a bound, not a measurement.** A probe inside an edit's affected scope has not
+  necessarily changed — only that this edit could have reached it.

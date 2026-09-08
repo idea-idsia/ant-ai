@@ -11,12 +11,15 @@ being reconciled by hand in the round loop.
 
 from __future__ import annotations
 
+import uuid
 from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
 from ant_ai.topology.graph import InteractionGraph, Link
 from ant_ai.topology.participant import Envelope, ParticipantProfile, Turn
+from ant_ai.topology.rewrite import Rewrite, diff_links, fold_links
+from ant_ai.topology.state import StateGraph
 
 __all__ = [
     "Finding",
@@ -48,6 +51,14 @@ class RunContext(BaseModel):
     graph: InteractionGraph = Field(default_factory=InteractionGraph)
     """The full history, not just this round — so a stage needing decay, momentum
     or accumulated centrality already has it, with no protocol change."""
+    state: StateGraph = Field(default_factory=StateGraph)
+    """What the system *is*, as opposed to what this run did: the typed graph of
+    agents, memories, tools and skills that outlives the run.
+
+    Read-only here for the same reason `graph` is — a stage writes by returning
+    rewrites on the plan, never by reaching into the graph — but present, because
+    a stage that cannot see the skills an agent holds cannot decide to distil a
+    new one, and every method outside the edge-rewriting branch needs to."""
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -102,6 +113,61 @@ class Intervention(BaseModel):
         if self.kind == "emit" and not self.content:
             raise ValueError("Intervention 'emit' requires content.")
 
+    def as_rewrites(self, *, at: int = 0, cause: str = "") -> tuple[Rewrite, ...]:
+        """This correction, in the framework's operator vocabulary.
+
+        The four kinds were already node and edge rewrites under other names, and
+        saying so is what lets a repair appear in the same log as a rewiring
+        rather than in a stream of its own:
+
+        | Intervention | Operator |
+        | --- | --- |
+        | `inject` | `feature_update` on the message node |
+        | `drop` | `delete` on the message node |
+        | `reroute` | `rewire`, or `link` when no prior target is known |
+        | `emit` | handled by `Heal`, which mints the message id |
+
+        Routing edges here are `provenance`, not `communication`. Communication
+        is reserved for agent-to-agent reachability — the thing `plan.links`
+        projects — and a repair that moves one message is a trace of that
+        message's handling, which is what provenance is for. Folding it into
+        reachability would make a single redirected message look like a standing
+        wire between two agents.
+
+        `emit` returns nothing because its message does not exist yet; `Heal`
+        creates the envelope and records the pair itself.
+        """
+        if not self.message:
+            return ()
+        stamp = {"at": at, "cause": cause, "reason": self.reason}
+        if self.kind == "inject":
+            return (
+                Rewrite.feature_update(
+                    "message", self.message, content=self.content or ""
+                ).model_copy(update=stamp),
+            )
+        if self.kind == "drop":
+            return (
+                Rewrite.delete("message", self.message, cascade=True).model_copy(
+                    update=stamp
+                ),
+            )
+        if self.kind == "reroute":
+            return tuple(
+                (
+                    Rewrite.rewire(
+                        self.message,
+                        self.participant,
+                        to=recipient,
+                        family="provenance",
+                    )
+                    if self.participant
+                    else Rewrite.link(self.message, recipient, family="provenance")
+                ).model_copy(update=stamp)
+                for recipient in self.recipients
+            )
+        return ()
+
 
 class Finding(BaseModel):
     """One detected failure: what, where, why, and what to do about it.
@@ -116,6 +182,13 @@ class Finding(BaseModel):
     round: int = 0
     explanation: str = ""
     interventions: tuple[Intervention, ...] = ()
+    cause: str = Field(
+        default_factory=lambda: uuid.uuid4().hex,
+        description="Identifies the cascade this finding produced. Every rewrite "
+        "it prescribes carries this id, which is what makes "
+        "`RewriteLog.cascade(cause)` the paper's `C(c)` rather than a filter over "
+        "a flat list, and what lets a cascade be recognised as cross-component.",
+    )
 
 
 class RoundPlan(BaseModel):
@@ -143,6 +216,31 @@ class RoundPlan(BaseModel):
     """Messages a stage created, by recipient. Owner: `Heal`."""
     findings: tuple[Finding, ...] = ()
     """Structural failures detected this round. Owner: `Heal`."""
+    rewrites: tuple[Rewrite, ...] = ()
+    """Every typed edit any stage made, in order. Owner: every stage.
+
+    The single write channel, and the one field that is *appended to* rather than
+    replaced. `links` is what the next round will be run under; this is what was
+    done to arrive at it — plus everything a stage changed that reachability has
+    no way to express, which is the whole of the graph outside the communication
+    edges.
+
+    The two are kept in step by construction: `with_links` and `with_rewrites`
+    are the only writers, and each updates both. `fold_links(base_links,
+    rewrites)` reproduces `links` as a set, which is what the invariant test
+    checks. `links` stays a materialised tuple rather than becoming a property
+    because its *order* is load-bearing — it is what `TopologyEvent` carries to
+    consumers — and a fold over a dict would decide that order by accident."""
+    base_links: tuple[Link, ...] = ()
+    """The standing topology this round's rewrites were applied to."""
+
+    def model_post_init(self, _context: object) -> None:
+        # A plan constructed with links and no explicit base started from them:
+        # the seeded round-0 topology, or a test stating a starting point. Set
+        # here rather than asked of every caller, so `fold_links(base_links,
+        # rewrites)` is meaningful on a plan nobody thought about it for.
+        if self.links and not self.base_links:
+            self.base_links = self.links
 
     def in_neighbours(self, dst: str) -> list[Link]:
         """Links pointing at *dst*, most relevant first.
@@ -159,7 +257,49 @@ class RoundPlan(BaseModel):
         return tuple(link.src for link in self.in_neighbours(dst))
 
     def with_links(self, links: tuple[Link, ...]) -> RoundPlan:
-        return self.model_copy(update={"links": links})
+        """Set reachability wholesale, recording the edits that get there.
+
+        The signature and the result are exactly what they were — a sparsifying
+        stage still hands back the graph it decided — but the difference from
+        what was standing is now written down as `link`/`unlink`/
+        `edge_feature_update` rewrites. That diff is what affected-scope analysis
+        and rollback are computed from, and recomputing an identical graph from
+        scratch every round records nothing, which is the honest answer.
+        """
+        edits = tuple(
+            edit.model_copy(update={"at": self.round})
+            for edit in diff_links(self.links, links)
+        )
+        return self.model_copy(
+            update={"links": links, "rewrites": (*self.rewrites, *edits)}
+        )
+
+    def with_rewrites(self, *rewrites: Rewrite) -> RoundPlan:
+        """Append typed edits, folding any that change reachability into `links`.
+
+        The general channel, and the one a stage outside the edge-rewriting
+        branch uses: inserting a memory node, updating a skill's attributes,
+        linking a skill to the tool it needs. Rewrites are taken as given, `at`
+        included — a repair prescribed in round *n* happened in round *n*, not in
+        the round *n+1* this plan configures, and stamping it here would date
+        every cascade one round late. `with_links` is the exception and stamps
+        its own diff, because reachability takes effect in the round it names.
+        Communication edges are folded so
+        that a stage may equally decide reachability one edge at a time — which
+        is what an incremental method like edge pruning actually does — instead
+        of being made to rebuild the whole adjacency to drop one wire.
+        """
+        if not rewrites:
+            return self
+        merged = (*self.rewrites, *rewrites)
+        links = self.links
+        if any(r.touches_topology for r in rewrites):
+            links = fold_links(links, rewrites)
+        return self.model_copy(update={"links": links, "rewrites": merged})
+
+    def cascade(self, cause: str) -> tuple[Rewrite, ...]:
+        """The edits one cause produced — the paper's `C(c)`, before it is logged."""
+        return tuple(r for r in self.rewrites if r.cause == cause)
 
 
 @runtime_checkable

@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from ant_ai.topology.graph import Link
 from ant_ai.topology.plan import RoundPlan, RunContext
-from ant_ai.topology.strategy import TopologyStrategy
+from ant_ai.topology.strategy import EvolutionStrategy
 
 __all__ = ["Baseline", "Static", "chain", "mesh", "star"]
 
@@ -24,6 +24,9 @@ class Static(BaseModel):
     The compatibility anchor: built from a colony's declared `collab()` edges, it
     reproduces exactly what a colony wires today.
     """
+
+    writes_links: ClassVar[bool] = True
+    """This stage decides reachability, so a delivery-mode run has a route."""
 
     links: tuple[Link, ...] = ()
 
@@ -66,7 +69,7 @@ def mesh(names: list[str]) -> Static:
     )
 
 
-class Baseline(TopologyStrategy):
+class Baseline(EvolutionStrategy):
     """The framework's own behaviour, named so it can be a row in a table.
 
     Every default, nothing overridden. Exists because "no strategy" has to be

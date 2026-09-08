@@ -118,13 +118,11 @@ returning a fresh `(scenario, ensemble)` pair is the whole seam:
 
 ```python
 from examples.dig_in_action.server import create_app
-from ant_ai.topology.builtins import DigToHeal, DyTopo
 
 
 def factory(*, heal: bool):
     colony = build_my_colony()  # fresh: agents carry state
-    strategy = DyTopo(embedder=embedder)
-    colony.topology(strategy | DigToHeal() if heal else strategy)
+    colony.evolve("dytopo|dig" if heal else "dytopo")
     return my_scenario, colony.ensemble()
 
 

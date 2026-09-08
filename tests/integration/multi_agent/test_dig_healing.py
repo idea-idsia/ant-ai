@@ -25,7 +25,7 @@ from ant_ai.llm.integrations.lite_llm import LiteLLMChat
 from ant_ai.topology.builtins import DigToHeal
 from ant_ai.topology.materialise import DeliveryMaterialiser
 from ant_ai.topology.schedule import BufferScheduler
-from ant_ai.topology.strategy import Pipeline, TopologyStrategy
+from ant_ai.topology.strategy import EvolutionStrategy, Pipeline
 
 pytestmark = [pytest.mark.integration, pytest.mark.multi_agent, pytest.mark.topology]
 
@@ -132,7 +132,7 @@ def scripted_rounds(scripted_llm):
     return calls
 
 
-class Unsupervised(TopologyStrategy):
+class Unsupervised(EvolutionStrategy):
     """DIG's timing and delivery with no detectors — the control condition.
 
     Isolates the repair loop: everything else about the run, including which
@@ -150,7 +150,7 @@ async def test_an_unsupervised_run_ends_on_the_premature_answer(
 ) -> None:
     """The failure, first: the coordinator submits while the auditor's message
     has reached nobody, and nothing stops the run ending there."""
-    colony.topology(Unsupervised(max_rounds=4))
+    colony.evolve(Unsupervised(max_rounds=4))
 
     ensemble = colony.ensemble(use_workflows=False)
     answer = await ensemble.ainvoke(TASK)
@@ -166,7 +166,7 @@ async def test_early_termination_is_detected_in_a_model_driven_run(
 ) -> None:
     """The same script under DIG: the submit is caught, handed back, and the run
     keeps going long enough to produce a different answer."""
-    colony.topology(DigToHeal(max_rounds=4))
+    colony.evolve(DigToHeal(max_rounds=4))
 
     ensemble = colony.ensemble()
     events = [e async for e in ensemble.stream(TASK)]
@@ -180,7 +180,7 @@ async def test_early_termination_is_detected_in_a_model_driven_run(
 async def test_the_auditors_unrouted_message_is_found(colony, scripted_rounds) -> None:
     """The other half of the same record: with no routing stage under it, a
     message addressed to nobody reaches nobody, and only the graph knows."""
-    colony.topology(DigToHeal(max_rounds=4))
+    colony.evolve(DigToHeal(max_rounds=4))
 
     ensemble = colony.ensemble()
     await ensemble.ainvoke(TASK)
@@ -194,6 +194,6 @@ async def test_dig_invokes_agents_directly_by_default(colony) -> None:
     """The default that makes the two tests above possible. Under a workflow the
     same script would yield one plain public message per turn: nothing addressed,
     nothing submitted, and every detector reporting a healthy run."""
-    colony.topology(DigToHeal())
+    colony.evolve(DigToHeal())
 
     assert all(p.workflow is None for p in colony.ensemble().participants.values())

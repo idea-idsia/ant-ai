@@ -233,8 +233,16 @@ async def test_the_finding_helper_attributes_detector_and_round() -> None:
     findings = await _Always().detect(InteractionGraph(), RunContext(round=3))
 
     assert findings[0] == Finding(
-        pattern="X", detector="_Always", round=3, explanation="always"
+        pattern="X",
+        detector="_Always",
+        round=3,
+        explanation="always",
+        cause=findings[0].cause,
     )
+    # Compared by substitution rather than by ignoring the field: `cause` is
+    # generated per finding, and a helper that produced a shared or empty one
+    # would make every cascade in the log indistinguishable.
+    assert findings[0].cause
 
 
 async def test_heal_is_a_stage_and_accumulates_history() -> None:

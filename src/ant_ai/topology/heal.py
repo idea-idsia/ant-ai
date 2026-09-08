@@ -25,6 +25,7 @@ from ant_ai.topology.plan import (
     RoundPlan,
     RunContext,
 )
+from ant_ai.topology.rewrite import Rewrite
 
 __all__ = ["Detector", "Heal"]
 
@@ -79,8 +80,15 @@ class Heal(BaseModel):
     its structured turn: `submitted` is what `EarlyTermination` and
     `MissingCompletion` read, the reactions are what make a message outstanding
     rather than consumed, and `reroute` is what `ExcessiveRerouting` counts.
-    Without them a run has no submits, no waits and no reroutes, so every
-    detector reports a healthy run and repair is silently inert."""
+
+    Without them the detectors do not go quiet — they report on the defaults.
+    The four that read declared fields (ET, MC, ER) fall silent because their
+    preconditions become unreachable, while the three that read structural facts
+    fire on facts the defaults manufactured: every delivery is recorded as
+    `consume`, so `RepeatedSubproblem` sees duplicated work everywhere, and with
+    no addressing and no links every message is an orphan. Measured on a
+    three-participant run: OE x6 and DL x2 with no routing stage, RSP x9 with
+    one. Silent inertness would be the benign version of this."""
 
     detectors: list[Annotated[Detector, SkipValidation]] = Field(default_factory=list)
     history: list[Finding] = Field(
@@ -92,11 +100,16 @@ class Heal(BaseModel):
         findings = await self.inspect(ctx.graph, ctx)
         if not findings:
             return plan
-        return apply_interventions(
-            plan,
-            ctx,
-            [i for finding in findings for i in finding.interventions],
-        ).model_copy(update={"findings": (*plan.findings, *findings)})
+        # One pass per finding rather than one over the flattened list, so that
+        # every edit carries the id of the finding that prescribed it. That id is
+        # the whole of what makes a repair auditable after the fact: without it
+        # the log says a message was rewritten and cannot say which detector
+        # decided it should be.
+        for finding in findings:
+            plan = apply_interventions(
+                plan, ctx, list(finding.interventions), cause=finding.cause
+            )
+        return plan.model_copy(update={"findings": (*plan.findings, *findings)})
 
     async def inspect(self, graph: InteractionGraph, ctx: RunContext) -> list[Finding]:
         """Run every detector. One that raises is skipped, not fatal.
@@ -126,7 +139,11 @@ class Heal(BaseModel):
 
 
 def apply_interventions(
-    plan: RoundPlan, ctx: RunContext, interventions: list[Intervention]
+    plan: RoundPlan,
+    ctx: RunContext,
+    interventions: list[Intervention],
+    *,
+    cause: str = "",
 ) -> RoundPlan:
     """Turn prescriptions into edits to the plan.
 
@@ -141,7 +158,7 @@ def apply_interventions(
     said in the last round — makes the corrections for a stalled or ignored
     message unreachable exactly when they are needed.
     """
-    edit = _Edit.of(plan, ctx)
+    edit = _Edit.of(plan, ctx, cause=cause)
     for action in interventions:
         edit.apply(action)
     return edit.into(plan)
@@ -170,25 +187,38 @@ class _Edit:
     names: tuple[str, ...]
     turns: dict[str, Turn]
     notices: dict[str, list[Envelope]] = field(default_factory=dict)
+    cause: str = ""
+    rewrites: list[Rewrite] = field(default_factory=list)
 
     @classmethod
-    def of(cls, plan: RoundPlan, ctx: RunContext) -> _Edit:
+    def of(cls, plan: RoundPlan, ctx: RunContext, *, cause: str = "") -> _Edit:
         return cls(
             graph=ctx.graph,
             round=ctx.round,
             names=ctx.names,
             turns=dict(plan.turns),
             notices={k: list(v) for k, v in plan.notices.items()},
+            cause=cause,
         )
 
     def into(self, plan: RoundPlan) -> RoundPlan:
-        # `links` is deliberately untouched: repair moves messages, and leaves deciding who may reach whom to the stage whose job that is.
-        return plan.model_copy(
+        # `links` is deliberately untouched: repair moves messages, and leaves
+        # deciding who may reach whom to the stage whose job that is. Every
+        # rewrite this edit produced is a `message` or `provenance` operator for
+        # exactly that reason — none of them folds into reachability.
+        return plan.with_rewrites(*self.rewrites).model_copy(
             update={
                 "turns": self.turns,
                 "notices": {k: tuple(v) for k, v in self.notices.items()},
             }
         )
+
+    def _record_rewrites(self, action: Intervention, **override: Any) -> None:
+        """Log this correction in the operator vocabulary, with its cause."""
+        for rewrite in action.as_rewrites(at=self.round, cause=self.cause):
+            self.rewrites.append(
+                rewrite.model_copy(update=override) if override else rewrite
+            )
 
     def apply(self, action: Intervention) -> None:
         """Carry out one prescription, ignoring one that names no live message."""
@@ -212,7 +242,22 @@ class _Edit:
             round=self.round,
         )
         self.graph.record_emission(envelope, reason=action.reason)
-        self._notify(action.recipients or self.names, envelope)
+        recipients = action.recipients or self.names
+        self._notify(recipients, envelope)
+        # Built here rather than by `Intervention.as_rewrites`, which cannot know
+        # an id that does not exist until the line above has run.
+        stamp = {"at": self.round, "cause": self.cause, "reason": action.reason}
+        self.rewrites.append(
+            Rewrite.insert(
+                "message", envelope.id, label=envelope.content[:80], sender=SUPERVISOR
+            ).model_copy(update=stamp)
+        )
+        self.rewrites.extend(
+            Rewrite.link(envelope.id, recipient, family="provenance").model_copy(
+                update=stamp
+            )
+            for recipient in recipients
+        )
 
     def _inject(
         self, action: Intervention, envelope: Envelope, site: _Site | None
@@ -220,12 +265,17 @@ class _Edit:
         content = f"{envelope.content}\n\n[{action.reason}] {action.content}".strip()
         envelope = self._rewrite(site, envelope, {"content": content})
         self._record(envelope.id, envelope.sender, "inject", action.reason)
+        # The resulting text, not the fragment that was added: a `feature_update`
+        # whose payload is only the delta cannot be inverted, and rollback is the
+        # reason the payload is kept at all.
+        self._record_rewrites(action, payload={"content": content})
 
     def _drop(
         self, action: Intervention, envelope: Envelope, site: _Site | None
     ) -> None:
         self._rewrite(site, envelope, None)
         self._record(envelope.id, envelope.sender, "discard", action.reason)
+        self._record_rewrites(action)
 
     def _reroute(
         self, action: Intervention, envelope: Envelope, site: _Site | None
@@ -248,6 +298,7 @@ class _Edit:
         self._notify(action.recipients, envelope)
         for recipient in action.recipients:
             self._record(envelope.id, recipient, "reroute", action.reason)
+        self._record_rewrites(action)
 
     # -- the shared mechanics ------------------------------------------------
 

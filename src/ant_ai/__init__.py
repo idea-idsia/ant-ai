@@ -16,7 +16,7 @@ from ant_ai.observer import CompositeSink, ObservabilitySink, obs
 from ant_ai.skills import AgentSkill
 from ant_ai.tools import Tool, ToolRegistry
 from ant_ai.tools.tool import tool
-from ant_ai.topology import Ensemble, InteractionGraph, TopologyStrategy
+from ant_ai.topology import Ensemble, EvolutionStrategy, InteractionGraph
 from ant_ai.workflow import BaseAction, Workflow
 
 __all__ = [
@@ -51,7 +51,7 @@ __all__ = [
     # topology (strategies live in ant_ai.topology.builtins)
     "Ensemble",
     "InteractionGraph",
-    "TopologyStrategy",
+    "EvolutionStrategy",
     # embeddings
     "Embedder",
 ]

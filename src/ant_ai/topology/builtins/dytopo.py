@@ -25,7 +25,7 @@ from ant_ai.observer import obs
 from ant_ai.topology.graph import Link
 from ant_ai.topology.materialise import DeliveryMaterialiser
 from ant_ai.topology.plan import RoundPlan, RunContext, ScoreMatrix
-from ant_ai.topology.strategy import Pipeline, TopologyStrategy
+from ant_ai.topology.strategy import EvolutionStrategy, Pipeline
 
 __all__ = ["DyTopo", "RandomScores", "RandomTopology", "Semantic", "TopK"]
 
@@ -133,6 +133,9 @@ class TopK(BaseModel):
     control needs.
     """
 
+    writes_links: ClassVar[bool] = True
+    """This stage decides reachability, so a delivery-mode run has a route."""
+
     tau: float | None = Field(default=0.35, ge=-1.0, le=1.0)
     k_in: int = Field(default=3, ge=1)
 
@@ -157,15 +160,30 @@ class TopK(BaseModel):
         return plan.with_links(tuple(links))
 
 
-class DyTopo(TopologyStrategy):
-    """Defaults follow the paper: tau in 0.3-0.4, K_in = 3, T_max = 10."""
+class DyTopo(EvolutionStrategy):
+    """Defaults follow the paper: tau in 0.3-0.4, K_in = 3, T_max = 10.
+
+    The embedder is optional. Left unset it resolves to `default_embedder()` —
+    the same `all-MiniLM-L6-v2` the paper used — at construction, so the common
+    case is `DyTopo()` and the field still holds a real encoder for provenance
+    to record.
+    """
 
     name: ClassVar[str] = "dytopo"
     citation: ClassVar[str] = "arXiv:2602.06039"
 
-    embedder: Annotated[Embedder, SkipValidation]
+    embedder: Annotated[Embedder | None, SkipValidation] = None
     tau: float = Field(default=0.35, ge=-1.0, le=1.0)
     k_in: int = Field(default=3, ge=1)
+
+    def model_post_init(self, _context: object) -> None:
+        # Resolved here rather than in `build()` so that `provenance()` records
+        # the encoder that actually ran. Constructing the backend is cheap; it
+        # loads its ~90 MB model lazily on first use.
+        if self.embedder is None:
+            from ant_ai.embeddings import default_embedder
+
+            self.embedder = default_embedder()
 
     def build(self) -> Pipeline:
         return Pipeline(
@@ -177,7 +195,7 @@ class DyTopo(TopologyStrategy):
         )
 
 
-class RandomTopology(TopologyStrategy):
+class RandomTopology(EvolutionStrategy):
     """The paper's sparsity-matched control: random scores, the same sparsifier."""
 
     name: ClassVar[str] = "random"

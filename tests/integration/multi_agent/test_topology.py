@@ -146,7 +146,7 @@ async def test_topology_changes_between_rounds(colony, scripted_rounds) -> None:
     the default resolves that for you: with the wrong default the run still
     completes and the wirings are simply all identical, which is a feature that
     silently is not there."""
-    colony.topology(DyTopo(embedder=ScriptedEmbedder(), tau=0.5, k_in=2, max_rounds=3))
+    colony.evolve(DyTopo(embedder=ScriptedEmbedder(), tau=0.5, k_in=2, max_rounds=3))
 
     ensemble = colony.ensemble()
     assert all(p.workflow is None for p in ensemble.participants.values())
@@ -162,7 +162,7 @@ async def test_topology_changes_between_rounds(colony, scripted_rounds) -> None:
 
 
 async def test_every_link_explains_itself(colony, scripted_rounds) -> None:
-    colony.topology(DyTopo(embedder=ScriptedEmbedder(), tau=0.5, max_rounds=2))
+    colony.evolve(DyTopo(embedder=ScriptedEmbedder(), tau=0.5, max_rounds=2))
 
     events = [
         e
@@ -179,7 +179,7 @@ async def test_peer_tools_match_in_neighbours(colony, scripted_rounds) -> None:
     materialisation its attached peer tools are exactly its in-neighbours."""
     from ant_ai.topology.materialise import VisibilityMaterialiser
 
-    colony.topology(DyTopo(embedder=ScriptedEmbedder(), tau=0.5, k_in=2, max_rounds=2))
+    colony.evolve(DyTopo(embedder=ScriptedEmbedder(), tau=0.5, k_in=2, max_rounds=2))
     ensemble = colony.ensemble(
         use_workflows=False, materialiser=VisibilityMaterialiser()
     )
@@ -201,7 +201,7 @@ async def test_peer_tools_match_in_neighbours(colony, scripted_rounds) -> None:
 async def test_the_run_records_which_method_produced_it(
     colony, scripted_rounds
 ) -> None:
-    colony.topology(DyTopo(embedder=ScriptedEmbedder(), tau=0.5, max_rounds=2))
+    colony.evolve(DyTopo(embedder=ScriptedEmbedder(), tau=0.5, max_rounds=2))
     ensemble = colony.ensemble(use_workflows=False)
 
     await ensemble.ainvoke("Build a CSV parser")

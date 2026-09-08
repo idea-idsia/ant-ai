@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from ant_ai.topology.heal import Detector
     from ant_ai.topology.materialise import TopologyMaterialiser
     from ant_ai.topology.runtime import Ensemble
-    from ant_ai.topology.strategy import TopologyStrategy
+    from ant_ai.topology.strategy import EvolutionStrategy
 
 
 def _normalize_url(url: str) -> str:
@@ -151,27 +151,44 @@ class Colony(BaseModel):
             self._add_edge(target, source, config=_config)
         return self
 
-    def topology(
+    def evolve(
         self,
-        strategy: TopologyStrategy,
+        strategy: EvolutionStrategy | str,
         *,
         detectors: list[Detector] | None = None,
+        **hyperparameters: Any,
     ) -> Colony:
-        """Declare an adaptive topology for this colony.
+        """Declare how this colony evolves between rounds.
 
-        Without this call the colony behaves exactly as before: `collab()` edges
-        are the static topology.
+        Named for what a strategy may now change rather than for the one thing
+        it used to: reachability is the communication-edge case of a vocabulary
+        that also reaches memories, tools and skills. Without this call the
+        colony behaves exactly as before — `collab()` edges are the static
+        topology and nothing evolves.
 
         Args:
-            strategy: A `TopologyStrategy` — see `ant_ai.topology.builtins`.
-                Compose two with `DyTopo(...) | DigToHeal()`.
+            strategy: A registered name — `"dytopo"`, `"dig"`, or a composed
+                `"dytopo|dig"` — or an `EvolutionStrategy` instance from
+                `ant_ai.topology.builtins` when you need to configure it.
             detectors: Structural failure detectors appended as one extra `Heal`
                 stage, for a one-off that does not warrant its own strategy.
+            **hyperparameters: Passed to the named strategy's constructor. Only
+                valid alongside a single name; compose objects to configure a
+                member of a chain.
 
         Returns:
             The Colony instance, for chaining.
+
+        Raises:
+            KeyError: If a named strategy is not registered.
         """
-        self._topology = strategy
+        from ant_ai.topology.strategy import EvolutionStrategy as _Strategy
+
+        self._topology = (
+            _Strategy.parse(strategy, **hyperparameters)
+            if isinstance(strategy, str)
+            else strategy
+        )
         self._detectors = list(detectors or [])
         return self
 
@@ -179,38 +196,43 @@ class Colony(BaseModel):
         self,
         *,
         local: bool = True,
-        use_workflows: bool | None = None,
+        use_workflows: bool = False,
         max_rounds: int | None = None,
         materialiser: TopologyMaterialiser | None = None,
     ) -> Ensemble:
         """Build an `Ensemble` over the registered agents.
 
+        The configuration is checked before it is returned, and a combination
+        that provably cannot work raises rather than running to completion and
+        producing an artefact. Construct `Ensemble(...)` directly to bypass that.
+
         Args:
             local: True builds `LocalParticipant`s that run in this process, so no
                 servers are needed. False builds `A2AParticipant`s that drive the
-                deployed colony over the wire.
+                deployed colony over the wire — which cannot carry a response
+                schema, so a strategy needing structured turns is rejected.
             use_workflows: Whether each participant's turn runs its registered
-                workflow. Running it is faithful to how a colony serves a request,
-                but `Workflow.stream` takes no response schema, so such a
-                participant answers with one plain public message: no query/key
-                descriptors, no addressed messages, no declared reactions and
-                nothing ever submitted. None therefore means *pick*: the agent is
-                invoked directly when the pipeline has a component that reads any
-                of those, and the workflow runs when it does not. Pass True or
-                False to state the choice yourself; True with such a strategy is
-                honoured, and a matcher warns once its fallback is total.
+                workflow. Faithful to how a colony serves a request, but
+                `Workflow.stream` takes no response schema, so such a turn
+                degrades to one plain public message: no query/key descriptors,
+                no addressed messages, no declared reactions and nothing ever
+                submitted. Defaults to False, which is what every shipped
+                strategy needs; setting it True with such a strategy is rejected.
             max_rounds: Override the strategy's round cap.
             materialiser: Override how the topology is realised.
 
         Returns:
             A configured `Ensemble`.
+
+        Raises:
+            TopologyConfigurationError: If the configuration cannot work.
         """
         # Imported lazily: `ant_ai.topology` imports `ant_ai.a2a.agent`, which
         # initialises this package, so a module-level import would cycle.
         from ant_ai.topology.builtins.shapes import Baseline
         from ant_ai.topology.heal import Heal
-        from ant_ai.topology.materialise import VisibilityMaterialiser
         from ant_ai.topology.participant import A2AParticipant, LocalParticipant
+        from ant_ai.topology.problem import TopologyConfigurationError
         from ant_ai.topology.runtime import Ensemble
 
         strategy = self._topology or Baseline()
@@ -224,36 +246,26 @@ class Colony(BaseModel):
                 update={"stages": [*pipeline.stages, Heal(detectors=self._detectors)]}
             )
 
-        if use_workflows is None:
-            # A workflow-driven turn cannot carry a response schema, so it degrades
-            # to one plain public message: no descriptors, no addressing, no
-            # reactions, nothing ever submitted. A strategy built on any of those
-            # would run to completion and do nothing — a matcher scoring static
-            # card text, or a detector that never sees a symptom. Deciding here
-            # rather than defaulting to True is what keeps `colony.ensemble()` from
-            # quietly being a static, unsupervised baseline.
-            use_workflows = not pipeline.needs_structured_turns
-
-        if (
-            not local
-            and pipeline.stages
-            and isinstance(pipeline.materialiser, VisibilityMaterialiser)
-        ):
-            # Visibility means reachability *is* the peer tool set, and there is no
-            # A2A operation for attaching a tool to an agent in another process, so
-            # every remote participant reports itself unbindable and the decided
-            # topology constrains nothing at all. Gated on there being a stage: a
-            # colony with no strategy decides nothing, and its remote agents stay
-            # wired as their servers wired them, which is the pre-topology
-            # behaviour rather than a silent failure.
-            warnings.warn(
-                "Remote (A2A) participants cannot be rebound, so a topology "
-                "materialised as peer tools has no effect on them. Pass "
-                "`materialiser=DeliveryMaterialiser()` to route their messages "
-                "instead, or build local participants.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        seed = self._declared_links()
+        # Remote participants are answered over A2A, which carries no response
+        # schema, so they are unstructured however this colony is configured.
+        structured_turns = local and not use_workflows
+        problems = pipeline.check(
+            structured_turns=structured_turns,
+            local=local,
+            seeded=bool(seed),
+            participants=len(self._specs),
+            agents_have_tools=local
+            and any(spec.agent.tools for spec in self._specs.values()),
+            unrunnable_workflows=self._unrunnable_workflows()
+            if local and use_workflows
+            else (),
+        )
+        errors = [p for p in problems if p.level == "error"]
+        if errors:
+            raise TopologyConfigurationError(errors)
+        for problem in problems:
+            warnings.warn(problem.render(), RuntimeWarning, stacklevel=2)
 
         participants: dict[str, Any] = {}
         for name, spec in self._specs.items():
@@ -275,13 +287,33 @@ class Colony(BaseModel):
         return Ensemble(
             participants=participants,
             pipeline=pipeline,
-            # Round 0 is seeded from the declared collab() edges, so the very
-            # first turn behaves exactly as a colony does today. A colony with no
-            # strategy has no stage writing links, so these govern every round —
-            # which is precisely the pre-topology behaviour.
-            seed=self._declared_links(),
+            # Round 0 is seeded from the declared collab() edges, and they remain
+            # the standing topology for every later round in which no stage
+            # writes links — so a pure repair strategy routes over the colony's
+            # own wiring instead of over nothing.
+            seed=seed,
             provenance=strategy.provenance(),
         )
+
+    def _unrunnable_workflows(self) -> tuple[str, ...]:
+        """Participants whose registered workflow cannot execute.
+
+        `Workflow.check()` is the graph's own validation and is what
+        `Workflow.stream` runs before its first node. Asking it here turns a run
+        in which every activation fails into a build that says why — the bare
+        `Workflow()` a colony registers when it only ever intended to serve
+        requests is the case this catches.
+        """
+        unrunnable: list[str] = []
+        for name, spec in self._specs.items():
+            workflow = spec.workflow
+            if workflow is None:
+                continue
+            try:
+                workflow.check()
+            except Exception:
+                unrunnable.append(name)
+        return tuple(unrunnable)
 
     def _declared_links(self) -> tuple[Any, ...]:
         """`collab()` edges as information-flow links.

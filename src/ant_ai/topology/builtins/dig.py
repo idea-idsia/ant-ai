@@ -31,7 +31,7 @@ from ant_ai.topology.materialise import DeliveryMaterialiser
 from ant_ai.topology.participant import Envelope
 from ant_ai.topology.plan import SUPERVISOR, Finding, Intervention, RunContext
 from ant_ai.topology.schedule import BufferScheduler
-from ant_ai.topology.strategy import Pipeline, TopologyStrategy
+from ant_ai.topology.strategy import EvolutionStrategy, Pipeline
 
 __all__ = [
     "CrossLineageAggregation",
@@ -493,7 +493,7 @@ class LLMJudge(Detector):
         ]
 
 
-class DigToHeal(TopologyStrategy):
+class DigToHeal(EvolutionStrategy):
     """The paper's strategy: one `Heal` stage, plus the timing it needs.
 
     `Halt` is deliberately left at the framework default: repairing an early
@@ -531,7 +531,7 @@ class DigToHeal(TopologyStrategy):
         )
 
 
-class JudgeHealing(TopologyStrategy):
+class JudgeHealing(EvolutionStrategy):
     """The paper's second baseline: a periodically invoked LLM judge.
 
     The comparison that matters — structural detection is only interesting if it

@@ -14,7 +14,7 @@ from ant_ai.topology.materialise import (
     VisibilityMaterialiser,
 )
 from ant_ai.topology.schedule import BufferScheduler, RoundScheduler
-from ant_ai.topology.strategy import Pipeline, TopologyStrategy
+from ant_ai.topology.strategy import EvolutionStrategy, Pipeline
 
 pytestmark = [pytest.mark.unit, pytest.mark.topology]
 
@@ -24,7 +24,7 @@ def test_a_strategy_declaring_nothing_is_the_framework_baseline() -> None:
     supervision must not be forced to invent a routing choice it does not make,
     or its class body would read as a claim the paper never made."""
 
-    class OnlyRounds(TopologyStrategy):
+    class OnlyRounds(EvolutionStrategy):
         pass
 
     pipeline = OnlyRounds(max_rounds=4).pipeline()
@@ -66,7 +66,7 @@ def test_composing_does_not_revert_a_setting_to_a_default() -> None:
     not silently run for ten rounds because the right-hand side looks like it
     asked for its own default."""
 
-    class Custom(TopologyStrategy):
+    class Custom(EvolutionStrategy):
         def build(self) -> Pipeline:
             return Pipeline()
 
@@ -98,7 +98,7 @@ def test_composition_keeps_both_halves_in_provenance() -> None:
 
 
 def test_strategies_are_constructible_by_name() -> None:
-    strategy = TopologyStrategy.create("dytopo", embedder=FakeEmbedder({}), tau=0.42)
+    strategy = EvolutionStrategy.create("dytopo", embedder=FakeEmbedder({}), tau=0.42)
 
     assert isinstance(strategy, DyTopo)
     assert strategy.tau == 0.42
@@ -106,13 +106,13 @@ def test_strategies_are_constructible_by_name() -> None:
 
 def test_unknown_names_report_the_known_ones() -> None:
     with pytest.raises(KeyError, match="dytopo"):
-        TopologyStrategy.get("nope")
+        EvolutionStrategy.get("nope")
 
 
 def test_duplicate_names_are_rejected() -> None:
     with pytest.raises(ValueError, match="already registered"):
 
-        class Clashing(TopologyStrategy):
+        class Clashing(EvolutionStrategy):
             name = "dytopo"
 
 
