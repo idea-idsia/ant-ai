@@ -14,6 +14,7 @@ nav:
           - Memory: reference/memory/
           - Workflow: reference/workflow/
           - A2A: reference/a2a/
+          - ACP: reference/acp/
           - Hooks: reference/hooks/
           - Observer: reference/observer/
           - Steps: reference/steps/

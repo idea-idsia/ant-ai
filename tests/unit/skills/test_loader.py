@@ -180,6 +180,34 @@ def test_load_list_of_paths_merges_skills(tmp_path):
 
 
 @pytest.mark.unit
+def test_load_accepts_a_direct_skill_folder(tmp_path):
+    """A path that is itself a skill folder (SKILL.md inside) loads as that skill."""
+    skill_dir = tmp_path / "greet"
+    _write_skill_md(skill_dir, _minimal_skill_md(name="greet"))
+    skills = SkillLoader(skill_dir).load()
+    assert [s.name for s in skills] == ["greet"]
+    assert skills[0].skill_dir == skill_dir.resolve()
+
+
+@pytest.mark.unit
+def test_load_list_of_direct_skill_folders_merges(tmp_path):
+    _write_skill_md(tmp_path / "greet", _minimal_skill_md(name="greet"))
+    _write_skill_md(tmp_path / "farewell", _minimal_skill_md(name="farewell"))
+    skills = SkillLoader([tmp_path / "greet", tmp_path / "farewell"]).load()
+    assert sorted(s.name for s in skills) == ["farewell", "greet"]
+
+
+@pytest.mark.unit
+def test_load_direct_skill_folder_that_fails_validation_is_empty(tmp_path):
+    skill_dir = tmp_path / "actual-dir"
+    _write_skill_md(
+        skill_dir,
+        "---\nname: different-name\ndescription: A skill.\n---\n\nInstructions.",
+    )
+    assert SkillLoader(skill_dir).load() == []
+
+
+@pytest.mark.unit
 def test_fixture_skill_loads_with_scripts():
     """End-to-end: load the csv-to-markdown fixture from disk and verify scripts are collected."""
     skills = SkillLoader(DATA_DIR).load()

@@ -7,10 +7,11 @@ import typing
 from asyncio import AbstractEventLoop
 from collections.abc import Awaitable, Callable
 from functools import partial
-from typing import Any, cast, overload
+from typing import Any, Literal, cast, overload
 
 import mcp
 from mcp import ClientSession as MCPClientSession
+from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from pydantic import (
     BaseModel,
@@ -291,6 +292,8 @@ class Tool(BaseModel):
         *,
         url: str,
         mcp_tool: Any,
+        transport: Literal["http", "sse"] = "http",
+        headers: dict[str, str] | None = None,
         namespace: str | None = None,
         unwrap_result: bool = True,
     ) -> Tool:
@@ -299,10 +302,14 @@ class Tool(BaseModel):
         params.setdefault("type", "object")
 
         async def _call_mcp(**kwargs: Any) -> Any:
-            # Open a short-lived MCP HTTP connection per call.
+            # Open a short-lived MCP connection per call.
             # This keeps the Tool self-contained and agent-friendly.
-            async with streamable_http_client(url) as client_context:
-                read, write = client_context
+            if transport == "sse":
+                ctx_manager = sse_client(url, headers=headers)
+            else:
+                ctx_manager = streamable_http_client(url)
+            async with ctx_manager as client_context:
+                read, write = client_context[0], client_context[1]
                 async with MCPClientSession(read, write) as session:
                     await session.initialize()
                     result: mcp.types.CallToolResult = await session.call_tool(
@@ -449,15 +456,17 @@ def tool(
 async def mcp_tools_from_url(
     url: str,
     *,
+    headers: dict[str, str] | None = None,
+    transport: Literal["http", "sse"] = "http",
     namespace: str | None = None,
     unwrap_result: bool = True,
 ) -> list[Tool]:
     """
-    Connect to an MCP server over HTTP(S) and adapt its tools into `Tool` objects.
+    Connect to an MCP server and adapt its tools into `Tool` objects.
 
-    This is the *only* MCP-specific entry point you need from the outside.
-
-    - `url`: MCP HTTP endpoint (streamable), e.g. "http://localhost:8000/mcp"
+    - `url`: MCP server endpoint, e.g. "http://localhost:8000/mcp"
+    - `headers`: Optional HTTP headers (useful for authentication).
+    - `transport`: `"http"` (default, streamable HTTP) or `"sse"` (Server-Sent Events).
     - `namespace`: optional prefix for tool names, e.g. "weather.get_forecast"
     - `unwrap_result`:
         * if True: return structuredContent or first text fragment
@@ -468,9 +477,13 @@ async def mcp_tools_from_url(
         tools = await mcp_tools_from_url("http://localhost:8000/mcp", namespace="remote")
         agent = Agent(tools=tools, ...)  # your agent just sees Tool objects
     """
+    if transport == "sse":
+        ctx_manager = sse_client(url, headers=headers)
+    else:
+        ctx_manager = streamable_http_client(url)
 
-    async with streamable_http_client(url) as client_context:
-        read, write = client_context
+    async with ctx_manager as client_context:
+        read, write = client_context[0], client_context[1]
         async with MCPClientSession(read, write) as session:
             await session.initialize()
             tools_resp: mcp.types.ListToolsResult = await session.list_tools()
@@ -480,6 +493,8 @@ async def mcp_tools_from_url(
         Tool._from_mcp_descriptor(
             url=url,
             mcp_tool=mcp_tool,
+            transport=transport,
+            headers=headers,
             namespace=namespace,
             unwrap_result=unwrap_result,
         )
