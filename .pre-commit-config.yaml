@@ -14,7 +14,7 @@ repos:
           - id: detect-private-key
 
     - repo: https://github.com/astral-sh/ruff-pre-commit
-      rev: v0.16.3
+      rev: v0.16.6
       hooks:
           - id: ruff-check
             types_or:
@@ -33,6 +33,6 @@ repos:
           - id: betterleaks
 
     - repo: https://github.com/astral-sh/ty-pre-commit
-      rev: v0.0.74
+      rev: v0.0.79
       hooks:
           - id: ty
