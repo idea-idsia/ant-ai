@@ -16,7 +16,7 @@ from ant_ai.a2a.compression import (
 from ant_ai.a2a.session import current_session_id
 from ant_ai.a2a.translator import A2AToHVEvent, HVEventToA2A
 from ant_ai.agent.agent import Agent
-from ant_ai.core.events import CompletedEvent, Event
+from ant_ai.core.events import CompletedEvent, ContentDeltaEvent, Event
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.observer import obs
@@ -108,12 +108,13 @@ class A2AExecutor(AgentExecutor):
             async for event in self.workflow.stream(
                 agent=self.agent, ctx=ctx, state=state
             ):
-                await obs.event(
-                    "a2a.workflow.event",
-                    workflow_event=getattr(event, "kind", type(event).__name__),
-                    node=getattr(event.origin, "node", "-"),
-                    step=getattr(event.origin, "run_step", "-"),
-                )
+                if not isinstance(event, ContentDeltaEvent):
+                    await obs.event(
+                        "a2a.workflow.event",
+                        workflow_event=getattr(event, "kind", type(event).__name__),
+                        node=getattr(event.origin, "node", "-"),
+                        step=getattr(event.origin, "run_step", "-"),
+                    )
                 if isinstance(event, CompletedEvent):
                     await persist_compression_checkpoint(state, updater)
                 await self.process_event(event, updater)

@@ -4,6 +4,28 @@ from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
 
+class _OTelSpan:
+    """The handle `OTelSink.span` yields."""
+
+    def __init__(self, span: Any) -> None:
+        self.span = span
+
+    def update(self, **fields: Any) -> None:
+        """Record the fields on the span, mirroring `span()`'s own attributes."""
+        from opentelemetry.trace import StatusCode
+
+        try:
+            for k, v in fields.items():
+                if v is not None:
+                    self.span.set_attribute(k, str(v))
+            if str(fields.get("level", "")).upper() == "ERROR":
+                self.span.set_status(
+                    StatusCode.ERROR, str(fields.get("status_message") or "")
+                )
+        except Exception:
+            pass
+
+
 class OTelSink:
     """Creates OpenTelemetry spans for leaf operations (LLM, tool calls)."""
 
@@ -67,7 +89,7 @@ class OTelSink:
             for k, v in attrs.items():
                 span.set_attribute(k, str(v))
             try:
-                yield span
+                yield _OTelSpan(span)
             except Exception as exc:
                 span.record_exception(exc)
                 span.set_status(StatusCode.ERROR, str(exc))

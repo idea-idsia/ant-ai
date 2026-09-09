@@ -43,12 +43,15 @@ class ObservabilitySink(Protocol):
         `tool`, `router`). Attributes carry per-operation metadata such as
         `model`, `tool_name`, `messages`, or `session_id`.
 
+        The yielded object must expose `update(**fields)`: call sites (`llm_step`, `tool_step`) record the output and usage on it once the operation completes, and `obs.span`'s no-op fallback provides it too.
+        Yielding a backend handle that lacks it -- or yielding nothing -- makes every such call site raise.
+
         Args:
             name: Operation name for the span.
             **attrs: Metadata attributes to attach to the span.
 
         Returns:
-            An async context manager that opens and closes the span.
+            An async context manager yielding an object with `update(**fields)`.
         """
         ...
 
