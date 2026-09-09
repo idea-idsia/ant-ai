@@ -1,8 +1,33 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AsyncExitStack,
+    ExitStack,
+    asynccontextmanager,
+    contextmanager,
+    suppress,
+)
 from typing import Any
+
+
+class _FanOutSpan:
+    """The handle `CompositeSink.span` yields.
+
+    Each sink yields its own span object, so the composite has to hand callers
+    one thing that reaches all of them. `update()` is the whole contract call
+    sites use (`llm_step`, `tool_step`), and one sink failing it must not stop
+    the others -- the same guarantee `event` and `exception` already give.
+    """
+
+    def __init__(self, spans: list[Any]) -> None:
+        self.spans = spans
+
+    def update(self, **fields: Any) -> None:
+        """Apply the update to every underlying sink span."""
+        for span in self.spans:
+            with suppress(Exception):
+                span.update(**fields)
 
 
 class CompositeSink:
@@ -36,11 +61,13 @@ class CompositeSink:
 
     @asynccontextmanager
     async def span(self, name: str, **attrs):
-        """Opens a span on all sinks concurrently and closes them on exit."""
+        """Opens a span on all sinks and yields a handle that updates them all."""
         async with AsyncExitStack() as stack:
-            for s in self.sinks:
+            spans = [
                 await stack.enter_async_context(s.span(name, **attrs))
-            yield
+                for s in self.sinks
+            ]
+            yield _FanOutSpan(spans)
 
     def propagation_headers(self) -> dict[str, str]:
         """Merges propagation headers from all sinks."""

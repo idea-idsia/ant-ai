@@ -103,3 +103,75 @@ async def test_span_with_empty_sinks_list_does_not_raise():
     composite = CompositeSink([])
     async with composite.span("test.span"):
         pass
+
+
+@pytest.mark.unit
+async def test_span_yields_handle_whose_update_reaches_every_sink():
+    """The yielded object must carry `update()` to all sinks.
+
+    `llm_step` and `tool_step` call `span.update(...)` on whatever `obs.span`
+    yields, so a composite that yields nothing breaks both.
+    """
+    updates: list[tuple[str, dict]] = []
+
+    def _updating_sink(label: str):
+        sink = MagicMock()
+        sink.event = AsyncMock(return_value=None)
+        sink.exception = AsyncMock(return_value=None)
+
+        span_obj = MagicMock()
+        span_obj.update = lambda **f: updates.append((label, f))
+
+        @asynccontextmanager
+        async def _span(name: str, **attrs):
+            yield span_obj
+
+        sink.span = _span
+        return sink
+
+    composite = CompositeSink([_updating_sink("s1"), _updating_sink("s2")])
+
+    async with composite.span("llm") as span:
+        span.update(output="hello", metadata={"k": 1})
+
+    assert updates == [
+        ("s1", {"output": "hello", "metadata": {"k": 1}}),
+        ("s2", {"output": "hello", "metadata": {"k": 1}}),
+    ]
+
+
+@pytest.mark.unit
+async def test_span_update_continues_if_one_sink_raises():
+    seen: list[str] = []
+
+    def _sink(label: str, *, broken: bool):
+        sink = MagicMock()
+        sink.event = AsyncMock(return_value=None)
+        sink.exception = AsyncMock(return_value=None)
+
+        span_obj = MagicMock()
+        if broken:
+            span_obj.update = MagicMock(side_effect=RuntimeError("span broken"))
+        else:
+            span_obj.update = lambda **f: seen.append(label)
+
+        @asynccontextmanager
+        async def _span(name: str, **attrs):
+            yield span_obj
+
+        sink.span = _span
+        return sink
+
+    composite = CompositeSink([_sink("s1", broken=True), _sink("s2", broken=False)])
+
+    async with composite.span("llm") as span:
+        span.update(output="x")  # must not raise
+
+    assert seen == ["s2"]
+
+
+@pytest.mark.unit
+async def test_span_with_empty_sinks_still_yields_an_updatable_handle():
+    composite = CompositeSink([])
+    async with composite.span("llm") as span:
+        span.update(output="x")  # must not raise
