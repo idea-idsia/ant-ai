@@ -192,3 +192,39 @@ def test_to_chatllm_response_maps_tool_calls(litellm_response, dummy_tool_call):
     assert out.tool_calls[1].id == "call_2"
     assert out.tool_calls[1].function.name == ""
     assert out.tool_calls[1].function.arguments == ""
+
+
+@pytest.mark.unit
+def test_constructor_credentials_override_environment(monkeypatch, sample_messages):
+    """`api_key`/`api_base` given to the constructor win over the LITELLM_* env
+    vars, so a deployment can keep its secret under its own name."""
+    monkeypatch.setenv("LITELLM_API_KEY", "env-key")
+    monkeypatch.setenv("LITELLM_API_BASE", "http://env:1/v1")
+
+    llm = LiteLLMChat("m", api_key="ctor-key", api_base="http://ctor:2/v1")
+    kwargs = llm._build_completion_kwargs(sample_messages)
+
+    assert kwargs["api_key"] == "ctor-key"
+    assert kwargs["api_base"] == "http://ctor:2/v1"
+
+
+@pytest.mark.unit
+def test_credentials_fall_back_to_environment(monkeypatch, sample_messages):
+    monkeypatch.setenv("LITELLM_API_KEY", "env-key")
+    monkeypatch.setenv("LITELLM_API_BASE", "http://env:1/v1")
+
+    kwargs = LiteLLMChat("m")._build_completion_kwargs(sample_messages)
+
+    assert kwargs["api_key"] == "env-key"
+    assert kwargs["api_base"] == "http://env:1/v1"
+
+
+@pytest.mark.unit
+def test_credentials_none_when_neither_given(monkeypatch, sample_messages):
+    monkeypatch.delenv("LITELLM_API_KEY", raising=False)
+    monkeypatch.delenv("LITELLM_API_BASE", raising=False)
+
+    kwargs = LiteLLMChat("m")._build_completion_kwargs(sample_messages)
+
+    assert kwargs["api_key"] is None
+    assert kwargs["api_base"] is None

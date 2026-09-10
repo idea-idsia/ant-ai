@@ -23,10 +23,18 @@ agent = Agent(
 ```
 
 `LiteLLMChat` accepts any model string supported by [LiteLLM](https://docs.litellm.ai/docs/providers) (e.g. `"gpt-4o"`, `"claude-opus-4-6"`, `"gemini/gemini-2.0-flash"`).
-It also supports vLLM by setting the venv file content:
+To point it at your own endpoint (vLLM, a proxy, …) pass the credential and URL directly, or set them in the environment:
+
+```python
+llm = LiteLLMChat(
+    "gpt-4o-mini",
+    api_key=os.environ["MY_DEPLOYMENT_API_KEY"],  # keep the secret under your own name
+    api_base="http://localhost:8000/v1",
+)
+```
 
 ```
-LITELLM_API_KEY=dev-local-key
+LITELLM_API_KEY=dev-local-key        # fallback when api_key is not given
 LITELLM_API_BASE=http://localhost:8000/v1
 ```
 
@@ -174,6 +182,25 @@ Two hooks control how the subclass behaves:
 - `trace_attributes()` returns the fields bound to the run's trace and sent with `workflow.start`. The default is `session_id` and `user_id`. Extend it to surface your own — and keep secrets out, since these reach whatever observability backend is configured.
 
 When calling the agent directly, construct the subclass yourself: `agent.ainvoke(..., ctx=MyContext(session_id="s1", tenant="acme"))`.
+
+### What the caller sees when a run fails
+
+A failure inside an A2A run reaches the caller as a bare `InternalError` — the exception text is **never** forwarded, since it can carry prompt content or internal detail and the caller may not be the operator. The one exception is an A2A error you raise yourself: any `a2a.utils.errors.A2AError` (`InternalError("…")`, `InvalidParamsError("…")`, …) passes through with its message, so the place that knows what the caller should hear can say it — a tool, a hook, or an LLM wrapper:
+
+```python
+import litellm
+from a2a.types import InternalError
+
+
+class MyLLM(LiteLLMChat):
+    async def ainvoke(self, messages, **kw):
+        try:
+            return await super().ainvoke(messages, **kw)
+        except litellm.ContextWindowExceededError as e:
+            raise InternalError(
+                "This conversation has grown too long; start a new one."
+            ) from e
+```
 
 ### Asking the user for input
 
