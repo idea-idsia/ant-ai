@@ -190,8 +190,13 @@ class HVEventToA2A:
 
     @handler(ClarificationNeededEvent)
     async def _input_required(self, event: Event, updater: TaskUpdater) -> None:
-        await updater.requires_input(
-            message=updater.new_agent_message(parts=[Part(text=event.content)]),
+        metadata: dict[str, Any] = A2AMetadata(event=event).model_dump()
+        msg = updater.new_agent_message(parts=[Part(text=event.content)])
+        msg.metadata.update(metadata)
+        await updater.update_status(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=msg,
+            metadata=metadata,
         )
 
     @handler(CompletedEvent)

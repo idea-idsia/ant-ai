@@ -226,3 +226,62 @@ async def test_execute_builds_custom_context_class_from_metadata():
     assert ctx.session_id == "ctx-1"
     assert ctx.tags == ["team:a"]
     assert ctx.tenant == "acme"
+
+
+@pytest.mark.unit
+async def test_cancel_publishes_canceled_status():
+    """`cancel` publishes the canceled status the SDK's `on_cancel_task` needs
+    (it refuses any other final state) instead of raising."""
+    from a2a.server.events import EventQueueLegacy
+    from a2a.types import TaskState, TaskStatusUpdateEvent
+
+    queue = EventQueueLegacy()
+    task = MagicMock()
+    task.id = "task-1"
+    task.context_id = "ctx-1"
+    context = MagicMock()
+    context.current_task = task
+
+    await _make_executor().cancel(context, queue)
+
+    raw = await queue.dequeue_event()
+    assert isinstance(raw, TaskStatusUpdateEvent)
+    assert raw.status.state == TaskState.TASK_STATE_CANCELED
+
+
+@pytest.mark.unit
+async def test_cancel_without_task_raises():
+    context = MagicMock()
+    context.current_task = None
+    with pytest.raises(Exception, match="No task to cancel"):
+        await _make_executor().cancel(context, MagicMock())
+
+
+@pytest.mark.unit
+async def test_execute_reraises_cancelled_error_without_wrapping():
+    """A cancel is not a crash: `CancelledError` propagates as-is so the event
+    loop sees the task stop, rather than being wrapped in `InternalError`."""
+    import asyncio
+
+    from a2a.server.events import EventQueueLegacy
+    from a2a.types import Message as A2AMsg, Part, Role
+
+    async def cancelled_stream(*, agent, ctx, state):
+        raise asyncio.CancelledError()
+        yield
+
+    workflow = MagicMock()
+    workflow.stream = cancelled_stream
+    executor = A2AExecutor(agent=MagicMock(), workflow=workflow)
+
+    context = MagicMock()
+    context.message = A2AMsg(
+        message_id="m-1", role=Role.ROLE_USER, parts=[Part(text="hi")]
+    )
+    context.current_task = None
+    context.metadata = {}
+    context.related_tasks = []
+    context.get_user_input.return_value = "hi"
+
+    with pytest.raises(asyncio.CancelledError):
+        await executor.execute(context, EventQueueLegacy())

@@ -7,6 +7,7 @@ from uuid import uuid4
 from a2a.client import A2ACardResolver, Client, ClientConfig, create_client
 from a2a.types import (
     AgentCard,
+    CancelTaskRequest,
     Message,
     Part,
     Role,
@@ -158,6 +159,28 @@ class A2AClient(BaseModel):
                 if ev is not None:
                     yield ev
 
+        except TimeoutException as e:
+            raise AgentClientError(f"Agent request timed out: {e}") from e
+        except HTTPError as e:
+            raise AgentClientError(f"Agent HTTP error: {e}") from e
+        except Exception as e:
+            raise AgentClientError(f"Agent client error: {e}") from e
+
+    async def cancel_task(self, task_id: str) -> Task:
+        """Ask the agent to cancel a running task and return its final state.
+
+        The counterpart to `A2AExecutor.cancel`. Shares `send_message`'s error
+        contract: every transport failure becomes `AgentClientError`.
+
+        Args:
+            task_id: The id of the task to cancel, as the agent reported it.
+
+        Returns:
+            The `Task` in its final state, which the protocol guarantees is canceled.
+        """
+        client: Client = await self._ensure_client()
+        try:
+            return await client.cancel_task(CancelTaskRequest(id=task_id))
         except TimeoutException as e:
             raise AgentClientError(f"Agent request timed out: {e}") from e
         except HTTPError as e:
