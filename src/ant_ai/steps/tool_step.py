@@ -89,12 +89,14 @@ class ToolStep(BaseModel):
                         "tool_call_id": msg.tool_call_id,
                         "name": msg.name,
                         "content": msg.content,
+                        "is_error": msg.is_error,
                     }
                 )
                 yield ToolResultEvent(
                     content=msg.content or "",
                     tool_call_id=msg.tool_call_id,
                     name=msg.name,
+                    is_error=msg.is_error,
                 )
         finally:
             # Leaving early (cancellation, a tool raising, the consumer closing
@@ -148,6 +150,7 @@ class ToolStep(BaseModel):
                 name=tool_name,
                 tool_call_id=tool_call_id,
                 content=f"ERROR: Tool '{tool_name}' not found in registry.",
+                is_error=True,
             )
 
         args_str: str = tool_call.function.arguments or ""
@@ -158,6 +161,7 @@ class ToolStep(BaseModel):
                 name=tool_name,
                 tool_call_id=tool_call_id,
                 content=f"ERROR: {exc}",
+                is_error=True,
             )
 
         tool: Tool = self.registry[tool_name]
@@ -190,6 +194,7 @@ class ToolStep(BaseModel):
                 name=tool_name,
                 tool_call_id=tool_call_id,
                 content=f"ERROR: {exc}",
+                is_error=True,
             )
 
     @staticmethod

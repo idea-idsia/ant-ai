@@ -132,8 +132,7 @@ class HVEventToA2A:
         metadata: dict[str, Any] = A2AMetadata(event=event).model_dump()
         msg = updater.new_agent_message(parts=[Part(text=event.content)])
         msg.metadata.update(metadata)
-        # This whole-event message is the definitive close-out: it is sent
-        # unconditionally so naive/non-streaming clients see no difference.
+
         await updater.update_status(
             state=TaskState.TASK_STATE_WORKING,
             message=msg,
@@ -144,17 +143,6 @@ class HVEventToA2A:
         if not self._stream_artifacts or not stream_id:
             return
 
-        # Reasoning, content, and each tool call stream under their own
-        # artifact id (see _content_delta) so a peer reading raw artifact
-        # text never sees them concatenated. Which of these actually exist
-        # is derivable from the event itself, with no tracking needed:
-        # ReasoningEvent only fires when reasoning text was non-empty (i.e.
-        # reasoning deltas -- and that artifact -- exist); content deltas
-        # exist iff event.content is non-empty; tool calls always streamed
-        # under their index if they're present at all (stream_id is only
-        # set by LLMStep.stream(), never .run()). Tool calls appear here in
-        # the same order _stream_deltas first saw their index (see
-        # LLMStep.stream / _ToolCallFragment), so position == original index.
         artifact_ids: list[str] = []
         if isinstance(event, ReasoningEvent):
             artifact_ids.append(f"{stream_id}:reasoning")
@@ -299,7 +287,8 @@ class A2AToHVEvent:
                 name=event.name,
                 tool_call_id=event.tool_call_id,
                 content=event.content,
+                is_error=event.is_error,
             )
         if isinstance(event, FinalAnswerEvent):
             return Message(role="assistant", content=event.content)
-        return None  # non-conversation event (ReasoningEvent, UpdateEvent, etc.)
+        return None

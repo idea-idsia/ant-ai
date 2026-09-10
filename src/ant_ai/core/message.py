@@ -4,6 +4,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
+_PROVIDER_EXCLUDED_FIELDS: frozenset[str] = frozenset({"kind", "is_error"})
+
 
 class Message(BaseModel):
     """Generic message used in a conversation"""
@@ -16,6 +18,15 @@ class Message(BaseModel):
     """Text content of the message"""
     metadata: dict[str, Any] = Field(default_factory=dict)
     """Additional metadata associated with the message"""
+
+    def to_provider_dict(self) -> dict[str, Any]:
+        """The message in the shape chat-completion APIs expect.
+
+        Internal fields (`kind`, and `is_error` on tool results) are left out of
+        the OpenAI-style dict; a provider adapter that has a native equivalent
+        (Anthropic's `tool_result.is_error`) can map them explicitly.
+        """
+        return self.model_dump(exclude=set(_PROVIDER_EXCLUDED_FIELDS))
 
 
 class MessageChunk(BaseModel):
@@ -66,6 +77,13 @@ class ToolCallResultMessage(Message):
     role: str = "tool"
     tool_call_id: str
     name: str
+    is_error: bool = Field(
+        default=False,
+        description=(
+            "Whether the tool call failed. Set by `ToolStep` when the tool raised; "
+            "mirrors `is_error` on Anthropic tool results and `isError` on MCP."
+        ),
+    )
 
 
 class ToolFunction(BaseModel):

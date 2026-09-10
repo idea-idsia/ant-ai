@@ -54,7 +54,7 @@ class LiteLLMChat(ChatLLM):
     @staticmethod
     def _to_litellm_messages(messages: list[Message]) -> list[dict[str, str]]:
         """Convert Message objects into LiteLLM-compatible dicts."""
-        return [m.model_dump(exclude={"kind"}) for m in messages]
+        return [m.to_provider_dict() for m in messages]
 
     def _build_completion_kwargs(
         self,

@@ -8,7 +8,7 @@ from re import Pattern
 import pathspec
 from pydantic import PrivateAttr
 
-from ant_ai.tools.tool import Tool
+from ant_ai.tools.tool import Tool, ToolError
 
 
 class FilesystemTool(Tool):
@@ -33,10 +33,10 @@ class FilesystemTool(Tool):
 
     Notes:
         All paths are resolved relative to `workspace_root` and sandboxed within it.
-        Attempts to escape the workspace (e.g. "../etc/passwd", "/absolute/path")
-        are caught by `_resolve` and returned to the caller as an error string
-        instead of raising — so the agent receives a recoverable error message
-        rather than an exception.
+        Failures -- a missing file, an invalid regex, an attempt to escape the
+        workspace (e.g. "../etc/passwd", "/absolute/path") -- raise `ToolError`,
+        which `ToolStep` turns into a recoverable `ERROR: ...` message for the
+        agent and marks as an error.
     """
 
     workspace_root: Path = Path()
@@ -65,13 +65,11 @@ class FilesystemTool(Tool):
         try:
             return self._resolve(path).read_text(encoding="utf-8")
         except ValueError as e:
-            return f"Error: {e}"
-        except FileNotFoundError:
-            return f"Error: file not found: {path}"
+            raise ToolError(str(e)) from e
+        except FileNotFoundError as e:
+            raise ToolError(f"file not found: {path}") from e
         except OSError as e:
-            return f"Error: {e.strerror or e}: {path}"
-        except Exception as e:
-            return f"Error: {e}"
+            raise ToolError(f"{e.strerror or e}: {path}") from e
 
     def write_file(self, path: str, content: str) -> str:
         """Write content to a file, overwriting if it exists. Creates parent directories as needed. Path is relative to /workspace."""
@@ -81,11 +79,9 @@ class FilesystemTool(Tool):
             target.write_text(content, encoding="utf-8")
             return f"Written {len(content.encode('utf-8'))} bytes to {path}"
         except ValueError as e:
-            return f"Error: {e}"
+            raise ToolError(str(e)) from e
         except OSError as e:
-            return f"Error: {e.strerror or e}: {path}"
-        except Exception as e:
-            return f"Error: {e}"
+            raise ToolError(f"{e.strerror or e}: {path}") from e
 
     def list_dir(self, path: str = ".", depth: int = 4) -> list[str]:
         """List files and directories recursively at the given path, up to `depth` levels deep. Path is relative to /workspace. Defaults to workspace root."""
@@ -95,13 +91,11 @@ class FilesystemTool(Tool):
             self._walk(target, target, depth, results)
             return sorted(results)
         except ValueError as e:
-            return [f"Error: {e}"]
-        except FileNotFoundError:
-            return [f"Error: directory not found: {path}"]
+            raise ToolError(str(e)) from e
+        except FileNotFoundError as e:
+            raise ToolError(f"directory not found: {path}") from e
         except OSError as e:
-            return [f"Error: {e.strerror or e}: {path}"]
-        except Exception as e:
-            return [f"Error: {e}"]
+            raise ToolError(f"{e.strerror or e}: {path}") from e
 
     def _walk(self, base: Path, current: Path, depth: int, results: list[str]) -> None:
         """Collect paths (relative to `base`) of entries under `current`, recursing up to `depth` levels."""
@@ -145,11 +139,9 @@ class FilesystemTool(Tool):
                         continue
             return "\n".join(results) if results else "No matches found"
         except ValueError as e:
-            return f"Error: {e}"
+            raise ToolError(str(e)) from e
         except re.error as e:
-            return f"Error: invalid regex pattern: {e}"
-        except Exception as e:
-            return f"Error: {e}"
+            raise ToolError(f"invalid regex pattern: {e}") from e
 
     def _resolve(self, path: str) -> Path:
         """Resolve path relative to base, ensuring it stays within base."""

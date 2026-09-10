@@ -5,6 +5,7 @@ import importlib
 import inspect
 from typing import Any
 
+import mcp.types
 import pytest
 from pydantic import BaseModel
 
@@ -311,9 +312,8 @@ async def test_from_mcp_descriptor_unwraps_structured_content(monkeypatch):
         description = "desc"
         input_schema = {"type": "object", "properties": {"q": {"type": "string"}}}
 
-    class FakeResult:
-        structuredContent = {"ok": True}
-        content = None
+    def fake_result():
+        return mcp.types.CallToolResult(content=[], structured_content={"ok": True})
 
     # patch streamablehttp_client and MCPClientSession so no IO happens
     class DummyClientCtx:
@@ -337,7 +337,7 @@ async def test_from_mcp_descriptor_unwraps_structured_content(monkeypatch):
         async def call_tool(self, name: str, arguments: dict[str, Any]):
             assert name == "weather"
             assert arguments == {"q": "x"}
-            return FakeResult()
+            return fake_result()
 
     monkeypatch.setattr(
         _tool_module, "streamable_http_client", lambda url: DummyClientCtx()

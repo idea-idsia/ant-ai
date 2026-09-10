@@ -285,3 +285,20 @@ async def test_execute_reraises_cancelled_error_without_wrapping():
 
     with pytest.raises(asyncio.CancelledError):
         await executor.execute(context, EventQueueLegacy())
+
+
+@pytest.mark.unit
+def test_convert_history_tool_result_keeps_is_error():
+    """A tool result rebuilt from A2A history keeps the `is_error` flag the
+    event recorded, so a resumed conversation does not lose it."""
+    from ant_ai.core.events import ToolResultEvent
+
+    executor = _make_executor()
+    event = ToolResultEvent(
+        content="ERROR: nope", tool_call_id="c1", name="t", is_error=True
+    )
+    msg = _a2a_msg()
+    with patch.object(executor._a2a_to_hv, "translate", return_value=event):
+        result = executor._a2a_to_hv.to_history_message(msg)
+    assert isinstance(result, ToolCallResultMessage)
+    assert result.is_error is True
