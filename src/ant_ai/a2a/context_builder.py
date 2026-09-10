@@ -13,6 +13,8 @@ from a2a.server.tasks import TaskStore
 from a2a.types import SendMessageRequest, Task
 from google.protobuf.internal import containers as _containers
 
+from ant_ai.observer import obs
+
 
 class HistoryRequestContextBuilder(RequestContextBuilder):
     def __init__(
@@ -121,8 +123,12 @@ class HistoryRequestContextBuilder(RequestContextBuilder):
                 *(task_store.get(tid, context=context) for tid in batch),
             )
 
-            for item in results:
+            for tid, item in zip(batch, results, strict=True):
                 if not isinstance(item, Task):
+                    await obs.event(
+                        "a2a.referenced_task.unresolved",
+                        task_id=tid,
+                    )
                     continue
 
                 if item.id in visited:

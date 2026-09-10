@@ -13,6 +13,7 @@ from ant_ai.core.message import (
     ToolCallResultMessage,
     ToolFunction,
 )
+from ant_ai.core.types import InvocationContext
 
 
 def _make_executor(*, stream_artifacts: bool = False) -> A2AExecutor:
@@ -151,3 +152,77 @@ def test_stream_artifacts_defaults_to_disabled_on_translator():
 def test_stream_artifacts_flag_threaded_into_translator():
     executor = _make_executor(stream_artifacts=True)
     assert executor._translator._stream_artifacts is True
+
+
+def _stream_capturing_ctx(captured: dict):
+    async def fake_stream(*, agent, ctx, state):
+        captured["ctx"] = ctx
+        if False:
+            yield
+
+    return fake_stream
+
+
+def _request_context(metadata: dict) -> MagicMock:
+    context = MagicMock()
+    context.metadata = metadata
+    context.related_tasks = []
+    context.get_user_input.return_value = "hi"
+    return context
+
+
+@pytest.mark.unit
+async def test_execute_builds_default_context_from_metadata():
+    """Base fields (`user_id`, `llm_settings`, ...) are filled from the A2A request
+    metadata by name; unknown keys are ignored."""
+    captured: dict = {}
+    workflow = MagicMock()
+    workflow.stream = _stream_capturing_ctx(captured)
+    executor = A2AExecutor(agent=MagicMock(), workflow=workflow)
+    task = MagicMock()
+    task.context_id = "ctx-1"
+
+    await executor._execute(
+        _request_context(
+            {"user_id": "u-42", "llm_settings": {"temperature": 0}, "traceparent": "x"}
+        ),
+        updater=MagicMock(),
+        task=task,
+    )
+
+    ctx = captured["ctx"]
+    assert type(ctx) is InvocationContext
+    assert ctx.session_id == "ctx-1"
+    assert ctx.user_id == "u-42"
+    assert ctx.llm_settings == {"temperature": 0}
+
+
+@pytest.mark.unit
+async def test_execute_builds_custom_context_class_from_metadata():
+    """`context_class` picks the InvocationContext subclass; its extra fields are
+    filled from metadata the same way."""
+
+    class TaggedContext(InvocationContext):
+        tags: list[str] | None = None
+        tenant: str = ""
+
+    captured: dict = {}
+    workflow = MagicMock()
+    workflow.stream = _stream_capturing_ctx(captured)
+    executor = A2AExecutor(
+        agent=MagicMock(), workflow=workflow, context_class=TaggedContext
+    )
+    task = MagicMock()
+    task.context_id = "ctx-1"
+
+    await executor._execute(
+        _request_context({"user_id": "u-42", "tags": ["team:a"], "tenant": "acme"}),
+        updater=MagicMock(),
+        task=task,
+    )
+
+    ctx = captured["ctx"]
+    assert isinstance(ctx, TaggedContext)
+    assert ctx.session_id == "ctx-1"
+    assert ctx.tags == ["team:a"]
+    assert ctx.tenant == "acme"

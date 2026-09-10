@@ -18,6 +18,7 @@ from starlette.applications import Starlette
 from ant_ai.a2a.context_builder import HistoryRequestContextBuilder
 from ant_ai.a2a.executor import A2AExecutor
 from ant_ai.agent.agent import Agent
+from ant_ai.core.types import InvocationContext
 from ant_ai.workflow.workflow import Workflow
 
 
@@ -45,6 +46,13 @@ class A2AServer(BaseModel):
         ),
     )
 
+    context_class: type[InvocationContext] = Field(
+        default=InvocationContext,
+        description=(
+            "The InvocationContext (sub)class built for each request from the A2A message metadata. Subclass InvocationContext to carry your own fields through the run; they are filled from metadata by name."
+        ),
+    )
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @model_validator(mode="after")
@@ -59,6 +67,7 @@ class A2AServer(BaseModel):
                 agent=self.agent,
                 workflow=self.workflow,
                 stream_artifacts=self.stream_artifacts,
+                context_class=self.context_class,
             ),
             task_store=self.task_store,
             agent_card=self.agent_card,

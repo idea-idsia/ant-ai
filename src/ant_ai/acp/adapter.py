@@ -81,9 +81,11 @@ class ACPAdapter(ACPAgent):
         workflow: Workflow,
         *,
         commands: list[ACPCommand] | None = None,
+        context_class: type[InvocationContext] = InvocationContext,
     ) -> None:
         self._agent: Agent = agent
         self._workflow: Workflow[State] = workflow
+        self._context_class: type[InvocationContext] = context_class
         self._commands: dict[str, ACPCommand] = {c.name: c for c in (commands or [])}
         self._available_commands: list[AvailableCommand] = [
             c.to_available_command() for c in (commands or [])
@@ -226,7 +228,9 @@ class ACPAdapter(ACPAgent):
         history: list[Message] = list(self._sessions.get(session_id, []))
         history.append(Message(role="user", content=text))
 
-        ctx = InvocationContext(session_id=session_id)
+        ctx: InvocationContext = self._context_class.from_metadata(
+            session_id=session_id
+        )
         agent: Agent = self._session_agents.get(session_id, self._agent)
         state: State = self._workflow.create_state(messages=history)
 

@@ -31,7 +31,12 @@ class A2AExecutor(AgentExecutor):
     """
 
     def __init__(
-        self, agent: Agent, workflow: Workflow, *, stream_artifacts: bool = True
+        self,
+        agent: Agent,
+        workflow: Workflow,
+        *,
+        stream_artifacts: bool = True,
+        context_class: type[InvocationContext] = InvocationContext,
     ):
         """Initialize the A2AExecutor. A2AExecutor is a subclass of AgentExecutor. The AgentExecutor is the a2a-sdk class
         that is responsible for processing the request made to the agent.
@@ -41,9 +46,12 @@ class A2AExecutor(AgentExecutor):
             workflow: Workflow that will be executed.
             stream_artifacts: Whether to translate ContentDeltaEvent into A2A
                 artifact-update chunks. See `HVEventToA2A`.
+            context_class: The `InvocationContext` (sub)class built for each
+                request from the message metadata via `from_metadata`.
         """
         self.workflow: Workflow = workflow
         self.agent: Agent = agent
+        self.context_class: type[InvocationContext] = context_class
         self._translator: HVEventToA2A = HVEventToA2A(stream_artifacts=stream_artifacts)
         self._a2a_to_hv: A2AToHVEvent = A2AToHVEvent()
 
@@ -89,14 +97,13 @@ class A2AExecutor(AgentExecutor):
         updater: TaskUpdater,
         task: Task,
     ) -> None:
-        ctx = InvocationContext(
-            session_id=task.context_id,
-            user_id=context.metadata.get("user_id", None),
-            llm_settings=context.metadata.get("llm_settings", None),
-            workflow_settings=context.metadata.get("workflow_settings", None),
+        ctx: InvocationContext = self.context_class.from_metadata(
+            session_id=task.context_id, metadata=context.metadata
         )
 
-        history = self._build_history(context.related_tasks, context.get_user_input())
+        history: list[Message] = self._build_history(
+            context.related_tasks, context.get_user_input()
+        )
 
         await obs.event("a2a.history", history_messages=len(history))
 

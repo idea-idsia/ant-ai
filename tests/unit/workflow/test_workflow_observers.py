@@ -227,3 +227,56 @@ def test_otel_sink_instantiates():
     assert hasattr(sink, "event")
     assert hasattr(sink, "exception")
     assert hasattr(sink, "span")
+
+
+@pytest.mark.unit
+async def test_workflow_start_carries_user_id(
+    spy_sink: SpySink, agent, seeded_state, noop_workflow
+):
+    """`user_id` reaches `workflow.start` beside `session_id` -- the event the
+    Langfuse sink reads both from."""
+    ctx = InvocationContext(session_id="s1", user_id="u-42")
+
+    await noop_workflow.ainvoke(agent, ctx=ctx, state=seeded_state())
+
+    starts = [f for n, f in spy_sink.events if n == "workflow.start"]
+    assert len(starts) == 1
+    assert starts[0]["session_id"] == "s1"
+    assert starts[0]["user_id"] == "u-42"
+
+
+@pytest.mark.unit
+async def test_workflow_start_without_ctx_sends_none_session(
+    spy_sink: SpySink, agent, seeded_state, noop_workflow
+):
+    await noop_workflow.ainvoke(agent, ctx=None, state=seeded_state())
+
+    starts = [f for n, f in spy_sink.events if n == "workflow.start"]
+    assert starts[0]["session_id"] is None
+    assert "user_id" not in starts[0]
+
+
+@pytest.mark.unit
+async def test_custom_context_trace_attributes_reach_workflow_start(
+    spy_sink: SpySink, agent, seeded_state, noop_workflow
+):
+    """A subclass extending `trace_attributes` gets its fields bound for the whole
+    run and sent with `workflow.start`."""
+
+    class TaggedContext(InvocationContext):
+        tags: list[str] | None = None
+        secret: str = "not-for-traces"
+
+        def trace_attributes(self) -> dict:
+            return {**super().trace_attributes(), "tags": self.tags}
+
+    ctx = TaggedContext(session_id="s1", user_id="u-42", tags=["team:a", "beta"])
+
+    await noop_workflow.ainvoke(agent, ctx=ctx, state=seeded_state())
+
+    starts = [f for n, f in spy_sink.events if n == "workflow.start"]
+    assert starts[0]["tags"] == ["team:a", "beta"]
+    assert "secret" not in starts[0]
+    # Bound for the whole run: node events carry it too.
+    node_starts = [f for n, f in spy_sink.events if n == "node.start"]
+    assert node_starts and node_starts[0]["tags"] == ["team:a", "beta"]
