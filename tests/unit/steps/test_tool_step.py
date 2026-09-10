@@ -209,8 +209,8 @@ async def test_run_clarification_request_yields_clarification_events_and_ends():
 
     assert len(step_results) == 1
     result = step_results[0]
-    assert isinstance(result.output, ClarificationNeededOutput)
-    assert result.output.question == "Which file?"
+    assert isinstance(result.output, ToolOutput)
+    assert result.output.results[0]["content"] == "Which file?"
     assert result.transition.action == TransitionAction.END
 
 
@@ -388,3 +388,71 @@ async def test_missing_tool_and_invalid_args_are_errors():
         i.tool_call_id: i.is_error for i in items if isinstance(i, ToolResultEvent)
     }
     assert flags == {"c1": True, "c2": True}
+
+
+def _clarify_tool(name: str = "clarify_tool", question: str = "Which file?"):
+    from ant_ai.tools.tool import Tool
+
+    async def _needs_clarification(**_: Any) -> ClarificationNeededOutput:
+        return ClarificationNeededOutput(question=question)
+
+    return Tool._from_function(_needs_clarification, name=name)
+
+
+@pytest.mark.unit
+async def test_clarified_call_is_answered_with_its_question():
+    """A clarification ends the step, but the clarified tool call still gets a
+    result -- the question -- so the transcript is not left with a dangling
+    `tool_calls` turn when the user's answer follows."""
+    step = ToolStep(registry=ToolRegistry(tools=[_clarify_tool()]))
+    state = _make_state(_make_tool_call("clarify_tool", call_id="c1"))
+    items = await _collect(step.run(state, None))
+
+    tool_event = next(i for i in items if isinstance(i, ToolResultEvent))
+    assert tool_event.tool_call_id == "c1"
+    assert tool_event.content == "Which file?"
+    assert tool_event.is_error is False
+
+    result = next(i for i in items if isinstance(i, StepResult))
+    assert isinstance(result.output, ToolOutput)
+    assert result.transition.action == TransitionAction.END
+    assert result.output.results == (
+        {
+            "tool_call_id": "c1",
+            "name": "clarify_tool",
+            "content": "Which file?",
+            "is_error": False,
+        },
+    )
+
+
+@pytest.mark.unit
+async def test_every_call_in_a_clarifying_step_gets_a_result():
+    """Two tools asking at once beside a normal one: all three calls are answered
+    and an event is emitted per question."""
+
+    @tool_decorator
+    def ok() -> str:
+        return "fine"
+
+    step = ToolStep(
+        registry=ToolRegistry(
+            tools=[_clarify_tool("ask_a", "A?"), _clarify_tool("ask_b", "B?"), ok]
+        )
+    )
+    state = _make_state(
+        _make_tool_call("ask_a", call_id="c1"),
+        _make_tool_call("ok", call_id="c2"),
+        _make_tool_call("ask_b", call_id="c3"),
+    )
+    items = await _collect(step.run(state, None))
+
+    events = [i for i in items if isinstance(i, ClarificationNeededEvent)]
+    assert sorted(e.content for e in events) == ["A?", "B?"]
+
+    result = next(i for i in items if isinstance(i, StepResult))
+    assert isinstance(result.output, ToolOutput)
+    assert result.transition.action == TransitionAction.END
+    answered = {r["tool_call_id"]: r for r in result.output.results}
+    assert set(answered) == {"c1", "c2", "c3"}
+    assert answered["c2"]["content"] == "fine"

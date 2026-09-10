@@ -70,11 +70,11 @@ class ToolOutput(BaseModel):
 
 
 class ClarificationNeededOutput(BaseModel):
-    """Signals that a tool needs human input before execution can continue.
+    """Returned by a tool to say it needs human input before it can proceed.
 
-    Raised inside `ToolStep` when a tool returns a clarification request
-    (e.g. via `HumanInputNeededTool.ask()`). The react loop returns this to
-    its caller immediately, pausing the agent until the user answers.
+    `ToolStep` answers the clarified call with the question, emits a
+    `ClarificationNeededEvent`, and ends the run (`TransitionAction.END`). The
+    caller resumes by appending the user's reply and running the agent again.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -95,7 +95,7 @@ class ClarificationNeededOutput(BaseModel):
 
 
 type StepOutput = Annotated[
-    LLMOutput | ToolOutput | ClarificationNeededOutput,
+    LLMOutput | ToolOutput,
     Field(discriminator="kind"),
 ]
 

@@ -18,7 +18,6 @@ from ant_ai.core.events import (
 from ant_ai.core.exceptions import HookMaxRetriesError
 from ant_ai.core.message import Message, ToolCall, ToolCallMessage, ToolFunction
 from ant_ai.core.result import (
-    ClarificationNeededOutput,
     LLMOutput,
     StepResult,
     ToolOutput,
@@ -95,7 +94,8 @@ class _AlwaysRetryHook(AgentHook):
 
 @pytest.mark.unit
 async def test_stream_stops_on_clarification_needed():
-    """When act_step returns ClarificationNeededOutput the loop exits without a FinalAnswerEvent."""
+    """When the tool step ends the run (a tool asked for human input) the loop
+    exits without a FinalAnswerEvent."""
     tool_call = ToolCall(id="c1", function=ToolFunction(name="my_tool", arguments="{}"))
     reason_step = FakeStep(
         "llm",
@@ -108,9 +108,12 @@ async def test_stream_stops_on_clarification_needed():
         ],
     )
     clarif_result = StepResult(
-        output=ClarificationNeededOutput(
-            question="Which one?", tool_call_id="c1", tool_name="my_tool"
-        )
+        output=ToolOutput(
+            results=(
+                {"tool_call_id": "c1", "name": "my_tool", "content": "Which one?"},
+            )
+        ),
+        transition=Transition(action=TransitionAction.END),
     )
     act_step = FakeStep("tool", [clarif_result])
 
@@ -715,3 +718,54 @@ async def test_tool_is_error_is_carried_into_state_messages():
     results = [m for m in state.messages if isinstance(m, ToolCallResultMessage)]
     assert len(results) == 1
     assert results[0].is_error is True
+
+
+@pytest.mark.unit
+async def test_clarification_leaves_a_resumable_transcript():
+    """When the loop stops on a clarification, state already holds the tool result
+    for the clarified call, so appending the user's answer yields a well-formed
+    conversation: assistant(tool_calls) -> tool -> user."""
+    from ant_ai.core.message import ToolCallResultMessage
+
+    tool_call = ToolCall(id="c1", function=ToolFunction(name="ask", arguments="{}"))
+    reason_step = FakeStep(
+        "llm",
+        [
+            make_llm_result(
+                "calling", tool_calls=(tool_call,), action=TransitionAction.CONTINUE
+            )
+        ],
+    )
+    act_step = FakeStep(
+        "tool",
+        [
+            StepResult(
+                output=ToolOutput(
+                    results=(
+                        {
+                            "tool_call_id": "c1",
+                            "name": "ask",
+                            "content": "Which one?",
+                            "is_error": False,
+                        },
+                    )
+                ),
+                transition=Transition(action=TransitionAction.END),
+            )
+        ],
+    )
+
+    loop: ReActLoop = make_loop(reason_step, act_step=act_step)
+    state = State(messages=[Message(role="user", content="go")])
+    _ = [e async for e in loop.stream(state, ctx=None, max_steps=5)]
+
+    assert isinstance(state.messages[-2], ToolCallMessage)
+    last = state.messages[-1]
+    assert isinstance(last, ToolCallResultMessage)
+    assert last.tool_call_id == "c1"
+    assert last.content == "Which one?"
+
+    # The caller's resume step: append the answer. No dangling tool_calls.
+    state.add_message(Message(role="user", content="the second"))
+    roles = [m.role for m in state.messages[-3:]]
+    assert roles == ["assistant", "tool", "user"]
