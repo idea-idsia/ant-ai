@@ -8,6 +8,7 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import InternalError, Message as A2AMessage, Task
+from a2a.utils.errors import A2AError
 
 from ant_ai.a2a.compression import (
     find_compression_checkpoint,
@@ -98,6 +99,9 @@ class A2AExecutor(AgentExecutor):
                 await obs.event(
                     "a2a.cancelled", task_id=task.id, context_id=task.context_id
                 )
+                raise
+            except A2AError as exc:
+                await obs.exception("a2a.error", exc)
                 raise
             except Exception as exc:
                 await obs.exception("a2a.error", exc)

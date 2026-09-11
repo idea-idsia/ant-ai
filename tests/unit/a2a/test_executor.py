@@ -388,3 +388,63 @@ def test_history_after_clarification_is_resumable():
         "ToolCallResultMessage",
     ]
     assert result[1].content == "Which one?"
+
+
+# --- what the caller sees when a run fails ---------------------------------
+
+
+def _failing_executor(exc: Exception) -> A2AExecutor:
+    async def failing_stream(*, agent, ctx, state):
+        raise exc
+        yield
+
+    workflow = MagicMock()
+    workflow.stream = failing_stream
+    return A2AExecutor(agent=MagicMock(), workflow=workflow)
+
+
+def _request_context_with_message() -> MagicMock:
+    from a2a.types import Message as A2AMsg, Part, Role
+
+    context = MagicMock()
+    context.message = A2AMsg(
+        message_id="m-1", role=Role.ROLE_USER, parts=[Part(text="hi")]
+    )
+    context.current_task = None
+    context.metadata = {}
+    context.related_tasks = []
+    context.get_user_input.return_value = "hi"
+    return context
+
+
+@pytest.mark.unit
+async def test_a2a_error_raised_inside_the_run_reaches_the_caller_unchanged():
+    """Something that knew what the caller should hear raised a protocol error
+    with a message; the executor must not flatten it to a bare InternalError."""
+    from a2a.server.events import EventQueueLegacy
+    from a2a.types import InternalError, InvalidParamsError
+
+    with pytest.raises(InternalError) as info:
+        await _failing_executor(
+            InternalError("This conversation is too long.")
+        ).execute(_request_context_with_message(), EventQueueLegacy())
+    assert info.value.message == "This conversation is too long."
+
+    with pytest.raises(InvalidParamsError) as info:
+        await _failing_executor(InvalidParamsError("bad tenant")).execute(
+            _request_context_with_message(), EventQueueLegacy()
+        )
+    assert info.value.message == "bad tenant"
+
+
+@pytest.mark.unit
+async def test_other_exceptions_are_hidden_behind_a_bare_internal_error():
+    from a2a.server.events import EventQueueLegacy
+    from a2a.types import InternalError
+
+    with pytest.raises(InternalError) as info:
+        await _failing_executor(RuntimeError("secret path /etc/x")).execute(
+            _request_context_with_message(), EventQueueLegacy()
+        )
+    assert info.value.message == "Internal error"
+    assert isinstance(info.value.__cause__, RuntimeError)

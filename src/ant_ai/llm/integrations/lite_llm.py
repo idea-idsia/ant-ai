@@ -45,10 +45,31 @@ def to_chatllm_response(
 
 
 class LiteLLMChat(ChatLLM):
-    """LiteLLM-based chat model. Supports multiple endpoints via LiteLLM."""
+    """LiteLLM-based chat model. Supports multiple endpoints via LiteLLM.
 
-    def __init__(self, model: str) -> None:
+    Args:
+        model: Any model string LiteLLM accepts (e.g. `"gpt-4o"`,
+            `"gemini/gemini-2.0-flash"`).
+        api_key: Credential for the endpoint. Falls back to the `LITELLM_API_KEY`
+            environment variable when not given, so a deployment can keep its
+            secret under its own name and pass it here.
+        api_base: Endpoint URL. Falls back to `LITELLM_API_BASE`.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        api_key: str | None = None,
+        api_base: str | None = None,
+    ) -> None:
         self.model: str = model
+        self.api_key: str | None = (
+            api_key if api_key is not None else os.getenv("LITELLM_API_KEY")
+        )
+        self.api_base: str | None = (
+            api_base if api_base is not None else os.getenv("LITELLM_API_BASE")
+        )
         self.default_params: dict = {}
 
     @staticmethod
@@ -68,8 +89,8 @@ class LiteLLMChat(ChatLLM):
         kwargs: dict = {
             "model": self.model,
             "messages": self._to_litellm_messages(messages),
-            "api_base": os.getenv("LITELLM_API_BASE"),
-            "api_key": os.getenv("LITELLM_API_KEY"),
+            "api_base": self.api_base,
+            "api_key": self.api_key,
             **self.default_params,
         }
 
