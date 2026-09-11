@@ -302,3 +302,59 @@ def test_convert_history_tool_result_keeps_is_error():
         result = executor._a2a_to_hv.to_history_message(msg)
     assert isinstance(result, ToolCallResultMessage)
     assert result.is_error is True
+
+
+@pytest.mark.unit
+def test_history_after_cancel_mid_tool_call_is_resumable():
+    """A task cancelled while its tools ran ends on the assistant's `tool_calls`
+    turn. Replaying it answers each unanswered call with an error result, so
+    the next user message can follow; answered calls are left alone."""
+    from ant_ai.core.events import ToolCallingEvent, ToolResultEvent
+
+    executor = _make_executor()
+    events = [
+        ToolCallingEvent(
+            tool_calls=[_tool_call("c1", "fast"), _tool_call("c2", "slow")]
+        ),
+        ToolResultEvent(content="done", tool_call_id="c1", name="fast"),
+    ]
+    msgs = [_a2a_msg() for _ in events]
+
+    with patch.object(executor._a2a_to_hv, "translate", side_effect=events):
+        result = executor._convert_history(msgs)
+
+    assert [type(m).__name__ for m in result] == [
+        "ToolCallMessage",
+        "ToolCallResultMessage",
+        "ToolCallResultMessage",
+    ]
+    assert (result[1].tool_call_id, result[1].content, result[1].is_error) == (
+        "c1",
+        "done",
+        False,
+    )
+    assert (result[2].tool_call_id, result[2].name, result[2].is_error) == (
+        "c2",
+        "slow",
+        True,
+    )
+
+
+@pytest.mark.unit
+def test_dangling_tool_call_is_answered_before_the_next_message():
+    """The synthetic result goes right after the `tool_calls` turn it answers,
+    not at the end of the history."""
+    executor = _make_executor()
+    history = [
+        ToolCallMessage(tool_calls=[_tool_call("c1", "slow")]),
+        Message(role="user", content="still there?"),
+    ]
+
+    result = executor._answer_dangling_tool_calls(history)
+
+    assert [type(m).__name__ for m in result] == [
+        "ToolCallMessage",
+        "ToolCallResultMessage",
+        "Message",
+    ]
+    assert result[1].tool_call_id == "c1" and result[1].is_error
