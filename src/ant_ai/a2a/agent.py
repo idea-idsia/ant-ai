@@ -10,6 +10,7 @@ from ant_ai.a2a.client import A2AClient
 from ant_ai.a2a.config import A2AConfig
 from ant_ai.a2a.session import current_session_id
 from ant_ai.core.events import ClarificationNeededEvent, FinalAnswerEvent
+from ant_ai.core.types import InvocationContext
 from ant_ai.tools.tool import Tool
 
 
@@ -75,7 +76,9 @@ class A2AAgentTool(Tool):
     def _attach_func(self) -> None:
         """Attach the call function to the _func (single callable Tool)."""
 
-        async def _call_remote(message: str) -> str:
+        async def _call_remote(
+            message: str, ctx: InvocationContext | None = None
+        ) -> str:
             await self._ensure_initialized()
             self._ensure_a2a()
             if self._a2a is None:
@@ -83,7 +86,12 @@ class A2AAgentTool(Tool):
 
             last_text: str = ""
             async for ev in self._a2a.send_message(
-                message, context_id=current_session_id.get(None)
+                message,
+                context_id=current_session_id.get(None),
+                # Only an agent marked `trusted` receives the caller's context.
+                request_metadata=ctx.outbound_metadata()
+                if ctx and self.config.trusted
+                else None,
             ):
                 if ev.content:
                     last_text: str = ev.content
@@ -92,6 +100,7 @@ class A2AAgentTool(Tool):
             return last_text
 
         self._func = _call_remote
+        self._wants_ctx = True
 
     @overload
     @classmethod

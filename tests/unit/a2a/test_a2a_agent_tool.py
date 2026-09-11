@@ -5,6 +5,7 @@ import pytest
 from ant_ai.a2a.agent import A2AAgentTool
 from ant_ai.a2a.config import A2AConfig
 from ant_ai.core.events import ContentDeltaEvent, FinalAnswerEvent, UpdateEvent
+from ant_ai.core.types import InvocationContext
 
 MODULE = sys.modules[A2AAgentTool.__module__]
 
@@ -48,7 +49,9 @@ async def test_ensure_initialized_populates_card_a2a_and_metadata(monkeypatch, c
             self.get_agent_card_called = True
             return agent_card
 
-        async def send_message(self, message: str, context_id: None = None):
+        async def send_message(
+            self, message: str, context_id=None, request_metadata=None
+        ):
             # Not used in this test
             if False:  # pragma: no cover
                 yield None
@@ -102,7 +105,9 @@ async def test_ensure_initialized_does_not_override_existing_name_or_description
         async def get_agent_card(self):
             return agent_card
 
-        async def send_message(self, message: str, context_id: None = None):
+        async def send_message(
+            self, message: str, context_id=None, request_metadata=None
+        ):
             if False:  # pragma: no cover
                 yield None
 
@@ -137,7 +142,9 @@ async def test_call_remote_returns_last_event_content_until_final(monkeypatch, c
         async def get_agent_card(self):
             return DummyAgentCard(name="remote-agent", description="desc")
 
-        async def send_message(self, message: str, context_id: None = None):
+        async def send_message(
+            self, message: str, context_id=None, request_metadata=None
+        ):
             yield UpdateEvent(content="Hello ")
             yield UpdateEvent(content="Hello world")
             yield FinalAnswerEvent(content="Hello world")
@@ -165,7 +172,9 @@ async def test_call_remote_ignores_content_delta_events(monkeypatch, config):
         async def get_agent_card(self):
             return DummyAgentCard(name="remote-agent", description="desc")
 
-        async def send_message(self, message: str, context_id: None = None):
+        async def send_message(
+            self, message: str, context_id=None, request_metadata=None
+        ):
             yield ContentDeltaEvent(delta="Hel", stream_id="s1", is_first=True)
             yield ContentDeltaEvent(delta="lo", stream_id="s1")
             yield FinalAnswerEvent(content="Hello", stream_id="s1")
@@ -188,7 +197,9 @@ async def test_call_remote_no_events_returns_empty_string(monkeypatch, config):
         async def get_agent_card(self):
             return DummyAgentCard(name="remote-agent", description="desc")
 
-        async def send_message(self, message: str, context_id: None = None):
+        async def send_message(
+            self, message: str, context_id=None, request_metadata=None
+        ):
             if False:
                 yield None
 
@@ -210,7 +221,9 @@ async def test_call_remote_exceptions_bubble(monkeypatch, config):
         async def get_agent_card(self):
             return DummyAgentCard(name="remote-agent", description="desc")
 
-        async def send_message(self, message: str, context_id: None = None):
+        async def send_message(
+            self, message: str, context_id=None, request_metadata=None
+        ):
             raise RuntimeError("boom")
             if False:  # pragma: no cover
                 yield None
@@ -305,7 +318,9 @@ async def test_a2a_agent_tool_model_dump_openai_compatible(monkeypatch, config):
         async def get_agent_card(self):
             return agent_card
 
-        async def send_message(self, message: str, context_id: None = None):
+        async def send_message(
+            self, message: str, context_id=None, request_metadata=None
+        ):
             if False:  # pragma: no cover
                 yield None
 
@@ -359,7 +374,9 @@ async def test_a2a_agent_tool_is_single_callable_and_ainvoke_works(monkeypatch, 
         async def get_agent_card(self):
             return DummyAgentCard(name="remote-agent", description="desc")
 
-        async def send_message(self, message: str, context_id: None = None):
+        async def send_message(
+            self, message: str, context_id=None, request_metadata=None
+        ):
             yield UpdateEvent(content="Hello world")
             yield FinalAnswerEvent(content="Hello world")
 
@@ -371,3 +388,88 @@ async def test_a2a_agent_tool_is_single_callable_and_ainvoke_works(monkeypatch, 
 
     result = await tool.ainvoke(message="hi there")
     assert result == "Hello world"
+
+
+def _capturing_client(seen: dict):
+    class FakeA2AClient:
+        def __init__(self, config):
+            self.config = config
+
+        async def get_agent_card(self):
+            return DummyAgentCard(name="remote-agent", description="desc")
+
+        async def send_message(self, message, context_id=None, request_metadata=None):
+            seen["metadata"] = request_metadata
+            yield FinalAnswerEvent(content="ok")
+
+    return FakeA2AClient
+
+
+class _TenantContext(InvocationContext):
+    tenant: str = ""
+    tags: list[str] | None = None
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_call_remote_forwards_nothing_to_an_untrusted_agent(monkeypatch, config):
+    """An agent marked `trusted=False` (a third party) gets no metadata, however
+    rich the context. Only the session id crosses, as `context_id`."""
+    seen: dict = {}
+    monkeypatch.setattr(MODULE, "A2AClient", _capturing_client(seen))
+
+    untrusted = config.model_copy(update={"trusted": False})
+    tool: A2AAgentTool = await A2AAgentTool.from_config(untrusted)
+    assert tool.wants_context is True
+
+    ctx = _TenantContext(session_id="s1", user_id="u-1", tenant="acme", tags=["x"])
+    await tool.ainvoke(message="hi", ctx=ctx)
+
+    assert seen["metadata"] is None
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_call_remote_forwards_context_to_a_trusted_agent(monkeypatch, config):
+    """For a trusted agent (the default), the caller's context crosses minus
+    `session_id` (carried as `context_id`) and the per-callee settings."""
+    seen: dict = {}
+    monkeypatch.setattr(MODULE, "A2AClient", _capturing_client(seen))
+
+    tool: A2AAgentTool = await A2AAgentTool.from_config(config)
+
+    ctx = _TenantContext(
+        session_id="s1",
+        user_id="u-1",
+        tenant="acme",
+        tags=["x"],
+        llm_settings={"temperature": 0},
+        workflow_settings={"max_steps": 3},
+    )
+    await tool.ainvoke(message="hi", ctx=ctx)
+
+    assert seen["metadata"] == {"user_id": "u-1", "tenant": "acme", "tags": ["x"]}
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_call_remote_without_context_sends_no_metadata(monkeypatch, config):
+    seen: dict = {}
+
+    class FakeA2AClient:
+        def __init__(self, config):
+            self.config = config
+
+        async def get_agent_card(self):
+            return DummyAgentCard(name="remote-agent", description="desc")
+
+        async def send_message(self, message, context_id=None, request_metadata=None):
+            seen["metadata"] = request_metadata
+            yield FinalAnswerEvent(content="ok")
+
+    monkeypatch.setattr(MODULE, "A2AClient", FakeA2AClient)
+
+    tool: A2AAgentTool = await A2AAgentTool.from_config(config)
+    await tool.ainvoke(message="hi", ctx=None)
+
+    assert seen["metadata"] is None

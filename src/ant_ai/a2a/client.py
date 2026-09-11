@@ -138,7 +138,7 @@ class A2AClient(BaseModel):
 
         request = SendMessageRequest(message=msg)
 
-        if self.config.propagate_trace_context:
+        if self.config.trusted:
             request.metadata.update(obs.propagation_headers())
         if request_metadata:
             request.metadata.update(request_metadata)

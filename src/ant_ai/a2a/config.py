@@ -30,10 +30,10 @@ class A2AConfig(BaseModel):
         description="The supported A2A protocol bindings.",
     )
     streaming: bool = Field(default=True, description="Whether to enable streaming.")
-    propagate_trace_context: bool = Field(
+    trusted: bool = Field(
         default=True,
         description=(
-            "Whether to inject the current trace context into outbound A2A requests. Set to False when calling third-party agents you do not own."
+            "Whether this remote agent is owned by you. A trusted agent receives the current trace context and, when called from another agent's run, the caller's InvocationContext as request metadata (see `InvocationContext.outbound_metadata`)."
         ),
     )
     model_config = ConfigDict(arbitrary_types_allowed=True)
