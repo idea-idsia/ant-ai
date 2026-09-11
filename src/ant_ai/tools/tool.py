@@ -125,6 +125,19 @@ def _build_args_model_from_signature(
     return ArgsModel
 
 
+class ToolError(Exception):
+    """Raised by a tool to report a failure the model can recover from.
+
+    Tools signal failure by raising, not by returning an error string: `ToolStep`
+    turns any exception into an `ERROR: ...` result for the model and marks the
+    call `is_error=True`, whereas a returned value is a success -- the step does
+    not inspect content. `ToolError` names the expected case, where the message
+    is written for the model; unexpected exceptions take the same path.
+
+    MCP tools raise it when the server answers with `isError`.
+    """
+
+
 class Tool(BaseModel):
     """
     Single public abstraction for tools.
@@ -319,13 +332,18 @@ class Tool(BaseModel):
             if not unwrap_result:
                 return result
 
-            structured = getattr(result, "structuredContent", None)
-            if structured not in (None, {}):
-                return structured
+            first = result.content[0] if result.content else None
+            text: str | None = (
+                first.text if isinstance(first, mcp.types.TextContent) else None
+            )
+            if result.is_error:
+                raise ToolError(text or f"MCP tool '{mcp_tool.name}' failed")
 
-            content = getattr(result, "content", None)
-            if content and hasattr(content[0], "text"):
-                return content[0].text
+            if result.structured_content not in (None, {}):
+                return result.structured_content
+
+            if text is not None:
+                return text
 
             return result
 

@@ -659,3 +659,59 @@ async def test_stream_wrapped_raises_if_hook_lies_about_stream_safety():
     with pytest.raises(RuntimeError, match="stream-safe"):
         async for _ in loop._stream_wrapped(reason_step, wrapped, state, ctx=None):
             pass
+
+
+@pytest.mark.unit
+async def test_tool_is_error_is_carried_into_state_messages():
+    """The ToolCallResultMessage the loop appends to state keeps the `is_error`
+    flag the tool step recorded."""
+    from ant_ai.core.message import ToolCallResultMessage
+
+    tool_call = ToolCall(id="c1", function=ToolFunction(name="my_tool", arguments="{}"))
+
+    class SequencedStep(FakeStep):
+        """One item per call: first a tool request, then a final answer."""
+
+        def __init__(self):
+            super().__init__("llm", [])
+            self._calls = [
+                make_llm_result(
+                    "calling", tool_calls=(tool_call,), action=TransitionAction.CONTINUE
+                ),
+                make_llm_result("done"),
+            ]
+
+        async def run(self, state, ctx):
+            yield self._calls.pop(0)
+
+        stream = run
+
+    reason_step = SequencedStep()
+    act_step = FakeStep(
+        "tool",
+        [
+            StepResult(
+                output=ToolOutput(
+                    results=(
+                        {
+                            "tool_call_id": "c1",
+                            "name": "my_tool",
+                            "content": "ERROR: nope",
+                            "is_error": True,
+                        },
+                    )
+                ),
+                transition=Transition(
+                    action=TransitionAction.CONTINUE, next_step="llm"
+                ),
+            )
+        ],
+    )
+
+    loop: ReActLoop = make_loop(reason_step, act_step=act_step)
+    state = State(messages=[Message(role="user", content="go")])
+    _ = [e async for e in loop.stream(state, ctx=None, max_steps=5)]
+
+    results = [m for m in state.messages if isinstance(m, ToolCallResultMessage)]
+    assert len(results) == 1
+    assert results[0].is_error is True

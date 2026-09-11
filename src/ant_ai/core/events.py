@@ -140,6 +140,10 @@ class ToolResultEvent(AgentEvent):
         default="",
         description="Name of the tool that was called.",
     )
+    is_error: bool = Field(
+        default=False,
+        description="Whether the tool call failed (the tool raised).",
+    )
 
 
 class ReasoningEvent(AgentEvent):

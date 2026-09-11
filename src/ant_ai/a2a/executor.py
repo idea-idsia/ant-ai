@@ -18,10 +18,19 @@ from ant_ai.a2a.session import current_session_id
 from ant_ai.a2a.translator import A2AToHVEvent, HVEventToA2A
 from ant_ai.agent.agent import Agent
 from ant_ai.core.events import CompletedEvent, ContentDeltaEvent, Event
-from ant_ai.core.message import Message
+from ant_ai.core.message import (
+    AnyMessage,
+    Message,
+    ToolCallMessage,
+    ToolCallResultMessage,
+)
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.observer import obs
 from ant_ai.workflow.workflow import Workflow
+
+_UNANSWERED_TOOL_CALL = (
+    "The run was stopped before this tool returned; it did not complete."
+)
 
 
 class A2AExecutor(AgentExecutor):
@@ -175,8 +184,48 @@ class A2AExecutor(AgentExecutor):
         return history
 
     def _convert_history(self, a2a_history: list[A2AMessage]) -> list[Message]:
-        return [
-            m
-            for msg in a2a_history
-            if (m := self._a2a_to_hv.to_history_message(msg)) is not None
-        ]
+        return self._answer_dangling_tool_calls(
+            [
+                m
+                for msg in a2a_history
+                if (m := self._a2a_to_hv.to_history_message(msg)) is not None
+            ]
+        )
+
+    @staticmethod
+    def _answer_dangling_tool_calls(history: list[AnyMessage]) -> list[AnyMessage]:
+        """Give every unanswered tool call a result, so the transcript replays.
+
+        A task cancelled (or crashed) while its tools ran ends with the
+        assistant's `tool_calls` turn and nothing after it: the run cannot
+        emit results once the terminal status is on the queue. Chat-completion
+        APIs reject a transcript where such a turn is followed by anything but
+        its tool messages, which made the next turn in the same context fail.
+        The synthetic results say what happened and are flagged as errors, so
+        the model knows the work was not done.
+        """
+        repaired: list[AnyMessage] = []
+        pending: dict[str, str] = {}  # call id -> tool name, unanswered so far
+
+        def flush() -> None:
+            repaired.extend(
+                ToolCallResultMessage(
+                    tool_call_id=call_id,
+                    name=name,
+                    content=_UNANSWERED_TOOL_CALL,
+                    is_error=True,
+                )
+                for call_id, name in pending.items()
+            )
+            pending.clear()
+
+        for m in history:
+            if isinstance(m, ToolCallResultMessage):
+                pending.pop(m.tool_call_id, None)
+            elif pending:
+                flush()
+            if isinstance(m, ToolCallMessage):
+                pending.update((tc.id, tc.function.name) for tc in m.tool_calls)
+            repaired.append(m)
+        flush()
+        return repaired

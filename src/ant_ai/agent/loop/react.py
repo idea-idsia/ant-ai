@@ -141,6 +141,7 @@ class ReActLoop(BaseAgentLoop):
                                 name=r["name"],
                                 tool_call_id=r["tool_call_id"],
                                 content=r["content"],
+                                is_error=r.get("is_error", False),
                             )
                         )
 

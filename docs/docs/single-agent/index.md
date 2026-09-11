@@ -64,6 +64,26 @@ agent = Agent(..., tools=[read_file, write_file])
 agent.add_tool(read_file)
 ```
 
+### Reporting failures
+
+Raise to report a failure; don't return an error string. Any exception a tool raises becomes an `ERROR: ...` result the model can recover from, and the call is flagged `is_error=True` on the [`ToolResultEvent`][ant_ai.core.events.ToolResultEvent] and the [`ToolCallResultMessage`][ant_ai.core.message.ToolCallResultMessage] — the same flag Anthropic's `tool_result` and MCP's `CallToolResult` carry. A tool that returns is a success: the framework doesn't inspect the content, so an error *string* would be counted as one.
+
+Use [`ToolError`][ant_ai.tools.tool.ToolError] for expected failures whose message is written for the model; let anything else propagate as-is:
+
+```python
+from ant_ai import tool, ToolError
+
+
+@tool
+def read_file(path: str) -> str:
+    """Read a file from the workspace."""
+    if not Path(path).is_file():
+        raise ToolError(f"file not found: {path}")
+    return Path(path).read_text()
+```
+
+MCP tools follow the same contract: a server answering with `isError` raises `ToolError` on this side. The flag is carried through events, A2A history and the agent's state, but is not sent to the model.
+
 ### Class-based tools (namespaces)
 
 Group related tools under a single class. Each public method becomes a separate tool exposed to the LLM as `ClassName.method_name`.

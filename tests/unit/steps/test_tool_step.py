@@ -320,3 +320,71 @@ async def test_cancelling_the_step_cancels_in_flight_tools():
         await asyncio.wait_for(run, timeout=1)
 
     assert outcome == {"cancelled": True, "finished": False}
+
+
+@pytest.mark.unit
+async def test_plain_return_is_not_an_error():
+    """A tool that returns is a success, on both the event and the result dict
+    the loop rebuilds the message from -- content is not inspected."""
+
+    @tool_decorator
+    def ok() -> str:
+        return "Error: this string is a legitimate result, not a failure"
+
+    step = ToolStep(registry=ToolRegistry(tools=[ok]))
+    items = await _collect(step.run(_make_state(_make_tool_call("ok")), None))
+
+    event = next(i for i in items if isinstance(i, ToolResultEvent))
+    output: ToolOutput = next(i for i in items if isinstance(i, StepResult)).output
+    assert event.is_error is False
+    assert output.results[0]["is_error"] is False
+
+
+@pytest.mark.unit
+async def test_tool_error_marks_result_as_error():
+    from ant_ai.tools import ToolError
+
+    @tool_decorator
+    def nope() -> str:
+        raise ToolError("file not found: x.txt")
+
+    step = ToolStep(registry=ToolRegistry(tools=[nope]))
+    items = await _collect(step.run(_make_state(_make_tool_call("nope")), None))
+
+    event = next(i for i in items if isinstance(i, ToolResultEvent))
+    output: ToolOutput = next(i for i in items if isinstance(i, StepResult)).output
+    assert event.is_error is True
+    assert event.content == "ERROR: file not found: x.txt"
+    assert output.results[0]["is_error"] is True
+
+
+@pytest.mark.unit
+async def test_unexpected_exception_marks_result_as_error():
+    @tool_decorator
+    def boom() -> str:
+        raise RuntimeError("kaboom")
+
+    step = ToolStep(registry=ToolRegistry(tools=[boom]))
+    items = await _collect(step.run(_make_state(_make_tool_call("boom")), None))
+
+    event = next(i for i in items if isinstance(i, ToolResultEvent))
+    assert event.is_error is True
+
+
+@pytest.mark.unit
+async def test_missing_tool_and_invalid_args_are_errors():
+    @tool_decorator
+    def add(a: int) -> int:
+        return a
+
+    step = ToolStep(registry=ToolRegistry(tools=[add]))
+    state = _make_state(
+        _make_tool_call("missing", call_id="c1"),
+        _make_tool_call("add", "not json", call_id="c2"),
+    )
+    items = await _collect(step.run(state, None))
+
+    flags = {
+        i.tool_call_id: i.is_error for i in items if isinstance(i, ToolResultEvent)
+    }
+    assert flags == {"c1": True, "c2": True}

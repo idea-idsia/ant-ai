@@ -32,7 +32,7 @@ class OpenAIChat(ChatLLM):
         """Converts the internal Message objects into the shape expected by the OpenAI Python SDK. Casting just to make hinters happy."""
         return cast(
             list[ChatCompletionMessageParam],
-            [m.model_dump(exclude={"kind"}) for m in messages],
+            [m.to_provider_dict() for m in messages],
         )
 
     def invoke(
