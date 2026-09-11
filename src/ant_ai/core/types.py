@@ -45,6 +45,20 @@ class InvocationContext(BaseModel):
         """
         return cls.model_validate({**(metadata or {}), "session_id": session_id})
 
+    def outbound_metadata(self) -> dict[str, Any]:
+        """What this context forwards when the run calls another agent over A2A.
+
+        Only sent to agents whose `A2AConfig.trusted` is on -- whether a callee
+        is trusted is decided per agent, not here. The default is
+        every set field except `session_id` (it travels as the A2A `context_id`)
+        and `llm_settings` / `workflow_settings`, which are the callee's own.
+        Override to withhold more; the callee's `from_metadata` rebuilds it.
+        """
+        return self.model_dump(
+            exclude={"session_id", "llm_settings", "workflow_settings"},
+            exclude_none=True,
+        )
+
     def trace_attributes(self) -> dict[str, Any]:
         """Fields bound to the run's trace and sent with `workflow.start`.
 

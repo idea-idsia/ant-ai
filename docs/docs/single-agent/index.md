@@ -180,6 +180,7 @@ Two hooks control how the subclass behaves:
 
 - `from_metadata(session_id=..., metadata=...)` builds the context from the request metadata (the A2A message `metadata`, i.e. `request_metadata` on [`A2AClient.send_message`][ant_ai.a2a.client.A2AClient.send_message]). Fields are filled **by name** — a `tenant` key fills `tenant` — and unknown keys are ignored. Override it to map a different wire shape onto your fields.
 - `trace_attributes()` returns the fields bound to the run's trace and sent with `workflow.start`. The default is `session_id` and `user_id`. Extend it to surface your own — and keep secrets out, since these reach whatever observability backend is configured.
+- `outbound_metadata()` is what the context forwards when an agent calls *another* agent through [`A2AAgentTool`][ant_ai.a2a.agent.A2AAgentTool] — every set field except `session_id` (it travels as the A2A `context_id`) and the per-callee `llm_settings`/`workflow_settings`. Whether a remote agent *receives* it is decided per agent by `A2AConfig.trusted`: a trusted agent gets the trace context and this metadata; mark third-party agents `trusted=False` and they get the message and the session id only. The callee's `from_metadata` rebuilds it.
 
 When calling the agent directly, construct the subclass yourself: `agent.ainvoke(..., ctx=MyContext(session_id="s1", tenant="acme"))`.
 
