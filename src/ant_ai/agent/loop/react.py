@@ -14,7 +14,6 @@ from ant_ai.core.events import (
 )
 from ant_ai.core.message import Message, ToolCallMessage, ToolCallResultMessage
 from ant_ai.core.result import (
-    ClarificationNeededOutput,
     LLMOutput,
     StepResult,
     ToolOutput,
@@ -129,8 +128,6 @@ class ReActLoop(BaseAgentLoop):
                             yield item
                     if act_result is None:
                         raise RuntimeError("Tool step produced no result")
-                    if isinstance(act_result.output, ClarificationNeededOutput):
-                        return
                     if not isinstance(act_result.output, ToolOutput):
                         raise TypeError(
                             f"Expected ToolOutput, got {type(act_result.output).__name__}"
@@ -144,6 +141,11 @@ class ReActLoop(BaseAgentLoop):
                                 is_error=r.get("is_error", False),
                             )
                         )
+                    if act_result.transition.action == TransitionAction.END:
+                        # A tool asked for human input. The transcript is complete
+                        # up to the question; the caller resumes by adding the
+                        # user's reply and running again.
+                        return
 
                 case FinalResponse():
                     final_event: FinalAnswerEvent = await self._make_final_answer(

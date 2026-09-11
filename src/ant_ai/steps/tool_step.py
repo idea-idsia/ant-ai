@@ -46,9 +46,11 @@ def _serialize_result(res: Any) -> str:
 class ToolStep(BaseModel):
     """Executes all tool calls from the preceding `LLMStep` concurrently.
 
-    Yields a `StepResult[ToolOutput]` on success, or
-    `StepResult[ClarificationNeededOutput]` with `TransitionAction.END` when
-    any tool signals that human input is needed.
+    Always yields a `StepResult[ToolOutput]` holding a result for every call.
+    If any tool asked for human input (`ClarificationNeededOutput`), that call
+    is answered with its question, a `ClarificationNeededEvent` is emitted, and
+    the transition is `END` so the run stops for the user's reply -- with the
+    transcript well-formed for resumption.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -73,14 +75,14 @@ class ToolStep(BaseModel):
         ]
 
         result_dicts: list[dict[str, Any]] = []
-        clarification: ClarificationNeededOutput | None = None
+        clarifications: list[ClarificationNeededOutput] = []
 
         try:
             for fut in asyncio.as_completed(tasks):
                 outcome: ToolCallResultMessage | ClarificationNeededOutput = await fut
 
                 if isinstance(outcome, ClarificationNeededOutput):
-                    clarification: ClarificationNeededOutput = clarification or outcome
+                    clarifications.append(outcome)
                     continue
 
                 msg: ToolCallResultMessage = outcome
@@ -108,7 +110,23 @@ class ToolStep(BaseModel):
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        if clarification is not None:
+        # A clarified call is answered with its own question. Without a result
+        # the assistant's `tool_calls` turn would be left dangling, and the
+        # user's reply on resume would be rejected by chat-completion APIs.
+        for clarification in clarifications:
+            result_dicts.append(
+                {
+                    "tool_call_id": clarification.tool_call_id,
+                    "name": clarification.tool_name,
+                    "content": clarification.question,
+                    "is_error": False,
+                }
+            )
+            yield ToolResultEvent(
+                content=clarification.question,
+                tool_call_id=clarification.tool_call_id,
+                name=clarification.tool_name,
+            )
             yield ClarificationNeededEvent(
                 content=clarification.question,
                 metadata={
@@ -116,15 +134,12 @@ class ToolStep(BaseModel):
                     "name": clarification.tool_name,
                 },
             )
-            yield StepResult(
-                output=clarification,
-                transition=Transition(action=TransitionAction.END),
-            )
-            return
 
         yield StepResult(
             output=ToolOutput(results=tuple(result_dicts)),
-            transition=Transition(action=TransitionAction.CONTINUE, next_step="llm"),
+            transition=Transition(action=TransitionAction.END)
+            if clarifications
+            else Transition(action=TransitionAction.CONTINUE, next_step="llm"),
         )
 
     async def _run_one(

@@ -175,6 +175,37 @@ Two hooks control how the subclass behaves:
 
 When calling the agent directly, construct the subclass yourself: `agent.ainvoke(..., ctx=MyContext(session_id="s1", tenant="acme"))`.
 
+### Asking the user for input
+
+A tool can return a [`ClarificationNeededOutput`][ant_ai.core.result.ClarificationNeededOutput] instead of a result to say it needs something only a person can supply. The built-in [`HumanInputNeededTool`][ant_ai.tools.builtins.human_input.HumanInputNeededTool] does exactly that, and your own tools can too:
+
+```python
+from ant_ai.core.result import ClarificationNeededOutput
+
+
+@tool
+def deploy(env: str) -> str | ClarificationNeededOutput:
+    """Deploy to an environment."""
+    if env == "prod":
+        return ClarificationNeededOutput(question="Deploy to prod — are you sure?")
+    ...
+```
+
+The agent emits a [`ClarificationNeededEvent`][ant_ai.core.events.ClarificationNeededEvent] with the question and **stops**. The clarified tool call is answered in the transcript with its own question, so the conversation is left well-formed — `assistant(tool_calls)` → `tool` — and resuming is just adding the user's reply and running again:
+
+```python
+state = State(messages=[Message(role="user", content="ship it to prod")])
+async for event in agent.stream(state, ctx=ctx):
+    if isinstance(event, ClarificationNeededEvent):
+        answer = input(event.content)  # ask a person
+        state.add_message(Message(role="user", content=answer))
+        # then call agent.stream(state, ctx=ctx) again
+```
+
+Over A2A the task enters `input-required`; the caller resumes by sending the answer with the same `context_id`, and the agent rebuilds the transcript from task history.
+
+Use a clarification when the run genuinely cannot proceed without the answer. If the tool just needs to *tell* the user something and let the model carry on — a precondition it can't satisfy, say — raise a [`ToolError`](#reporting-failures) instead: the model sees the message, does what it can, and relays it in its answer.
+
 ## Streaming a response
 
 [`Agent.stream()`][ant_ai.agent.agent.Agent.stream] drives the agent until it produces a final answer, yielding [`Event`][ant_ai.core.events.Event] objects at each step — LLM output, tool calls, tool results, and completion.

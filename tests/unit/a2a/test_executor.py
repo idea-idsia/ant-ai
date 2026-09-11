@@ -358,3 +358,33 @@ def test_dangling_tool_call_is_answered_before_the_next_message():
         "Message",
     ]
     assert result[1].tool_call_id == "c1" and result[1].is_error
+
+
+@pytest.mark.unit
+def test_history_after_clarification_is_resumable():
+    """A task that ended on a clarification rebuilds as tool_calls -> tool result
+    (the question); the ClarificationNeededEvent itself adds nothing, so the
+    question is not duplicated and the next user message can follow."""
+    from ant_ai.core.events import (
+        ClarificationNeededEvent,
+        ToolCallingEvent,
+        ToolResultEvent,
+    )
+
+    executor = _make_executor()
+    tc = _tool_call(call_id="c1", name="ask")
+    events = [
+        ToolCallingEvent(tool_calls=[tc]),
+        ToolResultEvent(content="Which one?", tool_call_id="c1", name="ask"),
+        ClarificationNeededEvent(content="Which one?"),
+    ]
+    msgs = [_a2a_msg() for _ in events]
+
+    with patch.object(executor._a2a_to_hv, "translate", side_effect=events):
+        result = executor._convert_history(msgs)
+
+    assert [type(m).__name__ for m in result] == [
+        "ToolCallMessage",
+        "ToolCallResultMessage",
+    ]
+    assert result[1].content == "Which one?"
