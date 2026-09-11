@@ -118,6 +118,43 @@ def whoami(ctx: InvocationContext) -> str:
 
 Use this for anything scoped to the caller rather than the conversation — per-user data lookups, multi-tenant isolation, audit logging. [`MemoryTool`][ant_ai.tools.builtins.memory_tool.MemoryTool] (see [Agent memory](memory.md)) is a built-in example: its `search`/`add` tool methods take `ctx` this way to scope memories per user.
 
+### Custom invocation context
+
+Subclass `InvocationContext` to carry your own request-scoped fields — a tenant, a feature flag, tags for your tracing backend — through the whole run. Tools receive the subclass instance, and the A2A and ACP entry points build it for you from the incoming request:
+
+```python
+from typing import Any
+
+from ant_ai.a2a import A2AServer
+from ant_ai.core.types import InvocationContext
+
+
+class MyContext(InvocationContext):
+    tenant: str = ""
+    tags: list[str] | None = None
+
+    def trace_attributes(self) -> dict[str, Any]:
+        # Bound to every trace event for the run; the Langfuse sink forwards `tags`.
+        return {**super().trace_attributes(), "tags": self.tags}
+
+
+@tool
+def whoami(ctx: MyContext) -> str:
+    return f"{ctx.user_id} @ {ctx.tenant}"
+
+
+server = A2AServer(
+    agent=agent, workflow=workflow, agent_card=card, context_class=MyContext
+)
+```
+
+Two hooks control how the subclass behaves:
+
+- `from_metadata(session_id=..., metadata=...)` builds the context from the request metadata (the A2A message `metadata`, i.e. `request_metadata` on [`A2AClient.send_message`][ant_ai.a2a.client.A2AClient.send_message]). Fields are filled **by name** — a `tenant` key fills `tenant` — and unknown keys are ignored. Override it to map a different wire shape onto your fields.
+- `trace_attributes()` returns the fields bound to the run's trace and sent with `workflow.start`. The default is `session_id` and `user_id`. Extend it to surface your own — and keep secrets out, since these reach whatever observability backend is configured.
+
+When calling the agent directly, construct the subclass yourself: `agent.ainvoke(..., ctx=MyContext(session_id="s1", tenant="acme"))`.
+
 ## Streaming a response
 
 [`Agent.stream()`][ant_ai.agent.agent.Agent.stream] drives the agent until it produces a final answer, yielding [`Event`][ant_ai.core.events.Event] objects at each step — LLM output, tool calls, tool results, and completion.

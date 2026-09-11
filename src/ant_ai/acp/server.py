@@ -14,6 +14,7 @@ from starlette.websockets import WebSocket
 from ant_ai.acp.adapter import ACPAdapter
 from ant_ai.acp.commands import ACPCommand
 from ant_ai.agent.agent import Agent
+from ant_ai.core.types import InvocationContext
 from ant_ai.workflow.workflow import Workflow
 
 
@@ -22,9 +23,12 @@ def build_acp_ws_route(
     workflow: Workflow,
     *,
     commands: list[ACPCommand] | None = None,
+    context_class: type[InvocationContext] = InvocationContext,
 ) -> WebSocketRoute:
     """Return a Starlette WebSocketRoute that bridges ACP over WebSocket at ``/acp/ws``."""
-    adapter = ACPAdapter(agent, workflow, commands=commands)
+    adapter = ACPAdapter(
+        agent, workflow, commands=commands, context_class=context_class
+    )
 
     async def _handle_ws(websocket: WebSocket) -> None:
         from acp.agent.connection import AgentSideConnection
@@ -117,13 +121,23 @@ class ACPServer(BaseModel):
     host: str = Field(default="127.0.0.1")
     port: int = Field(default=9001)
     commands: Annotated[list[ACPCommand], SkipValidation] = Field(default_factory=list)
+    context_class: type[InvocationContext] = Field(
+        default=InvocationContext,
+        description=(
+            "The InvocationContext (sub)class built for each prompt. Subclass "
+            "InvocationContext to carry your own fields through the run."
+        ),
+    )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def build_routes(self) -> list:
         return [
             build_acp_ws_route(
-                self.agent, self.workflow, commands=self.commands or None
+                self.agent,
+                self.workflow,
+                commands=self.commands or None,
+                context_class=self.context_class,
             )
         ]
 
@@ -162,5 +176,10 @@ class ACPServer(BaseModel):
         from acp import run_agent
 
         logger.info(f"Starting ACP stdio agent '{self.agent.name}'...")
-        adapter = ACPAdapter(self.agent, self.workflow, commands=self.commands or None)
+        adapter = ACPAdapter(
+            self.agent,
+            self.workflow,
+            commands=self.commands or None,
+            context_class=self.context_class,
+        )
         asyncio.run(run_agent(adapter, use_unstable_protocol=True))

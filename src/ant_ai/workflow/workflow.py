@@ -292,15 +292,16 @@ class Workflow[StateT: State = State](BaseModel):
 
         current: str = start_at
 
+        trace: dict[str, Any] = ctx.trace_attributes() if ctx else {"session_id": None}
         with obs.bind(
-            session_id=ctx.session_id if ctx else "",
+            **trace,
             agent_name=agent.name,
             user_input=run.state.last_message,
         ):
             await obs.event(
                 "workflow.start",
+                **trace,
                 agent_name=agent.name,
-                session_id=ctx.session_id if ctx else None,
                 input=[
                     {"role": m.role, "content": m.content} for m in run.state.messages
                 ],
