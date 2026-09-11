@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextvars import Token
 
 from a2a.helpers import new_task_from_user_message
@@ -84,12 +85,33 @@ class A2AExecutor(AgentExecutor):
             await obs.event("a2a.execute", task_id=task.id, context_id=task.context_id)
             try:
                 await self._execute(context, updater, task)
+            except asyncio.CancelledError:
+                await obs.event(
+                    "a2a.cancelled", task_id=task.id, context_id=task.context_id
+                )
+                raise
             except Exception as exc:
                 await obs.exception("a2a.error", exc)
                 raise InternalError() from exc
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise Exception("Task cancel not supported yet.")
+        """Cancel a running task by publishing the canceled status.
+
+        Stopping the coroutine is the SDK's job: `DefaultRequestHandler.on_cancel_task`
+        calls this and then cancels the producer task itself. Raising here (as this
+        method used to) aborted the handler before it got that far, so `tasks/cancel`
+        could not stop anything.
+
+        What the handler needs from us is the canceled status: `consume_all` refuses
+        any other final state, and a canceled status update is a final event, which
+        is what closes the queue the cancelled producer never gets to close.
+        """
+        task: Task | None = context.current_task
+        if task is None:
+            raise Exception("No task to cancel.")
+
+        await obs.event("a2a.cancel", task_id=task.id, context_id=task.context_id)
+        await TaskUpdater(event_queue, task.id, task.context_id).cancel()
 
     async def _execute(
         self,

@@ -288,3 +288,35 @@ async def test_run_ctx_excluded_from_observability_span_input(monkeypatch):
     await _collect(step.run(state, ctx))
 
     assert captured_inputs == [{"query": "hi"}]
+
+
+@pytest.mark.unit
+async def test_cancelling_the_step_cancels_in_flight_tools():
+    """Cancelling the run (what `tasks/cancel` does over A2A) must stop the
+    tools it started, not wait for them to finish on their own."""
+    import asyncio
+
+    started = asyncio.Event()
+    outcome: dict[str, bool] = {"cancelled": False, "finished": False}
+
+    @tool_decorator
+    async def slow() -> str:
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            outcome["cancelled"] = True
+            raise
+        outcome["finished"] = True
+        return "done"
+
+    step = ToolStep(registry=ToolRegistry(tools=[slow]))
+    state = _make_state(_make_tool_call("slow"))
+
+    run = asyncio.create_task(_collect(step.run(state, None)))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(run, timeout=1)
+
+    assert outcome == {"cancelled": True, "finished": False}

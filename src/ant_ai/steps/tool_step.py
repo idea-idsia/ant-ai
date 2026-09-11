@@ -97,6 +97,13 @@ class ToolStep(BaseModel):
                     name=msg.name,
                 )
         finally:
+            # Leaving early (cancellation, a tool raising, the consumer closing
+            # the generator) must take the in-flight tools down too: gather
+            # alone would wait for them to finish on their own, so a cancelled
+            # run would keep executing until its slowest tool returned.
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
         if clarification is not None:

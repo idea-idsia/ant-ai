@@ -216,3 +216,35 @@ async def test_agent_message_skips_artifact_close_without_stream_id():
 
     updater.add_artifact.assert_not_called()
     updater.update_status.assert_called_once()
+
+
+@pytest.mark.unit
+async def test_clarification_survives_a2a_round_trip():
+    """A ClarificationNeededEvent goes out as an input-required status update
+    carrying the event in its metadata, and translates back on the far side
+    with its text intact."""
+    from a2a.server.events import EventQueueLegacy
+    from a2a.server.tasks import TaskUpdater
+    from a2a.types import TaskState, TaskStatusUpdateEvent
+
+    from ant_ai.core.events import ClarificationNeededEvent
+
+    queue = EventQueueLegacy()
+    updater = TaskUpdater(queue, "task-1", "ctx-1")
+    event = ClarificationNeededEvent(
+        content="Which folder?", metadata={"tool_call_id": "c-1", "name": "fs"}
+    )
+
+    await HVEventToA2A(stream_artifacts=False).apply(event=event, updater=updater)
+
+    raw = await queue.dequeue_event()
+    assert isinstance(raw, TaskStatusUpdateEvent)
+    assert raw.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
+    assert raw.status.message.parts[0].text == "Which folder?"
+
+    back = A2AToHVEvent().translate(raw)
+    assert isinstance(back, ClarificationNeededEvent)
+    assert back.content == "Which folder?"
+    assert back.metadata == {"tool_call_id": "c-1", "name": "fs"}
+    assert back.task_id == "task-1"
+    assert back.session_id == "ctx-1"
