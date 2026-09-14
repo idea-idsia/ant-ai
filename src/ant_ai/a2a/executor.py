@@ -26,6 +26,7 @@ from ant_ai.core.message import (
     ToolCallResultMessage,
 )
 from ant_ai.core.types import InvocationContext, State
+from ant_ai.llm import ContextWindowExceededError
 from ant_ai.observer import obs
 from ant_ai.workflow.workflow import Workflow
 
@@ -103,6 +104,11 @@ class A2AExecutor(AgentExecutor):
             except A2AError as exc:
                 await obs.exception("a2a.error", exc)
                 raise
+            except ContextWindowExceededError as exc:
+                # The message is the library's own, not the provider's, so it
+                # can cross to the caller; the provider's text stays in the log.
+                await obs.exception("a2a.error", exc)
+                raise InternalError(str(exc)) from exc
             except Exception as exc:
                 await obs.exception("a2a.error", exc)
                 raise InternalError() from exc

@@ -1,6 +1,8 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from typing import Any, cast
 
+import openai
 from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
@@ -8,11 +10,23 @@ from pydantic import BaseModel
 from ant_ai.core.message import Message, MessageChunk
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk
 from ant_ai.core.types import InvocationContext
+from ant_ai.llm.exceptions import ContextWindowExceededError
 from ant_ai.llm.protocol import ChatLLM
 
 
 def _drop_none(**kwargs) -> dict[str, Any]:
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+@contextmanager
+def _translate_errors(model: str) -> Iterator[None]:
+    """Raise the library's own exception for conditions callers may act on."""
+    try:
+        yield
+    except openai.BadRequestError as exc:
+        if exc.code == "context_length_exceeded":
+            raise ContextWindowExceededError(model) from exc
+        raise
 
 
 class OpenAIChat(ChatLLM):
@@ -45,14 +59,15 @@ class OpenAIChat(ChatLLM):
     ) -> ChatLLMResponse:
         openai_messages = self._to_openai_messages(messages)
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=openai_messages,
-            **_drop_none(
-                tools=tools,
-                response_format=response_format,
-            ),
-        )
+        with _translate_errors(self.model):
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=openai_messages,
+                **_drop_none(
+                    tools=tools,
+                    response_format=response_format,
+                ),
+            )
         content = response.choices[0].message.content or ""
         return ChatLLMResponse(message=Message(role="assistant", content=content))
 
@@ -66,14 +81,15 @@ class OpenAIChat(ChatLLM):
     ) -> ChatLLMResponse:
         openai_messages = self._to_openai_messages(messages)
 
-        response = await self.async_client.chat.completions.create(
-            model=self.model,
-            messages=openai_messages,
-            **_drop_none(
-                tools=tools,
-                response_format=response_format,
-            ),
-        )
+        with _translate_errors(self.model):
+            response = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=openai_messages,
+                **_drop_none(
+                    tools=tools,
+                    response_format=response_format,
+                ),
+            )
         content = response.choices[0].message.content or ""
         return ChatLLMResponse(message=Message(role="assistant", content=content))
 
@@ -88,33 +104,35 @@ class OpenAIChat(ChatLLM):
         openai_messages = self._to_openai_messages(messages)
 
         async def gen() -> AsyncIterator[ChatLLMStreamChunk]:
-            stream = await self.async_client.chat.completions.create(
-                model=self.model,
-                messages=openai_messages,
-                stream=True,
-                **_drop_none(
-                    tools=tools,
-                    response_format=response_format,
-                ),
-            )
+            with _translate_errors(self.model):
+                stream = await self.async_client.chat.completions.create(
+                    model=self.model,
+                    messages=openai_messages,
+                    stream=True,
+                    **_drop_none(
+                        tools=tools,
+                        response_format=response_format,
+                    ),
+                )
 
-            async for chunk in stream:
-                choice_delta = chunk.choices[0].delta
-                delta = choice_delta.content
-                if delta:
-                    yield ChatLLMStreamChunk(
-                        delta=MessageChunk(role="assistant", delta=delta)
-                    )
+                async for chunk in stream:
+                    choice_delta = chunk.choices[0].delta
+                    delta = choice_delta.content
+                    if delta:
+                        yield ChatLLMStreamChunk(
+                            delta=MessageChunk(role="assistant", delta=delta)
+                        )
 
-                for tc in getattr(choice_delta, "tool_calls", None) or []:
-                    yield ChatLLMStreamChunk(
-                        delta=MessageChunk(role="assistant", delta=""),
-                        tool_calls={
-                            "index": tc.index,
-                            "id": tc.id,
-                            "name": getattr(tc.function, "name", None),
-                            "arguments": getattr(tc.function, "arguments", None) or "",
-                        },
-                    )
+                    for tc in getattr(choice_delta, "tool_calls", None) or []:
+                        yield ChatLLMStreamChunk(
+                            delta=MessageChunk(role="assistant", delta=""),
+                            tool_calls={
+                                "index": tc.index,
+                                "id": tc.id,
+                                "name": getattr(tc.function, "name", None),
+                                "arguments": getattr(tc.function, "arguments", None)
+                                or "",
+                            },
+                        )
 
         return gen()
