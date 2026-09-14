@@ -23,7 +23,9 @@ agent = Agent(
 ```
 
 `LiteLLMChat` accepts any model string supported by [LiteLLM](https://docs.litellm.ai/docs/providers) (e.g. `"gpt-4o"`, `"claude-opus-4-6"`, `"gemini/gemini-2.0-flash"`).
-To point it at your own endpoint (vLLM, a proxy, …) pass the credential and URL directly, or set them in the environment:
+
+Every [`ChatLLM`][ant_ai.llm.protocol.ChatLLM] backend is constructed the same way: `Backend(model, *, api_key=None, api_base=None)`.
+To point one at your own endpoint (vLLM, a proxy, …) pass the credential and URL directly, or set them in the environment under the backend's provider name:
 
 ```python
 llm = LiteLLMChat(
@@ -32,6 +34,11 @@ llm = LiteLLMChat(
     api_base="http://localhost:8000/v1",
 )
 ```
+
+| Backend       | `api_key` fallback | `api_base` fallback |
+| ------------- | ------------------ | ------------------- |
+| `LiteLLMChat` | `LITELLM_API_KEY`  | `LITELLM_API_BASE`  |
+| `OpenAIChat`  | `OPENAI_API_KEY`   | `OPENAI_BASE_URL`   |
 
 ```
 LITELLM_API_KEY=dev-local-key        # fallback when api_key is not given

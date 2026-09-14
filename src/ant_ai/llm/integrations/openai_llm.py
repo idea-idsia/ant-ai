@@ -1,3 +1,4 @@
+import os
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from typing import Any, cast
@@ -30,14 +31,34 @@ def _translate_errors(model: str) -> Iterator[None]:
 
 
 class OpenAIChat(ChatLLM):
-    """
-    Interface for a language model that generates chat responses using OpenAI's API.
+    """Chat model backed by the OpenAI Python SDK.
+
+    Args:
+        model: Any model the endpoint serves (e.g. `"gpt-5-nano"`).
+        api_key: Credential for the endpoint. Falls back to the `OPENAI_API_KEY`
+            environment variable when not given, so a deployment can keep its
+            secret under its own name and pass it here.
+        api_base: Endpoint URL, for any OpenAI-compatible server (vLLM, a
+            proxy, …). Falls back to `OPENAI_BASE_URL`, then to the SDK's
+            default of `https://api.openai.com/v1`.
     """
 
-    def __init__(self, model: str = "gpt-5-nano", api_key: str | None = None):
+    def __init__(
+        self,
+        model: str = "gpt-5-nano",
+        *,
+        api_key: str | None = None,
+        api_base: str | None = None,
+    ) -> None:
         self.model: str = model
-        self.client = OpenAI(api_key=api_key)
-        self.async_client = AsyncOpenAI(api_key=api_key)
+        self.api_key: str | None = (
+            api_key if api_key is not None else os.getenv("OPENAI_API_KEY")
+        )
+        self.api_base: str | None = (
+            api_base if api_base is not None else os.getenv("OPENAI_BASE_URL")
+        )
+        self.client = OpenAI(api_key=self.api_key, base_url=self.api_base)
+        self.async_client = AsyncOpenAI(api_key=self.api_key, base_url=self.api_base)
 
     @staticmethod
     def _to_openai_messages(
