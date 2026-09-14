@@ -9,7 +9,24 @@ from ant_ai.core.types import InvocationContext
 
 
 class ChatLLM(Protocol):
-    """Interface for a language model that generates chat responses."""
+    """Interface for a language model that generates chat responses.
+
+    Every backend is constructed as `Backend(model, *, api_key=None,
+    api_base=None)` and exposes the three as attributes. A caller can therefore
+    point any backend at its own deployment (a vLLM server, a proxy, …) without
+    knowing which one it holds, and keep the secret under its own name instead
+    of the one the provider's SDK reads from the environment.
+
+    Attributes:
+        model: Model identifier in the backend's own naming scheme.
+        api_key: Credential for the endpoint, or None to let the backend fall
+            back to its provider's environment variable.
+        api_base: Endpoint URL, or None for the provider's default.
+    """
+
+    model: str
+    api_key: str | None
+    api_base: str | None
 
     def invoke(
         self,

@@ -23,7 +23,9 @@ agent = Agent(
 ```
 
 `LiteLLMChat` accepts any model string supported by [LiteLLM](https://docs.litellm.ai/docs/providers) (e.g. `"gpt-4o"`, `"claude-opus-4-6"`, `"gemini/gemini-2.0-flash"`).
-To point it at your own endpoint (vLLM, a proxy, …) pass the credential and URL directly, or set them in the environment:
+
+Every [`ChatLLM`][ant_ai.llm.protocol.ChatLLM] backend is constructed the same way: `Backend(model, *, api_key=None, api_base=None)`.
+To point one at your own endpoint (vLLM, a proxy, …) pass the credential and URL directly, or set them in the environment under the backend's provider name:
 
 ```python
 llm = LiteLLMChat(
@@ -32,6 +34,11 @@ llm = LiteLLMChat(
     api_base="http://localhost:8000/v1",
 )
 ```
+
+| Backend       | `api_key` fallback | `api_base` fallback |
+| ------------- | ------------------ | ------------------- |
+| `LiteLLMChat` | `LITELLM_API_KEY`  | `LITELLM_API_BASE`  |
+| `OpenAIChat`  | `OPENAI_API_KEY`   | `OPENAI_BASE_URL`   |
 
 ```
 LITELLM_API_KEY=dev-local-key        # fallback when api_key is not given
@@ -186,22 +193,10 @@ When calling the agent directly, construct the subclass yourself: `agent.ainvoke
 
 ### What the caller sees when a run fails
 
-A failure inside an A2A run reaches the caller as a bare `InternalError` — the exception text is **never** forwarded, since it can carry prompt content or internal detail and the caller may not be the operator. The one exception is an A2A error you raise yourself: any `a2a.utils.errors.A2AError` (`InternalError("…")`, `InvalidParamsError("…")`, …) passes through with its message, so the place that knows what the caller should hear can say it — a tool, a hook, or an LLM wrapper:
+A failure inside an A2A run reaches the caller as a bare `InternalError` — the exception text is **never** forwarded, since it can carry prompt content or internal detail and the caller may not be the operator. Two things pass through with a message:
 
-```python
-import litellm
-from a2a.types import InternalError
-
-
-class MyLLM(LiteLLMChat):
-    async def ainvoke(self, messages, **kw):
-        try:
-            return await super().ainvoke(messages, **kw)
-        except litellm.ContextWindowExceededError as e:
-            raise InternalError(
-                "This conversation has grown too long; start a new one."
-            ) from e
-```
+- [`ContextWindowExceededError`][ant_ai.llm.ContextWindowExceededError], which `LiteLLMChat` and `OpenAIChat` raise in place of their provider's own error when the conversation no longer fits the model. Its message is written by the library, not copied from the provider, so the caller is told the conversation is too long and nothing else. You can also catch it yourself around `Agent.run()` or in a tool, without importing the provider.
+- Any `a2a.utils.errors.A2AError` you raise yourself (`InternalError("…")`, `InvalidParamsError("…")`, …), so the place that knows what the caller should hear can say it — a tool, a hook, or an LLM wrapper.
 
 ### Asking the user for input
 

@@ -228,3 +228,59 @@ def test_credentials_none_when_neither_given(monkeypatch, sample_messages):
 
     assert kwargs["api_key"] is None
     assert kwargs["api_base"] is None
+
+
+@pytest.mark.unit
+async def test_context_window_overflow_raises_the_library_exception(
+    monkeypatch, sample_messages
+):
+    """LiteLLM's own error is translated so callers can recognise the condition
+    without importing litellm; the original stays chained for logs."""
+    import litellm
+
+    import ant_ai.llm.integrations.lite_llm as wrapper_module
+    from ant_ai.llm import ContextWindowExceededError
+
+    def overflow(**kwargs):
+        raise litellm.ContextWindowExceededError(
+            message="prompt is 200001 tokens, limit 200000",
+            model="litellm-model",
+            llm_provider="openai",
+        )
+
+    async def aoverflow(**kwargs):
+        overflow()
+
+    monkeypatch.setattr(wrapper_module, "completion", overflow)
+    monkeypatch.setattr(wrapper_module, "acompletion", aoverflow)
+    chat = LiteLLMChat(model="litellm-model")
+
+    with pytest.raises(ContextWindowExceededError) as info:
+        chat.invoke(sample_messages)
+    assert info.value.model == "litellm-model"
+    assert isinstance(info.value.__cause__, litellm.ContextWindowExceededError)
+    assert "200001" not in str(info.value)
+
+    with pytest.raises(ContextWindowExceededError):
+        await chat.ainvoke(sample_messages)
+
+    with pytest.raises(ContextWindowExceededError):
+        async for _ in chat.stream(sample_messages):
+            pass
+
+
+@pytest.mark.unit
+def test_other_litellm_errors_pass_through_untouched(monkeypatch, sample_messages):
+    import litellm
+
+    import ant_ai.llm.integrations.lite_llm as wrapper_module
+
+    def bad_request(**kwargs):
+        raise litellm.BadRequestError(
+            message="unknown parameter", model="litellm-model", llm_provider="openai"
+        )
+
+    monkeypatch.setattr(wrapper_module, "completion", bad_request)
+
+    with pytest.raises(litellm.BadRequestError):
+        LiteLLMChat(model="litellm-model").invoke(sample_messages)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 
+import litellm
 from litellm import ModelResponse, acompletion, completion
 from litellm.types.utils import Choices
 from pydantic import BaseModel
@@ -10,6 +12,7 @@ from pydantic import BaseModel
 from ant_ai.core.message import Message, MessageChunk, ToolFunction
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk, ToolCall
 from ant_ai.core.types import InvocationContext
+from ant_ai.llm.exceptions import ContextWindowExceededError
 from ant_ai.llm.protocol import ChatLLM
 
 
@@ -42,6 +45,15 @@ def to_chatllm_response(
         usage=resp.usage.model_dump(),  # ty:ignore[unresolved-attribute]
         reasoning=reasoning,
     )
+
+
+@contextmanager
+def _translate_errors(model: str) -> Iterator[None]:
+    """Raise the library's own exception for conditions callers may act on."""
+    try:
+        yield
+    except litellm.ContextWindowExceededError as exc:
+        raise ContextWindowExceededError(model) from exc
 
 
 class LiteLLMChat(ChatLLM):
@@ -115,7 +127,8 @@ class LiteLLMChat(ChatLLM):
             tools=tools,
             response_format=response_format,
         )
-        return to_chatllm_response(completion(**kwargs))
+        with _translate_errors(self.model):
+            return to_chatllm_response(completion(**kwargs))
 
     async def ainvoke(
         self,
@@ -130,7 +143,8 @@ class LiteLLMChat(ChatLLM):
             tools=tools,
             response_format=response_format,
         )
-        return to_chatllm_response(await acompletion(**kwargs))
+        with _translate_errors(self.model):
+            return to_chatllm_response(await acompletion(**kwargs))
 
     def stream(
         self,
@@ -148,28 +162,30 @@ class LiteLLMChat(ChatLLM):
                 stream=True,
             )
 
-            stream = await acompletion(**kwargs)
-            async for chunk in stream:
-                choice_delta = chunk.choices[0].delta
-                delta = choice_delta.content or ""
-                reasoning_delta = (
-                    getattr(choice_delta, "reasoning_content", None) or None
-                )
-                if delta or reasoning_delta:
-                    yield ChatLLMStreamChunk(
-                        delta=MessageChunk(role="assistant", delta=delta),
-                        reasoning_delta=reasoning_delta,
+            with _translate_errors(self.model):
+                stream = await acompletion(**kwargs)
+                async for chunk in stream:
+                    choice_delta = chunk.choices[0].delta
+                    delta = choice_delta.content or ""
+                    reasoning_delta = (
+                        getattr(choice_delta, "reasoning_content", None) or None
                     )
+                    if delta or reasoning_delta:
+                        yield ChatLLMStreamChunk(
+                            delta=MessageChunk(role="assistant", delta=delta),
+                            reasoning_delta=reasoning_delta,
+                        )
 
-                for tc in getattr(choice_delta, "tool_calls", None) or []:
-                    yield ChatLLMStreamChunk(
-                        delta=MessageChunk(role="assistant", delta=""),
-                        tool_calls={
-                            "index": tc.index,
-                            "id": tc.id,
-                            "name": getattr(tc.function, "name", None),
-                            "arguments": getattr(tc.function, "arguments", None) or "",
-                        },
-                    )
+                    for tc in getattr(choice_delta, "tool_calls", None) or []:
+                        yield ChatLLMStreamChunk(
+                            delta=MessageChunk(role="assistant", delta=""),
+                            tool_calls={
+                                "index": tc.index,
+                                "id": tc.id,
+                                "name": getattr(tc.function, "name", None),
+                                "arguments": getattr(tc.function, "arguments", None)
+                                or "",
+                            },
+                        )
 
         return gen()

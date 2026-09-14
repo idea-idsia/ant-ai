@@ -448,3 +448,20 @@ async def test_other_exceptions_are_hidden_behind_a_bare_internal_error():
         )
     assert info.value.message == "Internal error"
     assert isinstance(info.value.__cause__, RuntimeError)
+
+
+@pytest.mark.unit
+async def test_context_window_overflow_reaches_the_caller_with_its_message():
+    """The one non-A2A exception the executor names: the message is the
+    library's own, so it is safe to put on the wire."""
+    from a2a.server.events import EventQueueLegacy
+    from a2a.types import InternalError
+
+    from ant_ai.llm import ContextWindowExceededError
+
+    with pytest.raises(InternalError) as info:
+        await _failing_executor(ContextWindowExceededError("m")).execute(
+            _request_context_with_message(), EventQueueLegacy()
+        )
+    assert "context window" in info.value.message
+    assert isinstance(info.value.__cause__, ContextWindowExceededError)
