@@ -41,24 +41,20 @@ class ObservabilitySingleton:
         async generator closed elsewhere) restores the leaving task's context;
         the entering task's context is out of reach and is left as it was.
 
+        Restoring by value rather than via `ContextVar.reset(token)` is what
+        makes that safe: a token is only valid in the Context that created it,
+        so resetting it from another task's (copied) Context raises `ValueError`.
+        Setting the saved value has no such restriction.
+
         Args:
             **fields: Key-value pairs to add to the current context.
         """
         previous = self._ctx.get()
-        token = self._ctx.set({**previous, **fields})
+        self._ctx.set({**previous, **fields})
         try:
             yield
         finally:
-            try:
-                self._ctx.reset(token)
-            except ValueError:
-                # An async generator holding this block can be closed by a task
-                # other than the one that entered it (a cancelled A2A stream, the
-                # loop's generator finalizer). The token belongs to the entering
-                # task's Context, so the reset is refused here. Restore this
-                # Context explicitly instead; the entering task's own copy cannot
-                # be reached from here and keeps the bound fields until it ends.
-                self._ctx.set(previous)
+            self._ctx.set(previous)
 
     async def event(self, name: str, **fields: Any) -> None:
         """Emit a named lifecycle event with structured metadata.
