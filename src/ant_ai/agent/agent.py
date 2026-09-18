@@ -19,11 +19,15 @@ class Agent(BaseAgent):
                 system_message=self.system_message,
                 serialized_tools=self._registry.to_serialized(),
             ),
-            act_step=ToolStep(registry=self._registry)
+            act_step=ToolStep(
+                registry=self._registry,
+                clarification_ends_run=self.clarification_ends_run,
+            )
             if self._registry.tools
             else None,
             hooks=self._hook_layer,
             max_retries=self.max_retries,
+            clarification_ends_run=self.clarification_ends_run,
         )
 
     def add_tool(self, tool: Tool) -> None:

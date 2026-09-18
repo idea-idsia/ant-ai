@@ -76,6 +76,12 @@ class BaseAgent(BaseModel):
         ge=1,
         description="Maximum number of times to retry after a hook returns RETRY.",
     )
+    clarification_ends_run: bool = Field(
+        default=True,
+        description="Whether a tool asking for human input ends the run. When False "
+        "the ClarificationNeededEvent is still emitted, but the loop continues and "
+        "the LLM answers with what it has; for callers that cannot resume a run.",
+    )
 
     _registry: ToolRegistry = PrivateAttr()
     _loop: BaseAgentLoop = PrivateAttr()

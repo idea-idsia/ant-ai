@@ -456,3 +456,38 @@ async def test_every_call_in_a_clarifying_step_gets_a_result():
     answered = {r["tool_call_id"]: r for r in result.output.results}
     assert set(answered) == {"c1", "c2", "c3"}
     assert answered["c2"]["content"] == "fine"
+
+
+@pytest.mark.unit
+async def test_run_clarification_continues_when_the_step_is_told_not_to_end():
+    """With `clarification_ends_run=False` the caller is still told, but the run
+    goes on: the question reaches the transcript and the event stream exactly as
+    before, and the transition is CONTINUE -> llm instead of END."""
+
+    async def _needs_clarification(**_: Any) -> ClarificationNeededOutput:
+        return ClarificationNeededOutput(question="Which file?")
+
+    from ant_ai.tools.tool import Tool
+
+    clarify_tool: Tool = Tool._from_function(_needs_clarification, name="clarify_tool")
+    registry = ToolRegistry(tools=[clarify_tool])
+    step = ToolStep(registry=registry, clarification_ends_run=False)
+    state: State = _make_state(_make_tool_call("clarify_tool"))
+
+    items = await _collect(step.run(state, None))
+
+    clarification_events = [i for i in items if isinstance(i, ClarificationNeededEvent)]
+    tool_result_events = [i for i in items if isinstance(i, ToolResultEvent)]
+    step_results = [i for i in items if isinstance(i, StepResult)]
+
+    assert len(clarification_events) == 1
+    assert clarification_events[0].content == "Which file?"
+    assert len(tool_result_events) == 1
+    assert tool_result_events[0].tool_call_id == "call-1"
+
+    assert len(step_results) == 1
+    result = step_results[0]
+    assert isinstance(result.output, ToolOutput)
+    assert result.output.results[0]["content"] == "Which file?"
+    assert result.transition.action == TransitionAction.CONTINUE
+    assert result.transition.next_step == "llm"

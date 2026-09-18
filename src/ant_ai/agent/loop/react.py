@@ -42,6 +42,7 @@ class ReActLoop(BaseAgentLoop):
 
     reason_step: LLMStep
     act_step: ToolStep | None = None
+    clarification_ends_run: bool = True
 
     async def stream(
         self,
@@ -260,4 +261,7 @@ class ReActLoop(BaseAgentLoop):
         """Update internal steps to reflect a newly registered tool in registry."""
         self.reason_step.serialized_tools = registry.to_serialized()
         if self.act_step is None:
-            self.act_step = ToolStep(registry=registry)
+            self.act_step = ToolStep(
+                registry=registry,
+                clarification_ends_run=self.clarification_ends_run,
+            )
