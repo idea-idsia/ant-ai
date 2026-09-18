@@ -37,20 +37,28 @@ class ObservabilitySingleton:
         invocations stay independent. All `event` and `span` calls made inside
         the block automatically include these fields.
 
+        Leaving the block from a task other than the one that entered it (an
+        async generator closed elsewhere) restores the leaving task's context;
+        the entering task's context is out of reach and is left as it was.
+
         Args:
             **fields: Key-value pairs to add to the current context.
         """
-        token = self._ctx.set({**self._ctx.get(), **fields})
+        previous = self._ctx.get()
+        token = self._ctx.set({**previous, **fields})
         try:
             yield
         finally:
-            # An async generator holding this block can be closed by a task
-            # other than the one that entered it (a cancelled A2A stream, the
-            # loop's generator finalizer). The reset then runs in a different
-            # Context and Python refuses it; that Context's copy of the var is
-            # gone with its task, so there is nothing to restore there.
-            with suppress(ValueError):
+            try:
                 self._ctx.reset(token)
+            except ValueError:
+                # An async generator holding this block can be closed by a task
+                # other than the one that entered it (a cancelled A2A stream, the
+                # loop's generator finalizer). The token belongs to the entering
+                # task's Context, so the reset is refused here. Restore this
+                # Context explicitly instead; the entering task's own copy cannot
+                # be reached from here and keeps the bound fields until it ends.
+                self._ctx.set(previous)
 
     async def event(self, name: str, **fields: Any) -> None:
         """Emit a named lifecycle event with structured metadata.
