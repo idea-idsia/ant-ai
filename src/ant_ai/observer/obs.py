@@ -44,7 +44,13 @@ class ObservabilitySingleton:
         try:
             yield
         finally:
-            self._ctx.reset(token)
+            # An async generator holding this block can be closed by a task
+            # other than the one that entered it (a cancelled A2A stream, the
+            # loop's generator finalizer). The reset then runs in a different
+            # Context and Python refuses it; that Context's copy of the var is
+            # gone with its task, so there is nothing to restore there.
+            with suppress(ValueError):
+                self._ctx.reset(token)
 
     async def event(self, name: str, **fields: Any) -> None:
         """Emit a named lifecycle event with structured metadata.
