@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -108,3 +109,38 @@ async def test_bind_nesting_inner_values_do_not_persist_after_exit(
 
     assert "inner_key" not in received[1]
     assert received[1].get("outer_key") == "outer"
+
+
+@pytest.mark.unit
+async def test_bind_tolerates_being_left_from_another_task(
+    fresh_obs: ObservabilitySingleton,
+):
+    """An async generator that entered `bind()` can be closed by a different
+    task -- an A2A executor cancelling a stream, or the loop's generator
+    finalizer -- which runs the `finally` in another Context. The reset of
+    the ContextVar token must not raise there: the context being restored
+    belongs to the task that set it, and that task's copy is already gone."""
+
+    async def stream():
+        """Hold a binding across a yield, as `BaseAgent.stream` does."""
+        with fresh_obs.bind(agent_name="a"):
+            yield 1
+            yield 2
+
+    async def close_elsewhere() -> dict:
+        """Close the generator and report this task's context afterwards."""
+        await gen.aclose()
+        return fresh_obs._ctx.get()
+
+    gen = stream()
+    assert await anext(gen) == 1
+
+    # create_task runs in a COPY of the current context, so the token was
+    # made in a different Context from the one the reset runs in. The closing
+    # task's copy carried the binding too and must come back clean; the
+    # entering task's context is not reachable from there and is left alone.
+    seen_after_close = await asyncio.create_task(close_elsewhere())
+
+    assert seen_after_close == {}
+    with pytest.raises(StopAsyncIteration):
+        await anext(gen)

@@ -37,14 +37,24 @@ class ObservabilitySingleton:
         invocations stay independent. All `event` and `span` calls made inside
         the block automatically include these fields.
 
+        Leaving the block from a task other than the one that entered it (an
+        async generator closed elsewhere) restores the leaving task's context;
+        the entering task's context is out of reach and is left as it was.
+
+        Restoring by value rather than via `ContextVar.reset(token)` is what
+        makes that safe: a token is only valid in the Context that created it,
+        so resetting it from another task's (copied) Context raises `ValueError`.
+        Setting the saved value has no such restriction.
+
         Args:
             **fields: Key-value pairs to add to the current context.
         """
-        token = self._ctx.set({**self._ctx.get(), **fields})
+        previous = self._ctx.get()
+        self._ctx.set({**previous, **fields})
         try:
             yield
         finally:
-            self._ctx.reset(token)
+            self._ctx.set(previous)
 
     async def event(self, name: str, **fields: Any) -> None:
         """Emit a named lifecycle event with structured metadata.
