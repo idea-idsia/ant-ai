@@ -229,6 +229,14 @@ Over A2A the task enters `input-required`; the caller resumes by sending the ans
 
 Use a clarification when the run genuinely cannot proceed without the answer. If the tool just needs to *tell* the user something and let the model carry on — a precondition it can't satisfy, say — raise a [`ToolError`](#reporting-failures) instead: the model sees the message, does what it can, and relays it in its answer.
 
+Some callers cannot resume a run at all — a chat front end that opens a fresh task for every user turn, for example. There, a run that stops on a clarification looks to the person like the agent giving up. `clarification_ends_run=False` keeps the event and drops the stop: the `ClarificationNeededEvent` still goes out unaltered (a `ToolError` would only reach the model, which may paraphrase or drop it), and the loop continues with the question as the tool's result, so the model answers what it can.
+
+```python
+agent = Agent(..., tools=[deploy], clarification_ends_run=False)
+```
+
+The loop puts no bound on how often a tool may ask; a tool that clarifies on every call would ask on every step, so that policy belongs in the tool.
+
 ## Streaming a response
 
 [`Agent.stream()`][ant_ai.agent.agent.Agent.stream] drives the agent until it produces a final answer, yielding [`Event`][ant_ai.core.events.Event] objects at each step — LLM output, tool calls, tool results, and completion.

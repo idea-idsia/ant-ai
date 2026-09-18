@@ -9,6 +9,7 @@ from pydantic import ValidationError, model_serializer
 
 from ant_ai.agent.agent import Agent
 from ant_ai.core.events import (
+    ClarificationNeededEvent,
     FinalAnswerEvent,
     MaxStepsReachedEvent,
     ToolCallingEvent,
@@ -23,6 +24,7 @@ from ant_ai.core.message import (
     ToolFunction,
 )
 from ant_ai.core.result import (
+    ClarificationNeededOutput,
     LLMOutput,
     StepResult,
     Transition,
@@ -772,3 +774,85 @@ async def test_stream_with_memory_tool_call_injects_ctx_end_to_end():
     assert len(tool_results) == 1
     assert "likes rust" in tool_results[0].content
     assert isinstance(events[-1], FinalAnswerEvent)
+
+
+class _ClarifyThenAnswerLLM(ChatLLM):
+    """Calls `my_tool` once, then answers with whatever it has."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def ainvoke(self, messages, *, ctx=None, tools=None, response_format=None):
+        self.calls += 1
+        if self.calls == 1:
+            return DummyResponse(
+                message=Message(role="assistant", content="calling tool"),
+                tool_calls=[make_tool_call(call_id="call-1", name="my_tool")],
+            )
+        return DummyResponse(
+            message=Message(role="assistant", content="done without it"),
+            tool_calls=[],
+        )
+
+
+@pytest.mark.unit
+async def test_stream_stops_on_clarification_by_default():
+    llm = _ClarifyThenAnswerLLM()
+    tool_shim = _make_tool_shim(
+        "my_tool", DummyTool(result=ClarificationNeededOutput(question="Which file?"))
+    )
+    agent = Agent(name="ask", system_prompt="sys", llm=llm, tools=[tool_shim])
+    state = State(messages=[Message(role="user", content="Open the file")])
+
+    events = [e async for e in agent.stream(state, max_steps=5, ctx=None)]
+
+    assert any(isinstance(e, ClarificationNeededEvent) for e in events)
+    assert not any(isinstance(e, FinalAnswerEvent) for e in events)
+    assert llm.calls == 1
+
+
+@pytest.mark.unit
+async def test_stream_continues_past_a_clarification_when_configured():
+    """`clarification_ends_run=False` reaches the loop's ToolStep: the caller
+    still gets the ClarificationNeededEvent, and the LLM then gets a second turn
+    with the question as the tool's result, so the run ends in an answer."""
+    llm = _ClarifyThenAnswerLLM()
+    tool_shim = _make_tool_shim(
+        "my_tool", DummyTool(result=ClarificationNeededOutput(question="Which file?"))
+    )
+    agent = Agent(
+        name="tell",
+        system_prompt="sys",
+        llm=llm,
+        tools=[tool_shim],
+        clarification_ends_run=False,
+    )
+    state = State(messages=[Message(role="user", content="Open the file")])
+
+    events = [e async for e in agent.stream(state, max_steps=5, ctx=None)]
+
+    clarifications = [e for e in events if isinstance(e, ClarificationNeededEvent)]
+    assert len(clarifications) == 1
+    assert clarifications[0].content == "Which file?"
+    assert isinstance(events[-1], FinalAnswerEvent)
+    assert events[-1].content == "done without it"
+    assert llm.calls == 2
+
+
+@pytest.mark.unit
+def test_add_tool_keeps_the_clarification_setting():
+    """A loop built without tools creates its ToolStep on the first `add_tool`;
+    the setting must survive that route too."""
+    agent = Agent(
+        name="late",
+        system_prompt="sys",
+        llm=_ClarifyThenAnswerLLM(),
+        tools=[],
+        clarification_ends_run=False,
+    )
+    assert agent._loop.act_step is None
+
+    agent.add_tool(_make_tool_shim("my_tool", DummyTool()))
+
+    assert agent._loop.act_step is not None
+    assert agent._loop.act_step.clarification_ends_run is False

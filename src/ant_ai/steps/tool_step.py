@@ -48,15 +48,19 @@ class ToolStep(BaseModel):
 
     Always yields a `StepResult[ToolOutput]` holding a result for every call.
     If any tool asked for human input (`ClarificationNeededOutput`), that call
-    is answered with its question, a `ClarificationNeededEvent` is emitted, and
-    the transition is `END` so the run stops for the user's reply -- with the
-    transcript well-formed for resumption.
+    is answered with its question and a `ClarificationNeededEvent` is emitted.
+    By default the transition is then `END`, so the run stops for the user's
+    reply -- with the transcript well-formed for resumption. With
+    `clarification_ends_run=False` the question still reaches the caller as an
+    event, but the loop continues to the LLM, which sees the question as the
+    tool's result and answers what it can without it.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str = "tool"
     registry: SkipValidation[ToolRegistry]
+    clarification_ends_run: bool = True
 
     async def run(
         self,
@@ -138,7 +142,7 @@ class ToolStep(BaseModel):
         yield StepResult(
             output=ToolOutput(results=tuple(result_dicts)),
             transition=Transition(action=TransitionAction.END)
-            if clarifications
+            if clarifications and self.clarification_ends_run
             else Transition(action=TransitionAction.CONTINUE, next_step="llm"),
         )
 
