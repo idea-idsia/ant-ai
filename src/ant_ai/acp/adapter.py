@@ -150,8 +150,10 @@ class ACPAdapter(ACPAgent):
                     )
                 # McpServerStdio: subprocess management out of scope
             if extra_tools:
-                session_agent: Agent = self._agent.model_copy(
-                    update={"tools": [*self._agent.tools, *extra_tools]}
+                # Not model_copy: it skips validators, so the copy would keep
+                # the base agent's registry and loop.
+                session_agent: Agent = self._agent.model_validate(
+                    {**dict(self._agent), "tools": [*self._agent.tools, *extra_tools]}
                 )
         self._session_agents[session_id] = session_agent
 
