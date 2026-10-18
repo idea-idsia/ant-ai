@@ -539,6 +539,8 @@ async def test_new_session_mcp_tools_reach_registry_and_llm(monkeypatch):
     assert [t.name for t in session_agent.registry.tools] == ["base_tool", "mcp_tool"]
     assert [s["function"]["name"] for s in serialized] == ["base_tool", "mcp_tool"]
     assert [t.name for t in agent.registry.tools] == ["base_tool"]
+    assert session_agent.registry["mcp_tool"].invoke(x="ok") == "ok"
+    assert session_agent.registry["base_tool"].invoke(x="ok") == "ok"
 
 
 @pytest.mark.asyncio
