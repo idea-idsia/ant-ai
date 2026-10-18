@@ -7,6 +7,10 @@ from subprocess import CompletedProcess
 
 from ant_ai.tools.tool import Tool
 
+# `;`, `&&`, `||`, `|`, `|&`, newline and `&`, but not the `&` of redirections like `2>&1`.
+_COMMAND_SEPARATOR: Pattern[str] = re.compile(r"&&|\|\||\|&?|;|\n|(?<![<>])&(?!>)")
+_COMMAND_SUBSTITUTION: Pattern[str] = re.compile(r"\$\(|`|<\(|>\(")
+
 
 class ShellTool(Tool):
     """
@@ -33,6 +37,10 @@ class ShellTool(Tool):
     Notes:
         Commands are filtered before execution against `allowed_commands` (allowlist)
         and `blocked_commands` (denylist), both expressed as regex patterns.
+        With an allowlist, a chained command (`;`, `&&`, `||`, `|`, `&`, newline) runs
+        only if every command in the chain matches a pattern, and command
+        substitution (`$(...)`, backticks) is refused. Patterns are searched, not
+        matched in full: anchor them (e.g. `^ls\\b`) to match the command name only.
         Policy violations, timeouts, and runtime errors are returned as a dict
         with a non-zero `returncode` and the reason in `stderr`, so the agent
         receives a recoverable error rather than an exception.
@@ -56,7 +64,14 @@ class ShellTool(Tool):
             allowed: Pattern[str] = re.compile(
                 "|".join(f"(?:{p})" for p in self.allowed_commands)
             )
-            if not allowed.search(command):
+            parts: list[str] = [
+                p.strip() for p in _COMMAND_SEPARATOR.split(command) if p.strip()
+            ]
+            if (
+                _COMMAND_SUBSTITUTION.search(command)
+                or not parts
+                or not all(allowed.search(part) for part in parts)
+            ):
                 return {
                     "stdout": "",
                     "stderr": "Command not allowed by policy",
