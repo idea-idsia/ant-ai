@@ -52,9 +52,14 @@ def make_async_stream():
 class DummyOpenAIChatResponse:
     content: str | None
     choices: list = field(init=False, repr=False)
+    usage: None = None
 
     def __post_init__(self) -> None:
-        self.choices = [SimpleNamespace(message=SimpleNamespace(content=self.content))]
+        self.choices = [
+            SimpleNamespace(
+                message=SimpleNamespace(content=self.content, tool_calls=None)
+            )
+        ]
 
 
 @dataclass(slots=True)
