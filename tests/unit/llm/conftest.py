@@ -21,7 +21,7 @@ def sample_messages() -> list[Message]:
 
 @pytest.fixture
 def expected_dict_messages(sample_messages: list[Message]) -> list[dict[str, str]]:
-    return [m.model_dump(exclude={"kind"}) for m in sample_messages]
+    return [m.model_dump(exclude={"kind", "metadata"}) for m in sample_messages]
 
 
 @pytest.fixture

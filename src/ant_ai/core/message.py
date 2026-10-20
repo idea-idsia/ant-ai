@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-_PROVIDER_EXCLUDED_FIELDS: frozenset[str] = frozenset({"kind", "is_error"})
+_PROVIDER_EXCLUDED_FIELDS: frozenset[str] = frozenset({"kind", "is_error", "metadata"})
 
 
 class Message(BaseModel):
@@ -17,14 +17,14 @@ class Message(BaseModel):
     content: str | None = Field(default=None)
     """Text content of the message"""
     metadata: dict[str, Any] = Field(default_factory=dict)
-    """Additional metadata associated with the message"""
+    """Additional metadata associated with the message. Internal: never sent to the LLM provider."""
 
     def to_provider_dict(self) -> dict[str, Any]:
         """The message in the shape chat-completion APIs expect.
 
-        Internal fields (`kind`, and `is_error` on tool results) are left out of
-        the OpenAI-style dict; a provider adapter that has a native equivalent
-        (Anthropic's `tool_result.is_error`) can map them explicitly.
+        Internal fields (`kind`, `metadata`, and `is_error` on tool results) are
+        left out of the OpenAI-style dict; a provider adapter that has a native
+        equivalent (Anthropic's `tool_result.is_error`) can map them explicitly.
         """
         return self.model_dump(exclude=set(_PROVIDER_EXCLUDED_FIELDS))
 
