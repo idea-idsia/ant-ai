@@ -635,3 +635,27 @@ def test_check_conditional_edge_makes_all_nodes_reachable():
     w.add_conditional_edge("A", lambda a, s, c: "B")
     w.add_edge("B", END)
     w.check()  # B is reachable via A's conditional edge — must not raise
+
+
+@pytest.mark.unit
+async def test_workflow_runs_on_a_state_without_messages(agent):
+    """The `Workflow` docstring example: the state carries no conversation."""
+
+    class CountState(State):
+        count: int = 0
+
+    async def increment(agent, state: CountState, ctx):
+        state.count += 1
+        yield state
+
+    wf = (
+        Workflow(state=CountState)
+        .add_node("increment", increment)
+        .add_edge(START, "increment")
+        .add_edge("increment", END)
+    )
+
+    result = await wf.ainvoke(agent)
+
+    assert result.count == 1
+    assert result.messages == []
