@@ -9,7 +9,9 @@ from ant_ai.llm.integrations.lite_llm import LiteLLMChat, to_chatllm_response
 @pytest.mark.unit
 def test_to_litellm_messages(sample_messages):
     result: list[dict[str, str]] = LiteLLMChat._to_litellm_messages(sample_messages)
-    assert result == [m.model_dump(exclude={"kind"}) for m in sample_messages]
+    assert result == [
+        m.model_dump(exclude={"kind", "metadata"}) for m in sample_messages
+    ]
 
 
 @pytest.mark.unit

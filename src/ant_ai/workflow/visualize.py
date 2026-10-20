@@ -4,11 +4,14 @@ import ast
 import inspect
 import textwrap
 from pathlib import Path
-from typing import Literal, get_args, get_origin, get_type_hints
-
-from graphviz import Digraph
+from typing import TYPE_CHECKING, Literal, get_args, get_origin, get_type_hints
 
 from ant_ai.workflow.workflow import END, START, RouterAction, Workflow
+
+if TYPE_CHECKING:
+    # Optional `viz` extra: imported lazily where a graph is built, so that
+    # `import ant_ai` and Mermaid output work without graphviz installed.
+    from graphviz import Digraph
 
 type RenderFormat = Literal["png", "jpg", "pdf", "svg", "latex", "mermaid"]
 

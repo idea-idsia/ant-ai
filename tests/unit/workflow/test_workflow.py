@@ -659,3 +659,40 @@ async def test_workflow_runs_on_a_state_without_messages(agent):
 
     assert result.count == 1
     assert result.messages == []
+
+
+@pytest.mark.unit
+async def test_coroutine_node_returning_a_state_replaces_the_run_state(agent):
+    replacement = State(messages=[_msg("replaced")])
+
+    async def node(agent, state: State, ctx) -> State:
+        return replacement
+
+    wf = Workflow().add_node("n", node).add_edge(START, "n").add_edge("n", END)
+
+    result = await wf.ainvoke(agent, state=State(messages=[_msg()]))
+
+    assert result is replacement
+
+
+@pytest.mark.unit
+async def test_coroutine_node_returning_none_keeps_the_mutated_state(agent):
+    async def node(agent, state: State, ctx) -> None:
+        state.messages.append(_msg("added"))
+
+    wf = Workflow().add_node("n", node).add_edge(START, "n").add_edge("n", END)
+
+    result = await wf.ainvoke(agent, state=State(messages=[_msg()]))
+
+    assert [m.content for m in result.messages] == ["seed", "added"]
+
+
+@pytest.mark.unit
+async def test_node_returning_something_else_is_rejected(agent):
+    async def node(agent, state: State, ctx):
+        return "not a state"
+
+    wf = Workflow().add_node("n", node).add_edge(START, "n").add_edge("n", END)
+
+    with pytest.raises(RuntimeError, match="Invalid return from node 'n'"):
+        await wf.ainvoke(agent, state=State(messages=[_msg()]))

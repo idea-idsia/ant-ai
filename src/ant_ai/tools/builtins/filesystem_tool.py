@@ -100,6 +100,8 @@ class FilesystemTool(Tool):
     def _walk(self, base: Path, current: Path, depth: int, results: list[str]) -> None:
         """Collect paths (relative to `base`) of entries under `current`, recursing up to `depth` levels."""
         for entry in current.iterdir():
+            if not self._is_inside(entry):
+                continue
             is_dir = entry.is_dir()
             if self._is_ignored(entry, is_dir):
                 continue
@@ -123,7 +125,11 @@ class FilesystemTool(Tool):
                     dirnames.clear()
                 for filename in sorted(filenames):
                     file: Path = Path(dirpath) / filename
-                    if not file.is_file() or self._is_ignored(file, False):
+                    if (
+                        not file.is_file()
+                        or not self._is_inside(file)
+                        or self._is_ignored(file, False)
+                    ):
                         continue
                     try:
                         for lineno, line in enumerate(
@@ -149,3 +155,7 @@ class FilesystemTool(Tool):
         if not resolved.is_relative_to(self.workspace_root):
             raise ValueError(f"Path '{path}' escapes the workspace boundary")
         return resolved
+
+    def _is_inside(self, entry: Path) -> bool:
+        """Whether `entry`, with symlinks followed, stays within the workspace."""
+        return entry.resolve().is_relative_to(self.workspace_root)

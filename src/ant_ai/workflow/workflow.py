@@ -30,9 +30,14 @@ type NodeResult = AsyncIterator[NodeYield]
 
 type NodeAction[S: State] = Callable[
     [BaseAgent, S, InvocationContext | None],
-    NodeResult | Awaitable[NodeResult],
+    NodeResult | S | None | Awaitable[NodeResult | S | None],
 ]
-"""Interface for the nodes in the Workflow"""
+"""Interface for the nodes in the Workflow.
+
+A node is either an async generator yielding events and states (the last
+yielded state replaces the run state), or a function or coroutine returning
+the new state, or None to keep the current one.
+"""
 
 type RouterAction[S: State] = Callable[
     [BaseAgent, S, InvocationContext | None],
@@ -246,7 +251,7 @@ class Workflow[StateT: State = State](BaseModel):
             )
 
             try:
-                result: NodeYield | None = await _maybe_await(
+                result: NodeResult | StateT | None = await _maybe_await(
                     action(agent, run.state, ctx)
                 )
 
