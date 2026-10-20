@@ -301,7 +301,7 @@ class Workflow[StateT: State = State](BaseModel):
         with obs.bind(
             **trace,
             agent_name=agent.name,
-            user_input=run.state.last_message,
+            user_input=run.state.last_message if run.state.messages else None,
         ):
             await obs.event(
                 "workflow.start",
