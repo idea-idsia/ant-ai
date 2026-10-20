@@ -5,7 +5,6 @@ from typing import Any, cast
 
 import openai
 from openai import AsyncOpenAI, OpenAI
-from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 from pydantic import BaseModel
 
@@ -23,9 +22,21 @@ def _drop_none(**kwargs) -> dict[str, Any]:
 def _to_response_format(
     response_format: dict | type[BaseModel] | None,
 ) -> dict | None:
-    """`create()` rejects Pydantic classes, so send them as the JSON schema `parse()` would."""
+    """`create()` rejects Pydantic classes, so send them as the JSON schema `parse()` would.
+
+    The strict schema comes from the public `pydantic_function_tool`; the helper
+    `parse()` itself uses lives in a private SDK module.
+    """
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-        return cast(dict, type_to_response_format_param(response_format))
+        function = openai.pydantic_function_tool(response_format)["function"]
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "schema": function["parameters"],
+                "name": function["name"],
+                "strict": True,
+            },
+        }
     return response_format
 
 
