@@ -5,7 +5,7 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from ant_ai.core.message import AnyMessage, Message
+from ant_ai.core.message import BaseMessage
 
 
 class InvocationContext(BaseModel):
@@ -79,16 +79,16 @@ class State(BaseModel):
             user_id: str = ""
     """
 
-    messages: list[Message] = Field(default_factory=list)
+    messages: list[BaseMessage] = Field(default_factory=list)
     artefacts: list[Any] = Field(default_factory=list)
-    _compression_context: list[AnyMessage] | None = PrivateAttr(default=None)
+    _compression_context: list[BaseMessage] | None = PrivateAttr(default=None)
 
     @property
-    def last_message(self) -> Message:
+    def last_message(self) -> BaseMessage:
         """Returns the last message in the conversation, if any."""
         if not self.messages:
             raise ValueError("No messages in conversation")
         return self.messages[-1]
 
-    def add_message(self, message: Message) -> None:
+    def add_message(self, message: BaseMessage) -> None:
         self.messages.append(message)

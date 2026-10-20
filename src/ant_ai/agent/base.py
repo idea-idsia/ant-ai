@@ -16,7 +16,7 @@ from pydantic import (
 )
 
 from ant_ai.agent.loop.loop import BaseAgentLoop
-from ant_ai.core.events import Event, FinalAnswerEvent
+from ant_ai.core.events import BaseEvent, FinalAnswerEvent
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks.layer import HookLayer
@@ -118,7 +118,7 @@ class BaseAgent(BaseModel):
         max_steps: int = 10,
         ctx: InvocationContext | None = None,
         response_schema: type[BaseModel] | None = None,
-    ) -> AsyncGenerator[Event]:
+    ) -> AsyncGenerator[BaseEvent]:
         """
         Stream events for a single agent turn.
 

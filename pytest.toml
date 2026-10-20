@@ -1,5 +1,6 @@
 [pytest]
 asyncio_mode = "auto"
+pythonpath = ["."]
 addopts = ["-ra", "--strict-markers", "--cov=src", "--cov-report=term-missing"]
 
 filterwarnings = [

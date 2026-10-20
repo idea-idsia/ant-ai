@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ant_ai.core.events import Event
+from ant_ai.core.events import BaseEvent
 from ant_ai.core.exceptions import HookBlockedError, HookMaxRetriesError
 from ant_ai.core.message import Message
 from ant_ai.core.result import LLMOutput, StepResult
@@ -55,7 +55,7 @@ class BaseAgentLoop(ABC, BaseModel):
         *,
         max_steps: int = 10,
         response_schema: type[BaseModel] | None = None,
-    ) -> AsyncIterator[Event]: ...
+    ) -> AsyncIterator[BaseEvent]: ...
 
     @abstractmethod
     def register_tool(self, registry: ToolRegistry) -> None:
@@ -69,7 +69,7 @@ class BaseAgentLoop(ABC, BaseModel):
         ctx: InvocationContext | None,
         *,
         allow_streaming: bool = True,
-    ) -> AsyncIterator[Event | StepResult]:
+    ) -> AsyncIterator[BaseEvent | StepResult]:
         """Yields buffered events then StepResult, always going through the hook path.
 
         When streaming is active and allowed for this call, invokes the
@@ -103,7 +103,7 @@ class BaseAgentLoop(ABC, BaseModel):
         wrapped_run: WrapCall,
         state: State,
         ctx: InvocationContext | None,
-    ) -> AsyncIterator[Event | StepResult]:
+    ) -> AsyncIterator[BaseEvent | StepResult]:
         """Forward a step's events live, without buffering, on the hook-safe path.
 
         Still runs `after_model` for lifecycle-contract correctness, but the
@@ -138,9 +138,9 @@ class BaseAgentLoop(ABC, BaseModel):
         wrapped_run: WrapCall,
         state: State,
         ctx: InvocationContext | None,
-    ) -> tuple[list[Event], StepResult]:
+    ) -> tuple[list[BaseEvent], StepResult]:
         """Consume a wrapped step callable, buffering all events and extracting the StepResult."""
-        events: list[Event] = []
+        events: list[BaseEvent] = []
         result: StepResult | None = None
 
         async for item in self._observe_step(step, wrapped_run(state, ctx)):
@@ -159,9 +159,9 @@ class BaseAgentLoop(ABC, BaseModel):
         wrapped_run: WrapCall,
         state: State,
         ctx: InvocationContext | None,
-        buffered_events: list[Event],
+        buffered_events: list[BaseEvent],
         result: StepResult,
-    ) -> tuple[list[Event], StepResult]:
+    ) -> tuple[list[BaseEvent], StepResult]:
         """
         Run ``after_model`` hooks and handle decisions.
 
@@ -172,7 +172,7 @@ class BaseAgentLoop(ABC, BaseModel):
         On BLOCK: raise ``HookBlockedError`` immediately.
         On FALLBACK: return the pre-built result directly.
         """
-        current_events: list[Event] = buffered_events
+        current_events: list[BaseEvent] = buffered_events
         current_result: StepResult = result
         retry_state: State = state.model_copy(deep=True)
         retries_used: int = 0
@@ -210,7 +210,7 @@ class BaseAgentLoop(ABC, BaseModel):
         previous_result: StepResult,
         critique: str,
         ctx: InvocationContext | None,
-    ) -> tuple[list[Event], StepResult]:
+    ) -> tuple[list[BaseEvent], StepResult]:
         """Append the failed response and critique to retry_state, then re-run.
 
         Mutates retry_state in-place so each successive retry sees the full
@@ -232,8 +232,8 @@ class BaseAgentLoop(ABC, BaseModel):
     async def _observe_step(
         self,
         step: Step,
-        items: AsyncIterator[Event | StepResult],
-    ) -> AsyncIterator[Event | StepResult]:
+        items: AsyncIterator[BaseEvent | StepResult],
+    ) -> AsyncIterator[BaseEvent | StepResult]:
         result: StepResult | None = None
 
         await obs.event("step.start", step=step.name)

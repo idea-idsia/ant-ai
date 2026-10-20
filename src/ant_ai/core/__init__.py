@@ -2,6 +2,7 @@ from ant_ai.core.events import (
     ActionEvent,
     AgentEvent,
     AnyEvent,
+    BaseEvent,
     ClarificationNeededEvent,
     CompletedEvent,
     ContentDeltaEvent,
@@ -20,6 +21,7 @@ from ant_ai.core.exceptions import HookBlockedError, HookMaxRetriesError
 from ant_ai.core.logging import bind_logger, configure_logging
 from ant_ai.core.message import (
     AnyMessage,
+    BaseMessage,
     Message,
     MessageChunk,
     ToolCall,
@@ -43,6 +45,7 @@ from ant_ai.core.types import InvocationContext, State
 __all__ = [
     # events
     "EventOrigin",
+    "BaseEvent",
     "Event",
     "AgentEvent",
     "ActionEvent",
@@ -65,6 +68,7 @@ __all__ = [
     "configure_logging",
     "bind_logger",
     # messages
+    "BaseMessage",
     "Message",
     "MessageChunk",
     "ToolCallMessage",

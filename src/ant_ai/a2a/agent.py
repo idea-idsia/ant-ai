@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable
-from typing import Any, Literal, overload
+from typing import Literal, overload
 
 from a2a.types import AgentCard
 from pydantic import Field, PrivateAttr, model_validator
@@ -42,11 +42,11 @@ class A2AAgentTool(Tool):
     def _init_metadata(self, agent_card: AgentCard) -> None:
         """Set Tool metadata exactly once from an AgentCard."""
         if not self.name:
-            self.name: str = agent_card.name
+            self.name = agent_card.name
         if not self.description:
-            self.description: str = self._create_agent_description(agent_card)
+            self.description = self._create_agent_description(agent_card)
 
-        self.parameters: dict[str, Any] = {
+        self.parameters = {
             "type": "object",
             "properties": {
                 "message": {

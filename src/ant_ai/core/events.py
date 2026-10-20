@@ -31,8 +31,13 @@ class EventOrigin(BaseModel):
     )
 
 
-class Event(BaseModel):
-    """Represents an event emitted during the execution of a workflow, action, or agent."""
+class BaseEvent(BaseModel):
+    """Fields shared by every event emitted during the execution of a workflow, action, or agent.
+
+    Carries no `kind` tag: each concrete event class declares its own, so
+    `AnyEvent` can discriminate on it. Annotate with `BaseEvent` wherever any
+    event is accepted.
+    """
 
     origin: EventOrigin = Field(
         default_factory=EventOrigin,
@@ -46,7 +51,6 @@ class Event(BaseModel):
         default_factory=dict,
         description="Additional information relevant to the event.",
     )
-    kind: Literal["event"] = "event"
     task_id: str | None = Field(
         default=None,
         description="A2A task ID populated from the raw transport event.",
@@ -57,7 +61,13 @@ class Event(BaseModel):
     )
 
 
-class AgentEvent(Event):
+class Event(BaseEvent):
+    """A generic event with no more specific type."""
+
+    kind: Literal["event"] = "event"
+
+
+class AgentEvent(BaseEvent):
     """Base class for events emitted by the agent layer."""
 
     origin: EventOrigin = Field(
@@ -66,7 +76,7 @@ class AgentEvent(Event):
     )
 
 
-class ActionEvent(Event):
+class ActionEvent(BaseEvent):
     """Base class for events emitted by the action layer."""
 
     origin: EventOrigin = Field(
@@ -75,7 +85,7 @@ class ActionEvent(Event):
     )
 
 
-class WorkflowEvent(Event):
+class WorkflowEvent(BaseEvent):
     """Base class for events emitted by the workflow layer."""
 
     origin: EventOrigin = Field(

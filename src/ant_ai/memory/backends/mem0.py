@@ -6,7 +6,7 @@ from mem0 import AsyncMemoryClient
 from mem0.client.types import SearchMemoryOptions
 from pydantic import Field, PrivateAttr, model_validator
 
-from ant_ai.core.message import Message
+from ant_ai.core.message import BaseMessage, Message
 from ant_ai.core.types import InvocationContext
 from ant_ai.tools.builtins.memory_tool import MemoryTool
 
@@ -86,7 +86,7 @@ class Mem0Memory(MemoryTool):
 
     async def update(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         **kwargs: Any,

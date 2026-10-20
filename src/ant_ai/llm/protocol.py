@@ -3,7 +3,7 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from ant_ai.core.message import Message, MessageChunk
+from ant_ai.core.message import BaseMessage, MessageChunk
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk
 from ant_ai.core.types import InvocationContext
 
@@ -30,7 +30,7 @@ class ChatLLM(Protocol):
 
     def invoke(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         tools: list | None = None,
@@ -51,7 +51,7 @@ class ChatLLM(Protocol):
 
     async def ainvoke(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         tools: list | None = None,
@@ -72,7 +72,7 @@ class ChatLLM(Protocol):
 
     def stream(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         tools: list | None = None,

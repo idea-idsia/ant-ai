@@ -14,7 +14,7 @@ from acp.schema import (
 )
 
 from ant_ai.agent.agent import Agent
-from ant_ai.core.message import Message
+from ant_ai.core.message import BaseMessage
 
 
 @dataclass
@@ -35,7 +35,7 @@ class ACPCommandContext:
     client: Client | None
     capabilities: ClientCapabilities | None
     cwd: str | None
-    history: list[Message]
+    history: list[BaseMessage]
     agent: Agent
     replace_agent: Callable[[Agent], None]
 

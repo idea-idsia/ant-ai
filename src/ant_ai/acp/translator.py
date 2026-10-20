@@ -12,10 +12,10 @@ from acp.schema import (
 )
 
 from ant_ai.core.events import (
+    BaseEvent,
     ClarificationNeededEvent,
     CompletedEvent,
     ContentDeltaEvent,
-    Event,
     FinalAnswerEvent,
     MaxStepsReachedEvent,
     ReasoningEvent,
@@ -25,11 +25,13 @@ from ant_ai.core.events import (
     UpdateEvent,
 )
 
-type Handler = Callable[[Event, Client, str], Awaitable[None]]
-type UnboundHandler = Callable[["HVEventToACP", Event, Client, str], Awaitable[None]]
+type Handler = Callable[[BaseEvent, Client, str], Awaitable[None]]
+type UnboundHandler = Callable[
+    ["HVEventToACP", BaseEvent, Client, str], Awaitable[None]
+]
 
 
-def handler(*event_types: type[Event]):
+def handler(*event_types: type[BaseEvent]):
     """Marks a method as the handler for the given event types."""
 
     def decorator(fn: UnboundHandler) -> UnboundHandler:
@@ -52,7 +54,7 @@ class HVEventToACP:
     """
 
     def __init__(self) -> None:
-        self._handlers: dict[type[Event], Handler] = {}
+        self._handlers: dict[type[BaseEvent], Handler] = {}
         self._register_handlers()
 
     def _register_handlers(self) -> None:
@@ -63,7 +65,7 @@ class HVEventToACP:
                 for t in types:
                     self._handlers[t] = method
 
-    async def apply(self, event: Event, client: Client, session_id: str) -> None:
+    async def apply(self, event: BaseEvent, client: Client, session_id: str) -> None:
         """Dispatch *event* to its registered handler.
 
         Raises:
@@ -77,12 +79,12 @@ class HVEventToACP:
         await event_handler(event, client, session_id)
 
     @handler(StartEvent, UpdateEvent, MaxStepsReachedEvent, CompletedEvent)
-    async def _noop(self, event: Event, client: Client, session_id: str) -> None:
+    async def _noop(self, event: BaseEvent, client: Client, session_id: str) -> None:
         pass
 
     @handler(FinalAnswerEvent, ClarificationNeededEvent)
     async def _agent_message(
-        self, event: Event, client: Client, session_id: str
+        self, event: BaseEvent, client: Client, session_id: str
     ) -> None:
         # If the text was already streamed token-by-token as ContentDeltaEvents (stream_id set on the terminal event), re-sending the whole thing would uplicate it in the client; the deltas already delivered the message.
         if getattr(event, "stream_id", None):
@@ -97,7 +99,7 @@ class HVEventToACP:
 
     @handler(ReasoningEvent)
     async def _agent_thought(
-        self, event: Event, client: Client, session_id: str
+        self, event: BaseEvent, client: Client, session_id: str
     ) -> None:
         if getattr(event, "stream_id", None):
             return
@@ -111,7 +113,7 @@ class HVEventToACP:
 
     @handler(ContentDeltaEvent)
     async def _content_delta(
-        self, event: Event, client: Client, session_id: str
+        self, event: BaseEvent, client: Client, session_id: str
     ) -> None:
         assert isinstance(event, ContentDeltaEvent)
         if not event.delta:
@@ -133,7 +135,7 @@ class HVEventToACP:
 
     @handler(ToolCallingEvent)
     async def _tool_call_start(
-        self, event: Event, client: Client, session_id: str
+        self, event: BaseEvent, client: Client, session_id: str
     ) -> None:
         assert isinstance(event, ToolCallingEvent)
         # acp-ui only attaches tool_call updates to an existing assistant message; if none exists yet the update is silently dropped. Send an empty chunk to create the message container before sending ToolCallStart events.
@@ -157,7 +159,7 @@ class HVEventToACP:
 
     @handler(ToolResultEvent)
     async def _tool_call_done(
-        self, event: Event, client: Client, session_id: str
+        self, event: BaseEvent, client: Client, session_id: str
     ) -> None:
         assert isinstance(event, ToolResultEvent)
         await client.session_update(

@@ -7,11 +7,14 @@ from pydantic import BaseModel, Field
 _PROVIDER_EXCLUDED_FIELDS: frozenset[str] = frozenset({"kind", "is_error", "metadata"})
 
 
-class Message(BaseModel):
-    """Generic message used in a conversation"""
+class BaseMessage(BaseModel):
+    """Fields shared by every message in a conversation.
 
-    kind: Literal["message"] = Field(default="message")
-    """Type of the message. Used to reconstruct, not passed to the LLM"""
+    Carries no `kind` tag: each concrete message class declares its own, so
+    `AnyMessage` can discriminate on it. Annotate with `BaseMessage` wherever
+    any message is accepted.
+    """
+
     role: str
     """Role of the message sender (e.g. "user", "assistant")"""
     content: str | None = Field(default=None)
@@ -27,6 +30,13 @@ class Message(BaseModel):
         equivalent (Anthropic's `tool_result.is_error`) can map them explicitly.
         """
         return self.model_dump(exclude=set(_PROVIDER_EXCLUDED_FIELDS))
+
+
+class Message(BaseMessage):
+    """Generic message used in a conversation"""
+
+    kind: Literal["message"] = Field(default="message")
+    """Type of the message. Used to reconstruct, not passed to the LLM"""
 
 
 class MessageChunk(BaseModel):
@@ -57,12 +67,12 @@ class MessageChunk(BaseModel):
             metadata={**self.metadata, **other.metadata},
         )
 
-    def to_message(self) -> Message:
+    def to_message(self) -> BaseMessage:
         """Convert final chunk to a full message once streaming ends."""
         return Message(role=self.role, content=self.delta, metadata=self.metadata)
 
 
-class ToolCallMessage(Message):
+class ToolCallMessage(BaseMessage):
     """Message representing a tool call in a conversation"""
 
     kind: Literal["tool_call"] = Field(default="tool_call")
@@ -70,7 +80,7 @@ class ToolCallMessage(Message):
     tool_calls: list[ToolCall]
 
 
-class ToolCallResultMessage(Message):
+class ToolCallResultMessage(BaseMessage):
     """Message representing the result of a tool call in a conversation"""
 
     kind: Literal["tool_call_result"] = Field(default="tool_call_result")
@@ -114,7 +124,7 @@ type AnyMessage = Annotated[
 """Type alias for any message type in the system, discriminated by the `_kind` field."""
 
 
-def sanitize_messages(messages: list[Message]) -> list[Message]:
+def sanitize_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     """Return a copy of *messages* with every incomplete tool-call group removed.
 
     An incomplete group is a ``ToolCallMessage`` whose immediately-following
@@ -124,7 +134,7 @@ def sanitize_messages(messages: list[Message]) -> list[Message]:
 
     Complete groups and all non-tool-call messages are preserved in order.
     """
-    result: list[Message] = []
+    result: list[BaseMessage] = []
     i = 0
     while i < len(messages):
         msg = messages[i]

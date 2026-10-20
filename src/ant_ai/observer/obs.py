@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import (
     AbstractAsyncContextManager,
     asynccontextmanager,
@@ -113,7 +113,7 @@ class ObservabilitySingleton:
         return {}
 
     @contextmanager
-    def attach_propagation_context(self, headers: dict[str, str]) -> Iterator[None]:
+    def attach_propagation_context(self, headers: dict[str, str]) -> Generator[None]:
         """Context manager that restores a remote trace context for the duration of the block."""
         if self._sink is None:
             yield

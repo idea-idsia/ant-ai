@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from typing import Protocol
 
-from ant_ai.core.events import Event
+from ant_ai.core.events import BaseEvent
 from ant_ai.core.result import StepResult
 from ant_ai.core.types import InvocationContext, State
 
@@ -23,7 +23,7 @@ class Step(Protocol):
         self,
         state: State,
         ctx: InvocationContext | None,
-    ) -> AsyncIterator[Event | StepResult]:
+    ) -> AsyncIterator[BaseEvent | StepResult]:
         """Stream events as they happen, then yield the final `StepResult`.
 
         Args:

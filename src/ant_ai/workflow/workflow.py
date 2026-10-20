@@ -9,20 +9,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ant_ai.agent.base import BaseAgent
 from ant_ai.core.events import (
+    BaseEvent,
     CompletedEvent,
-    Event,
     EventOrigin,
     StartEvent,
     UpdateEvent,
 )
-from ant_ai.core.message import Message
+from ant_ai.core.message import BaseMessage
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.observer import obs
 
 START = "START"
 END = "END"
 
-type NodeYield = Event | State
+type NodeYield = BaseEvent | State
 """What a node can yield"""
 
 type NodeResult = AsyncIterator[NodeYield]
@@ -234,7 +234,7 @@ class Workflow[StateT: State = State](BaseModel):
         run: _RunState[StateT],
         ctx: InvocationContext | None,
         node: str,
-    ) -> AsyncGenerator[Event]:
+    ) -> AsyncGenerator[BaseEvent]:
         action: NodeAction[StateT] | None = self.nodes.get(node)
         if action is None:
             raise RuntimeError(f"Unknown node '{node}'.")
@@ -257,7 +257,7 @@ class Workflow[StateT: State = State](BaseModel):
 
                 if isinstance(result, AsyncIterator):
                     async for item in result:
-                        if isinstance(item, Event):
+                        if isinstance(item, BaseEvent):
                             if item.origin.node is None:
                                 item.origin.node = node
                             yield item
@@ -292,7 +292,7 @@ class Workflow[StateT: State = State](BaseModel):
         ctx: InvocationContext | None,
         start_at: str,
         run: _RunState[StateT],
-    ) -> AsyncGenerator[Event]:
+    ) -> AsyncGenerator[BaseEvent]:
         self.check()
 
         current: str = start_at
@@ -373,9 +373,9 @@ class Workflow[StateT: State = State](BaseModel):
         ctx: InvocationContext | None = None,
         start_at: str = START,
         state: StateT | None = None,
-    ) -> AsyncIterator[Event]:
+    ) -> AsyncIterator[BaseEvent]:
         run = _RunState(state=state or self.state())
         return self._arun(agent, ctx=ctx, start_at=start_at, run=run)
 
-    def create_state(self, *, messages: list[Message] | None = None) -> StateT:
+    def create_state(self, *, messages: list[BaseMessage] | None = None) -> StateT:
         return self.state(messages=messages or [])

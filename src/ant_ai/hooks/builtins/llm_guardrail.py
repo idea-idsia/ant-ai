@@ -4,7 +4,7 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 
-from ant_ai.core.message import Message
+from ant_ai.core.message import BaseMessage, Message
 from ant_ai.core.result import StepResult
 from ant_ai.core.types import InvocationContext
 from ant_ai.hooks._guardrail_text import model_output_text
@@ -90,7 +90,7 @@ class LLMGuardrailHook(AgentHook, BaseModel):
     )
     on_fail: Literal["retry", "block"] = "retry"
 
-    def build_judge_messages(self, raw: str) -> list[Message]:
+    def build_judge_messages(self, raw: str) -> list[BaseMessage]:
         """Build the messages sent to the judge LLM. Override for full prompt control.
 
         Args:

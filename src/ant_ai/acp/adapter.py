@@ -44,7 +44,7 @@ from ant_ai.acp.tools import (
 from ant_ai.acp.translator import HVEventToACP
 from ant_ai.agent.agent import Agent
 from ant_ai.core.events import FinalAnswerEvent
-from ant_ai.core.message import Message
+from ant_ai.core.message import BaseMessage, Message
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.tools.tool import Tool, mcp_tools_from_url
 from ant_ai.workflow.workflow import Workflow
@@ -92,7 +92,7 @@ class ACPAdapter(ACPAgent):
         ]
         self._client: Client | None = None
         self._client_capabilities: ClientCapabilities | None = None
-        self._sessions: dict[str, list[Message]] = {}
+        self._sessions: dict[str, list[BaseMessage]] = {}
         self._session_agents: dict[str, Agent] = {}
         self._session_cwds: dict[str, str] = {}
         self._session_commands_sent: set[str] = set()
@@ -233,7 +233,7 @@ class ACPAdapter(ACPAgent):
         if command is not None and command.kind == "prompt":
             text = command.expand(args)
 
-        history: list[Message] = list(self._sessions.get(session_id, []))
+        history: list[BaseMessage] = list(self._sessions.get(session_id, []))
         history.append(Message(role="user", content=text))
 
         ctx: InvocationContext = self._context_class.from_metadata(

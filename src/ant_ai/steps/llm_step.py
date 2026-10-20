@@ -11,7 +11,7 @@ from ant_ai.core.events import (
     ReasoningEvent,
     ToolCallingEvent,
 )
-from ant_ai.core.message import Message, ToolCall, ToolFunction
+from ant_ai.core.message import BaseMessage, Message, ToolCall, ToolFunction
 from ant_ai.core.response import ChatLLMResponse
 from ant_ai.core.result import (
     LLMOutput,
@@ -71,10 +71,10 @@ class LLMStep(BaseModel):
 
     response_format: type[BaseModel] | None = Field(default=None, exclude=True)
 
-    def _build_llm_input(self, state: State) -> list[Message]:
+    def _build_llm_input(self, state: State) -> list[BaseMessage]:
         return [self.system_message, *state.messages]
 
-    def _generation_span(self, llm_input: list[Message], state: State):
+    def _generation_span(self, llm_input: list[BaseMessage], state: State):
         return obs.span(
             getattr(self.llm, "model", "llm"),
             as_type="generation",
@@ -112,7 +112,7 @@ class LLMStep(BaseModel):
         state: State,
         ctx: InvocationContext | None,
     ):
-        llm_input: list[Message] = self._build_llm_input(state)
+        llm_input: list[BaseMessage] = self._build_llm_input(state)
 
         async with self._generation_span(llm_input, state) as span:
             response: ChatLLMResponse = await self.llm.ainvoke(
@@ -158,7 +158,7 @@ class LLMStep(BaseModel):
         as `run()` would produce for the same response, correlated via
         `stream_id`.
         """
-        llm_input: list[Message] = self._build_llm_input(state)
+        llm_input: list[BaseMessage] = self._build_llm_input(state)
         stream_id = str(uuid4())
 
         async with self._generation_span(llm_input, state) as span:
@@ -186,7 +186,7 @@ class LLMStep(BaseModel):
 
     async def _stream_deltas(
         self,
-        llm_input: list[Message],
+        llm_input: list[BaseMessage],
         ctx: InvocationContext | None,
         stream_id: str,
     ):

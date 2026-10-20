@@ -2,6 +2,8 @@ from ant_ai.agent import Agent, BaseAgent
 from ant_ai.core import (
     AnyEvent,
     AnyMessage,
+    BaseEvent,
+    BaseMessage,
     ChatLLMResponse,
     Event,
     InvocationContext,
@@ -24,8 +26,10 @@ __all__ = [
     # memory
     "Memory",
     # core
+    "BaseMessage",
     "Message",
     "AnyMessage",
+    "BaseEvent",
     "Event",
     "AnyEvent",
     "State",
