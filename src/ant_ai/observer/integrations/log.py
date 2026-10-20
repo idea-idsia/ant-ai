@@ -5,6 +5,13 @@ from contextlib import asynccontextmanager
 from ant_ai.core.logging import bind_logger
 
 
+class _NoopSpan:
+    """The handle `StructlogSink.span` yields: callers record output with `update()`."""
+
+    def update(self, **_: object) -> None:
+        pass
+
+
 class StructlogSink:
     """
     Emits one structured log line per lifecycle event.
@@ -25,4 +32,4 @@ class StructlogSink:
 
     @asynccontextmanager
     async def span(self, name: str, **attrs):
-        yield  # Logging sink: lifecycle is covered by events; spans are no-ops
+        yield _NoopSpan()  # Logging sink: lifecycle is covered by events
