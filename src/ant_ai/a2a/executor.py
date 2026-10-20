@@ -18,9 +18,9 @@ from ant_ai.a2a.compression import (
 from ant_ai.a2a.session import current_session_id
 from ant_ai.a2a.translator import A2AToHVEvent, HVEventToA2A
 from ant_ai.agent.agent import Agent
-from ant_ai.core.events import CompletedEvent, ContentDeltaEvent, Event
+from ant_ai.core.events import BaseEvent, CompletedEvent, ContentDeltaEvent
 from ant_ai.core.message import (
-    AnyMessage,
+    BaseMessage,
     Message,
     ToolCallMessage,
     ToolCallResultMessage,
@@ -142,7 +142,7 @@ class A2AExecutor(AgentExecutor):
             session_id=task.context_id, metadata=context.metadata
         )
 
-        history: list[Message] = self._build_history(
+        history: list[BaseMessage] = self._build_history(
             context.related_tasks, context.get_user_input()
         )
 
@@ -171,12 +171,12 @@ class A2AExecutor(AgentExecutor):
 
         await obs.event("a2a.workflow.end")
 
-    async def process_event(self, event: Event, updater: TaskUpdater) -> None:
+    async def process_event(self, event: BaseEvent, updater: TaskUpdater) -> None:
         await self._translator.apply(event=event, updater=updater)
 
     def _build_history(
         self, related_tasks: list[Task], user_input: str
-    ) -> list[Message]:
+    ) -> list[BaseMessage]:
         checkpoint, cp_idx = find_compression_checkpoint(related_tasks)
         if checkpoint is not None:
             post_a2a = [
@@ -193,7 +193,7 @@ class A2AExecutor(AgentExecutor):
         history.append(Message(role="user", content=user_input))
         return history
 
-    def _convert_history(self, a2a_history: list[A2AMessage]) -> list[Message]:
+    def _convert_history(self, a2a_history: list[A2AMessage]) -> list[BaseMessage]:
         return self._answer_dangling_tool_calls(
             [
                 m
@@ -203,7 +203,9 @@ class A2AExecutor(AgentExecutor):
         )
 
     @staticmethod
-    def _answer_dangling_tool_calls(history: list[AnyMessage]) -> list[AnyMessage]:
+    def _answer_dangling_tool_calls(
+        history: list[BaseMessage],
+    ) -> list[BaseMessage]:
         """Give every unanswered tool call a result, so the transcript replays.
 
         A task cancelled (or crashed) while its tools ran ends with the
@@ -214,7 +216,7 @@ class A2AExecutor(AgentExecutor):
         The synthetic results say what happened and are flagged as errors, so
         the model knows the work was not done.
         """
-        repaired: list[AnyMessage] = []
+        repaired: list[BaseMessage] = []
         pending: dict[str, str] = {}  # call id -> tool name, unanswered so far
 
         def flush() -> None:

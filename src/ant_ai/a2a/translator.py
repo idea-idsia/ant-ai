@@ -19,10 +19,10 @@ from pydantic import TypeAdapter
 from ant_ai.a2a.types import A2AMetadata
 from ant_ai.core.events import (
     AnyEvent,
+    BaseEvent,
     ClarificationNeededEvent,
     CompletedEvent,
     ContentDeltaEvent,
-    Event,
     FinalAnswerEvent,
     MaxStepsReachedEvent,
     ReasoningEvent,
@@ -38,13 +38,13 @@ from ant_ai.core.message import (
     ToolCallResultMessage,
 )
 
-type Handler = Callable[[Event, TaskUpdater], Awaitable[None]]
-type UnboundHandler = Callable[[HVEventToA2A, Event, TaskUpdater], Awaitable[None]]
+type Handler = Callable[[BaseEvent, TaskUpdater], Awaitable[None]]
+type UnboundHandler = Callable[[HVEventToA2A, BaseEvent, TaskUpdater], Awaitable[None]]
 
 _any_event_adapter: TypeAdapter[AnyEvent] = TypeAdapter(AnyEvent)
 
 
-def handler(*event_types: type[Event]):
+def handler(*event_types: type[BaseEvent]):
     """
     Decorator used to mark methods as handlers for specific Event classes.
     """
@@ -78,7 +78,7 @@ class HVEventToA2A:
                 this is purely additive for peers that read artifacts.
         """
         self._stream_artifacts = stream_artifacts
-        self._handlers: dict[type[Event], Handler] = {}
+        self._handlers: dict[type[BaseEvent], Handler] = {}
         self._register_handlers()
 
     def _register_handlers(self) -> None:
@@ -92,7 +92,7 @@ class HVEventToA2A:
                 for t in types:
                     self._handlers[t] = method
 
-    async def apply(self, event: Event, updater: TaskUpdater) -> None:
+    async def apply(self, event: BaseEvent, updater: TaskUpdater) -> None:
         """Applies the appropriate handler for the given Event based on its class, using the TaskUpdater to propagate updates to A2A. This method serves as the main entry point for translating Events to A2A updates, abstracting away the specific handling logic into separate methods for each event class.
 
         Args:
@@ -111,11 +111,13 @@ class HVEventToA2A:
         await event_handler(event, updater)
 
     @handler(StartEvent)
-    async def _start(self, event: Event, updater: TaskUpdater) -> None:
+    async def _start(self, event: BaseEvent, updater: TaskUpdater) -> None:
         await updater.start_work()
 
     @handler(UpdateEvent, MaxStepsReachedEvent)
-    async def _update(self, event: Event, updater: TaskUpdater) -> None:
+    async def _update(
+        self, event: UpdateEvent | MaxStepsReachedEvent, updater: TaskUpdater
+    ) -> None:
         metadata: dict[str, Any] = A2AMetadata(event=event).model_dump()
         await updater.update_status(
             state=TaskState.TASK_STATE_WORKING,
@@ -128,7 +130,11 @@ class HVEventToA2A:
         FinalAnswerEvent,
         ReasoningEvent,
     )
-    async def _agent_message(self, event: Event, updater: TaskUpdater) -> None:
+    async def _agent_message(
+        self,
+        event: ToolCallingEvent | ToolResultEvent | FinalAnswerEvent | ReasoningEvent,
+        updater: TaskUpdater,
+    ) -> None:
         metadata: dict[str, Any] = A2AMetadata(event=event).model_dump()
         msg = updater.new_agent_message(parts=[Part(text=event.content)])
         msg.metadata.update(metadata)
@@ -177,7 +183,9 @@ class HVEventToA2A:
         )
 
     @handler(ClarificationNeededEvent)
-    async def _input_required(self, event: Event, updater: TaskUpdater) -> None:
+    async def _input_required(
+        self, event: ClarificationNeededEvent, updater: TaskUpdater
+    ) -> None:
         metadata: dict[str, Any] = A2AMetadata(event=event).model_dump()
         msg = updater.new_agent_message(parts=[Part(text=event.content)])
         msg.metadata.update(metadata)
@@ -188,7 +196,7 @@ class HVEventToA2A:
         )
 
     @handler(CompletedEvent)
-    async def _completed(self, event: Event, updater: TaskUpdater) -> None:
+    async def _completed(self, event: BaseEvent, updater: TaskUpdater) -> None:
         await updater.complete()
 
 
@@ -198,11 +206,11 @@ class A2AToHVEvent:
     """
 
     @singledispatchmethod
-    def translate(self, raw: Any) -> Event | None:
+    def translate(self, raw: Any) -> BaseEvent | None:
         return None
 
     @translate.register
-    def _(self, raw: A2AMessage) -> Event | None:
+    def _(self, raw: A2AMessage) -> BaseEvent | None:
         if not raw.metadata:
             return None
         md: dict[str, Any] = _json_format.MessageToDict(raw.metadata)
@@ -214,7 +222,7 @@ class A2AToHVEvent:
         return _any_event_adapter.validate_python(event)
 
     @translate.register
-    def _(self, raw: TaskStatusUpdateEvent) -> Event | None:
+    def _(self, raw: TaskStatusUpdateEvent) -> BaseEvent | None:
         if not raw.metadata:
             return None
         md: dict[str, Any] = _json_format.MessageToDict(raw.metadata)
@@ -226,7 +234,7 @@ class A2AToHVEvent:
         return _any_event_adapter.validate_python(event)
 
     @translate.register
-    def _(self, raw: TaskArtifactUpdateEvent) -> Event | None:
+    def _(self, raw: TaskArtifactUpdateEvent) -> BaseEvent | None:
         artifact = raw.artifact
         md: dict[str, Any] = (
             _json_format.MessageToDict(artifact.metadata) if artifact.metadata else {}
@@ -252,7 +260,7 @@ class A2AToHVEvent:
         )
 
     @translate.register
-    def _(self, raw: Task) -> Event | None:
+    def _(self, raw: Task) -> BaseEvent | None:
         if not raw.metadata:
             return None
         md: dict[str, Any] = _json_format.MessageToDict(raw.metadata)

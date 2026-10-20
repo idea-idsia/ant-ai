@@ -5,6 +5,7 @@ from typing import Any, ClassVar, Self
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation, model_validator
 
 from ant_ai.core.message import (
+    BaseMessage,
     Message,
     ToolCallMessage,
     ToolCallResultMessage,
@@ -20,7 +21,7 @@ _SUMMARISE_PROMPT = (
 )
 
 
-def _message_text(m: Message) -> str:
+def _message_text(m: BaseMessage) -> str:
     """Return a human-readable single-line representation of a message.
 
     Plain messages use ``role: content``.  Tool calls list function names and
@@ -98,11 +99,11 @@ class HistoryCompressionHook(AgentHook, BaseModel):
             raise ValueError("context_window is required when max_token_ratio is set.")
         return self
 
-    def _estimate_tokens(self, messages: list[Message]) -> int:
+    def _estimate_tokens(self, messages: list[BaseMessage]) -> int:
         """Rough estimate: 1 token ≈ 4 characters."""
         return sum(len(_message_text(m)) for m in messages) // 4
 
-    def _should_compress(self, messages: list[Message]) -> bool:
+    def _should_compress(self, messages: list[BaseMessage]) -> bool:
         if self.max_messages is not None and len(messages) >= self.max_messages:
             return True
         if self.max_token_ratio is not None and self.context_window is not None:
@@ -111,7 +112,7 @@ class HistoryCompressionHook(AgentHook, BaseModel):
                 return True
         return False
 
-    def _sanitize(self, messages: list[Message]) -> list[Message]:
+    def _sanitize(self, messages: list[BaseMessage]) -> list[BaseMessage]:
         return sanitize_messages(messages)
 
     async def before_model(self, state: State, ctx: InvocationContext | None) -> None:
@@ -123,7 +124,7 @@ class HistoryCompressionHook(AgentHook, BaseModel):
         """
         state.messages = self._sanitize(state.messages)
 
-        messages: list[Message] = state.messages
+        messages: list[BaseMessage] = state.messages
         if len(messages) <= self.keep_last or not self._should_compress(messages):
             return
 
@@ -140,8 +141,8 @@ class HistoryCompressionHook(AgentHook, BaseModel):
         while 0 < keep_from < len(messages) and messages[keep_from].role == "tool":
             keep_from -= 1
 
-        to_compress: list[Message] = messages[:keep_from]
-        keep: list[Message] = messages[keep_from:]
+        to_compress: list[BaseMessage] = messages[:keep_from]
+        keep: list[BaseMessage] = messages[keep_from:]
 
         # Nothing compressible after boundary adjustment (e.g. history starts with a
         # tool-call group that would be broken by any split).
@@ -149,7 +150,7 @@ class HistoryCompressionHook(AgentHook, BaseModel):
             return
 
         history_text: str = "\n".join(_message_text(m) for m in to_compress)
-        summary_request: list[Message] = [
+        summary_request: list[BaseMessage] = [
             Message(role="user", content=f"{_SUMMARISE_PROMPT}{history_text}")
         ]
 

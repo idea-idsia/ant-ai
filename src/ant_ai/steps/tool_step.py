@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, SkipValidation
 
 from ant_ai.core.events import ClarificationNeededEvent, ToolResultEvent
 from ant_ai.core.message import (
-    Message,
+    BaseMessage,
     ToolCall,
     ToolCallMessage,
     ToolCallResultMessage,
@@ -63,7 +63,7 @@ class ToolStep(BaseModel):
         state: State,
         ctx: InvocationContext | None,
     ):
-        last: Message = state.last_message
+        last: BaseMessage = state.last_message
         if not isinstance(last, ToolCallMessage):
             raise TypeError(
                 f"ToolStep expects last message to be ToolCallMessage, got {type(last).__name__}"

@@ -58,7 +58,7 @@ async def persist_compression_checkpoint(state: State, updater: TaskUpdater) -> 
     baseline = state._compression_context
     if baseline is None:
         return
-    data = [_any_message_adapter.dump_python(m, mode="json") for m in baseline]
+    data = [m.model_dump(mode="json") for m in baseline]
     msg = updater.new_agent_message(parts=[Part(text="")])
     msg.metadata.update({_CHECKPOINT_KEY: data})
     await updater.update_status(state=TaskState.TASK_STATE_WORKING, message=msg)

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Generator
 from contextlib import contextmanager
+from typing import cast
 
 import litellm
-from litellm import ModelResponse, acompletion, completion
+from litellm import CustomStreamWrapper, ModelResponse, acompletion, completion
 from litellm.types.utils import Choices
 from pydantic import BaseModel
 
-from ant_ai.core.message import Message, MessageChunk, ToolFunction
+from ant_ai.core.message import BaseMessage, Message, MessageChunk, ToolFunction
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk, ToolCall
 from ant_ai.core.types import InvocationContext
 from ant_ai.llm.exceptions import ContextWindowExceededError
@@ -48,7 +49,7 @@ def to_chatllm_response(
 
 
 @contextmanager
-def _translate_errors(model: str) -> Iterator[None]:
+def _translate_errors(model: str) -> Generator[None]:
     """Raise the library's own exception for conditions callers may act on."""
     try:
         yield
@@ -85,13 +86,13 @@ class LiteLLMChat(ChatLLM):
         self.default_params: dict = {}
 
     @staticmethod
-    def _to_litellm_messages(messages: list[Message]) -> list[dict[str, str]]:
+    def _to_litellm_messages(messages: list[BaseMessage]) -> list[dict[str, str]]:
         """Convert Message objects into LiteLLM-compatible dicts."""
         return [m.to_provider_dict() for m in messages]
 
     def _build_completion_kwargs(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         tools: list | None = None,
         response_format: dict | type[BaseModel] | None = None,
@@ -116,7 +117,7 @@ class LiteLLMChat(ChatLLM):
 
     def invoke(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         tools: list | None = None,
@@ -128,11 +129,11 @@ class LiteLLMChat(ChatLLM):
             response_format=response_format,
         )
         with _translate_errors(self.model):
-            return to_chatllm_response(completion(**kwargs))
+            return to_chatllm_response(cast(ModelResponse, completion(**kwargs)))
 
     async def ainvoke(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         tools: list | None = None,
@@ -144,11 +145,11 @@ class LiteLLMChat(ChatLLM):
             response_format=response_format,
         )
         with _translate_errors(self.model):
-            return to_chatllm_response(await acompletion(**kwargs))
+            return to_chatllm_response(cast(ModelResponse, await acompletion(**kwargs)))
 
     def stream(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         tools: list | None = None,
@@ -163,7 +164,7 @@ class LiteLLMChat(ChatLLM):
             )
 
             with _translate_errors(self.model):
-                stream = await acompletion(**kwargs)
+                stream = cast(CustomStreamWrapper, await acompletion(**kwargs))
                 async for chunk in stream:
                     choice_delta = chunk.choices[0].delta
                     delta = choice_delta.content or ""

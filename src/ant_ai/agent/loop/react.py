@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from ant_ai.agent.loop.loop import BaseAgentLoop
 from ant_ai.core.events import (
-    Event,
+    BaseEvent,
     EventOrigin,
     FinalAnswerEvent,
     MaxStepsReachedEvent,
@@ -50,7 +50,7 @@ class ReActLoop(BaseAgentLoop):
         *,
         max_steps: int = 10,
         response_schema: type[BaseModel] | None = None,
-    ) -> AsyncIterator[Event]:
+    ) -> AsyncIterator[BaseEvent]:
         active_step: LLMStep = (
             self.reason_step.model_copy(update={"response_format": response_schema})
             if self.act_step is None and response_schema

@@ -1,5 +1,5 @@
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Generator
 from contextlib import contextmanager
 from typing import Any, cast
 
@@ -8,7 +8,7 @@ from openai import AsyncOpenAI, OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 from pydantic import BaseModel
 
-from ant_ai.core.message import Message, MessageChunk, ToolFunction
+from ant_ai.core.message import BaseMessage, Message, MessageChunk, ToolFunction
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk, ToolCall
 from ant_ai.core.types import InvocationContext
 from ant_ai.llm.exceptions import ContextWindowExceededError
@@ -61,7 +61,7 @@ def _to_chatllm_response(response: ChatCompletion) -> ChatLLMResponse:
 
 
 @contextmanager
-def _translate_errors(model: str) -> Iterator[None]:
+def _translate_errors(model: str) -> Generator[None]:
     """Raise the library's own exception for conditions callers may act on."""
     try:
         yield
@@ -103,7 +103,7 @@ class OpenAIChat(ChatLLM):
 
     @staticmethod
     def _to_openai_messages(
-        messages: list[Message], tools: list | None = None
+        messages: list[BaseMessage], tools: list | None = None
     ) -> list[ChatCompletionMessageParam]:
         """Converts the internal Message objects into the shape expected by the OpenAI Python SDK. Casting just to make hinters happy."""
         return cast(
@@ -113,7 +113,7 @@ class OpenAIChat(ChatLLM):
 
     def invoke(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         tools: list | None = None,
@@ -134,7 +134,7 @@ class OpenAIChat(ChatLLM):
 
     async def ainvoke(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         tools: list | None = None,
@@ -155,7 +155,7 @@ class OpenAIChat(ChatLLM):
 
     def stream(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         tools: list | None = None,

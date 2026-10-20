@@ -23,7 +23,7 @@ Both tools are absent when `memory` is `None`, so existing agents without memory
 
 ```python
 from ant_ai.memory import Memory
-from ant_ai.core.message import Message
+from ant_ai.core.message import BaseMessage, Message
 from ant_ai.core.types import InvocationContext
 
 
@@ -40,7 +40,11 @@ class MyMemory(Memory):
         ...
 
     async def update(
-        self, messages: list[Message], *, ctx: InvocationContext | None = None, **kwargs
+        self,
+        messages: list[BaseMessage],
+        *,
+        ctx: InvocationContext | None = None,
+        **kwargs,
     ) -> None:
         # Persist messages for future retrieval
         ...
@@ -50,7 +54,7 @@ class MyMemory(Memory):
 
 ```python
 from ant_ai.tools.builtins.memory_tool import MemoryTool
-from ant_ai.core.message import Message
+from ant_ai.core.message import BaseMessage, Message
 from ant_ai.core.types import InvocationContext
 
 
@@ -65,7 +69,11 @@ class MyMemory(MemoryTool):
     ) -> list[Message]: ...
 
     async def update(
-        self, messages: list[Message], *, ctx: InvocationContext | None = None, **kwargs
+        self,
+        messages: list[BaseMessage],
+        *,
+        ctx: InvocationContext | None = None,
+        **kwargs,
     ) -> None: ...
 
     # search/add are inherited automatically — no need to redefine them.

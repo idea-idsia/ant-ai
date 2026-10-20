@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ant_ai.core.message import Message
+from ant_ai.core.message import BaseMessage, Message
 from ant_ai.core.types import InvocationContext
 
 
@@ -33,7 +33,7 @@ class Memory(BaseModel):
 
     async def update(
         self,
-        messages: list[Message],
+        messages: list[BaseMessage],
         *,
         ctx: InvocationContext | None = None,
         **kwargs: Any,

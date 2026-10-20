@@ -3,7 +3,14 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter
 
-from ant_ai.core.events import AnyEvent, ContentDeltaEvent
+from ant_ai.core.events import (
+    AnyEvent,
+    BaseEvent,
+    ContentDeltaEvent,
+    Event,
+    FinalAnswerEvent,
+    StartEvent,
+)
 
 _any_event_adapter: TypeAdapter[AnyEvent] = TypeAdapter(AnyEvent)
 
@@ -46,3 +53,23 @@ def test_event_from_a_peer_without_origin_agent_still_validates():
     del payload["origin"]["agent"]
     restored = _any_event_adapter.validate_python(payload)
     assert restored.origin.agent is None
+
+
+@pytest.mark.parametrize(
+    "event",
+    [Event(content="e"), StartEvent(), FinalAnswerEvent(content="done")],
+)
+@pytest.mark.unit
+def test_every_event_kind_round_trips_through_any_event(event: BaseEvent):
+    restored = _any_event_adapter.validate_python(event.model_dump())
+    assert type(restored) is type(event)
+    assert restored == event
+
+
+@pytest.mark.unit
+def test_specific_events_share_the_base_not_the_generic_event():
+    """Each concrete event owns its `kind`; only `BaseEvent` is shared."""
+    event = FinalAnswerEvent(content="done")
+    assert isinstance(event, BaseEvent)
+    assert not isinstance(event, Event)
+    assert "kind" not in BaseEvent.model_fields

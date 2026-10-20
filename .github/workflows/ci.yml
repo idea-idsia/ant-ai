@@ -9,9 +9,9 @@ jobs:
     lint:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v7
+            - uses: actions/checkout@v7.0.1
 
-            - uses: astral-sh/setup-uv@v10.0.1
+            - uses: astral-sh/setup-uv@v10.3.0
               with:
                   python-version: "3.14"
                   enable-cache: true
@@ -26,9 +26,9 @@ jobs:
         runs-on: ubuntu-latest
         continue-on-error: true
         steps:
-            - uses: actions/checkout@v7
+            - uses: actions/checkout@v7.0.1
 
-            - uses: astral-sh/setup-uv@v10.0.1
+            - uses: astral-sh/setup-uv@v10.3.0
               with:
                   python-version: "3.14"
                   enable-cache: true
@@ -40,9 +40,9 @@ jobs:
     run-pytest:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v7
+            - uses: actions/checkout@v7.0.1
 
-            - uses: astral-sh/setup-uv@v10.0.1
+            - uses: astral-sh/setup-uv@v10.3.0
               with:
                   python-version: "3.14"
                   enable-cache: true
@@ -53,19 +53,19 @@ jobs:
 
             - run: uv run pytest -m "not vllm and not external" --cov --cov-report=term --cov-report=xml --junitxml=junit.xml
 
-            - uses: codecov/codecov-action@v7
+            - uses: codecov/codecov-action@v7.1.1
               with:
                   files: coverage.xml
                   token: ${{ secrets.CODECOV_TOKEN }}
 
-            - uses: codecov/codecov-action@v7
+            - uses: codecov/codecov-action@v7.1.1
               if: ${{ !cancelled() }}
               with:
                   files: junit.xml
                   report_type: test_results
                   token: ${{ secrets.CODECOV_TOKEN }}
 
-            - uses: actions/upload-artifact@v7
+            - uses: actions/upload-artifact@v7.0.2
               if: always()
               with:
                   name: pytest-results
@@ -88,9 +88,9 @@ jobs:
                 ports:
                     - 5432:5432
         steps:
-            - uses: actions/checkout@v7
+            - uses: actions/checkout@v7.0.1
 
-            - uses: astral-sh/setup-uv@v10.0.1
+            - uses: astral-sh/setup-uv@v10.3.0
               with:
                   python-version: "3.14"
                   enable-cache: true
@@ -101,14 +101,14 @@ jobs:
               env:
                   POSTGRES_TEST_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/tasks"
 
-            - uses: codecov/codecov-action@v7
+            - uses: codecov/codecov-action@v7.1.1
               if: ${{ !cancelled() }}
               with:
                   files: report-postgres.xml
                   report_type: test_results
                   token: ${{ secrets.CODECOV_TOKEN }}
 
-            - uses: actions/upload-artifact@v7
+            - uses: actions/upload-artifact@v7.0.2
               if: always()
               with:
                   name: pytest-postgres-results

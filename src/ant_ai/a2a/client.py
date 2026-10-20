@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from ant_ai.a2a.config import A2AConfig
 from ant_ai.a2a.translator import A2AToHVEvent
-from ant_ai.core.events import Event
+from ant_ai.core.events import BaseEvent
 from ant_ai.observer import obs
 
 
@@ -112,7 +112,7 @@ class A2AClient(BaseModel):
         request_metadata: dict | None = None,
         context_id: str | None = None,
         reference_task_ids: list[str] | None = None,
-    ) -> AsyncIterator[Event]:
+    ) -> AsyncIterator[BaseEvent]:
         """Sends a message to the agent and yields events as responses are received.
 
         Args:
@@ -155,7 +155,7 @@ class A2AClient(BaseModel):
                     raw: TaskArtifactUpdateEvent = chunk.artifact_update
                 else:
                     continue
-                ev: Event | None = self._translator.translate(raw)
+                ev: BaseEvent | None = self._translator.translate(raw)
                 if ev is not None:
                     yield ev
 
