@@ -511,6 +511,75 @@ async def test_new_session_with_sse_mcp_server_forwards_headers(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_new_session_mcp_tools_reach_registry_and_llm(monkeypatch):
+    import ant_ai.acp.adapter as adapter_mod
+    from ant_ai.agent.agent import Agent
+    from ant_ai.tools.tool import tool
+
+    @tool
+    def base_tool(x: str) -> str:
+        """Base tool."""
+        return x
+
+    @tool
+    def mcp_tool(x: str) -> str:
+        """Tool served by the MCP server."""
+        return x
+
+    monkeypatch.setattr(
+        adapter_mod, "mcp_tools_from_url", AsyncMock(return_value=[mcp_tool])
+    )
+    agent = Agent(name="a", system_prompt="s", llm=MagicMock(), tools=[base_tool])
+    adapter = ACPAdapter(agent=agent, workflow=MagicMock())
+    srv = HttpMcpServer(type="http", name="m", url="http://x/mcp", headers=[])
+    resp = await adapter.new_session(cwd="/tmp", mcp_servers=[srv])
+
+    session_agent = adapter._session_agents[resp.session_id]
+    serialized = session_agent._loop.reason_step.serialized_tools
+    assert [t.name for t in session_agent.registry.tools] == ["base_tool", "mcp_tool"]
+    assert [s["function"]["name"] for s in serialized] == ["base_tool", "mcp_tool"]
+    assert [t.name for t in agent.registry.tools] == ["base_tool"]
+    assert session_agent.registry["mcp_tool"].invoke(x="ok") == "ok"
+    assert session_agent.registry["base_tool"].invoke(x="ok") == "ok"
+
+
+@pytest.mark.asyncio
+async def test_new_session_keeps_tools_added_to_the_base_agent(monkeypatch):
+    """`add_tool` only updates the registry, so `agent.tools` does not list them."""
+    import ant_ai.acp.adapter as adapter_mod
+    from ant_ai.agent.agent import Agent
+    from ant_ai.tools.tool import tool
+
+    @tool
+    def runtime_tool(x: str) -> str:
+        """Tool added after the agent was built."""
+        return x
+
+    @tool
+    def mcp_tool(x: str) -> str:
+        """Tool served by the MCP server."""
+        return x
+
+    monkeypatch.setattr(
+        adapter_mod, "mcp_tools_from_url", AsyncMock(return_value=[mcp_tool])
+    )
+    agent = Agent(name="a", system_prompt="s", llm=MagicMock(), tools=[])
+    agent.add_tool(runtime_tool)
+    adapter = ACPAdapter(agent=agent, workflow=MagicMock())
+    srv = HttpMcpServer(type="http", name="m", url="http://x/mcp", headers=[])
+    resp = await adapter.new_session(cwd="/tmp", mcp_servers=[srv])
+
+    session_agent = adapter._session_agents[resp.session_id]
+    serialized = session_agent._loop.reason_step.serialized_tools
+    assert [t.name for t in session_agent.registry.tools] == [
+        "mcp_tool",
+        "runtime_tool",
+    ]
+    assert [s["function"]["name"] for s in serialized] == ["mcp_tool", "runtime_tool"]
+    assert [t.name for t in agent.registry.tools] == ["runtime_tool"]
+
+
+@pytest.mark.asyncio
 async def test_new_session_ignores_stdio_mcp_servers(monkeypatch):
     import ant_ai.acp.adapter as adapter_mod
 
