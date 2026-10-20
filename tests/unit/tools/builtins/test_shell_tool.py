@@ -142,3 +142,11 @@ def test_chained_commands_all_in_allowlist_run(tmp_path: Path, command: str) -> 
     result = tool.run(command)
     assert result["returncode"] == 0
     assert result["stdout"].strip() == "hi"
+
+
+def test_allowed_pattern_must_match_from_the_command_start(tmp_path: Path) -> None:
+    tool = ShellTool(cwd=str(tmp_path), allowed_commands=["echo"])
+    result = tool.run("touch pwned echo")
+    assert result["returncode"] == -1
+    assert "allowed" in result["stderr"].lower()
+    assert not (tmp_path / "pwned").exists()

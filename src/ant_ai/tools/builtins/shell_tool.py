@@ -39,8 +39,9 @@ class ShellTool(Tool):
         and `blocked_commands` (denylist), both expressed as regex patterns.
         With an allowlist, a chained command (`;`, `&&`, `||`, `|`, `&`, newline) runs
         only if every command in the chain matches a pattern, and command
-        substitution (`$(...)`, backticks) is refused. Patterns are searched, not
-        matched in full: anchor them (e.g. `^ls\\b`) to match the command name only.
+        substitution (`$(...)`, backticks) is refused. Each command must match a
+        pattern from its start (`re.match`): end the pattern with `\\b` (e.g.
+        `ls\\b`) so that it does not also allow longer names (`lsof`).
         Policy violations, timeouts, and runtime errors are returned as a dict
         with a non-zero `returncode` and the reason in `stderr`, so the agent
         receives a recoverable error rather than an exception.
@@ -70,7 +71,7 @@ class ShellTool(Tool):
             if (
                 _COMMAND_SUBSTITUTION.search(command)
                 or not parts
-                or not all(allowed.search(part) for part in parts)
+                or not all(allowed.match(part) for part in parts)
             ):
                 return {
                     "stdout": "",
