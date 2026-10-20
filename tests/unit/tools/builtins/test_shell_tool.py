@@ -111,3 +111,42 @@ def test_blocked_takes_priority_over_allowed(tmp_path: Path) -> None:
     result = tool.run("sudo echo hi")
     assert result["returncode"] == -1
     assert "blocked" in result["stderr"].lower()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo hi; touch pwned",
+        "echo hi && touch pwned",
+        "echo hi || touch pwned",
+        "echo hi | touch pwned",
+        "echo hi & touch pwned",
+        "echo hi\ntouch pwned",
+        "echo $(touch pwned)",
+        "echo `touch pwned`",
+    ],
+)
+def test_chained_command_not_in_allowlist_is_rejected(
+    tmp_path: Path, command: str
+) -> None:
+    tool = ShellTool(cwd=str(tmp_path), allowed_commands=[r"^echo\b"])
+    result = tool.run(command)
+    assert result["returncode"] == -1
+    assert "allowed" in result["stderr"].lower()
+    assert not (tmp_path / "pwned").exists()
+
+
+@pytest.mark.parametrize("command", ["echo hi | grep hi", "echo hi 2>&1"])
+def test_chained_commands_all_in_allowlist_run(tmp_path: Path, command: str) -> None:
+    tool = ShellTool(cwd=str(tmp_path), allowed_commands=[r"^echo\b", r"^grep\b"])
+    result = tool.run(command)
+    assert result["returncode"] == 0
+    assert result["stdout"].strip() == "hi"
+
+
+def test_allowed_pattern_must_match_from_the_command_start(tmp_path: Path) -> None:
+    tool = ShellTool(cwd=str(tmp_path), allowed_commands=["echo"])
+    result = tool.run("touch pwned echo")
+    assert result["returncode"] == -1
+    assert "allowed" in result["stderr"].lower()
+    assert not (tmp_path / "pwned").exists()
