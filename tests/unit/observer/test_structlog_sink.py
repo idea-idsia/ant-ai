@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from ant_ai.core.events import ToolResultEvent
 from ant_ai.core.message import ToolCallMessage
 from ant_ai.core.types import State
 from ant_ai.observer import obs
@@ -55,7 +56,7 @@ async def test_tool_call_succeeds_with_structlog_sink(structlog_sink):
     events = [
         e
         async for e in step.run(State(messages=[msg]), None)
-        if type(e).__name__ == "ToolResultEvent"
+        if isinstance(e, ToolResultEvent)
     ]
 
     assert len(events) == 1
