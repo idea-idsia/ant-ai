@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import textwrap
 from pathlib import Path
 from typing import Literal
 
@@ -255,3 +256,35 @@ def test_render_workflow_mermaid_writes_mmd_file(noop_workflow, tmp_path: Path):
 def test_render_workflow_mermaid_extension_replaced(noop_workflow, tmp_path: Path):
     out = render_workflow(noop_workflow, tmp_path / "wf.txt", format="mermaid")
     assert out.suffix == ".mmd"
+
+
+@pytest.mark.unit
+def test_ant_ai_imports_and_renders_mermaid_without_graphviz():
+    """graphviz is the optional `viz` extra: only graphviz rendering may need it."""
+    import subprocess
+
+    script = textwrap.dedent(
+        """
+        import sys
+        sys.modules["graphviz"] = None  # make `import graphviz` fail
+        import ant_ai
+        from ant_ai.workflow import END, START, Workflow
+        from ant_ai.workflow.visualize import build_workflow_graph, build_workflow_mermaid
+
+        async def node(agent, state, ctx):
+            yield state
+
+        wf = Workflow().add_node("n", node).add_edge(START, "n").add_edge("n", END)
+        assert "flowchart" in build_workflow_mermaid(wf)
+        try:
+            build_workflow_graph(wf)
+        except ImportError as exc:
+            assert "pip install ant-ai[viz]" in str(exc)
+        else:
+            raise AssertionError("expected ImportError without graphviz")
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
