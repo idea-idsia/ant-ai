@@ -129,3 +129,37 @@ def test_search_scoped_to_subdirectory(
 def test_search_path_traversal_raises(workspace: Path, fs_tool: FilesystemTool) -> None:
     with pytest.raises(ToolError, match="escapes"):
         fs_tool.search("root", path="../../")
+
+
+@pytest.fixture()
+def outside(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    directory: Path = tmp_path_factory.mktemp("outside")
+    (directory / "secret.txt").write_text("SECRET", encoding="utf-8")
+    return directory
+
+
+def test_list_dir_skips_symlinks_out_of_workspace(
+    workspace: Path, outside: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "linkdir").symlink_to(outside)
+    (workspace / "linkfile.txt").symlink_to(outside / "secret.txt")
+    assert fs_tool.list_dir() == []
+
+
+def test_search_skips_symlinks_out_of_workspace(
+    workspace: Path, outside: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "linkdir").symlink_to(outside)
+    (workspace / "linkfile.txt").symlink_to(outside / "secret.txt")
+    assert fs_tool.search("SECRET") == "No matches found"
+
+
+def test_symlinks_inside_workspace_are_kept(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "real").mkdir()
+    (workspace / "real" / "a.txt").write_text("TARGET", encoding="utf-8")
+    (workspace / "alias").symlink_to(workspace / "real")
+    (workspace / "link.txt").symlink_to(workspace / "real" / "a.txt")
+    assert "alias/a.txt" in fs_tool.list_dir()
+    assert "link.txt:1: TARGET" in fs_tool.search("TARGET")
