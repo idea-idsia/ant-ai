@@ -772,3 +772,23 @@ async def test_stream_with_memory_tool_call_injects_ctx_end_to_end():
     assert len(tool_results) == 1
     assert "likes rust" in tool_results[0].content
     assert isinstance(events[-1], FinalAnswerEvent)
+
+
+@pytest.mark.unit
+async def test_stream_names_the_agent_in_every_event_origin():
+    class NoToolLLM(ChatLLM):
+        async def ainvoke(
+            self, messages, *, ctx=None, tools=None, response_format=None
+        ):
+            return DummyResponse(
+                message=Message(role="assistant", content="final answer"),
+                tool_calls=[],
+            )
+
+    agent = Agent(name="namer", system_prompt="sys", llm=NoToolLLM(), tools=[])
+    state = State(messages=[Message(role="user", content="hi")])
+
+    events = [e async for e in agent.stream(state, max_steps=3, ctx=None)]
+
+    assert events
+    assert all(e.origin.agent == "namer" for e in events)

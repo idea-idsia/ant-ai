@@ -21,6 +21,10 @@ class EventOrigin(BaseModel):
         default=None,
         description="Name of the workflow node where the event originated.",
     )
+    agent: str | None = Field(
+        default=None,
+        description="Name of the agent that emitted the event, when it came from one.",
+    )
     run_step: int = Field(
         default=0,
         description="Step index within the current run.",
