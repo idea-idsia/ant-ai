@@ -635,3 +635,40 @@ def test_check_conditional_edge_makes_all_nodes_reachable():
     w.add_conditional_edge("A", lambda a, s, c: "B")
     w.add_edge("B", END)
     w.check()  # B is reachable via A's conditional edge — must not raise
+
+
+@pytest.mark.unit
+async def test_coroutine_node_returning_a_state_replaces_the_run_state(agent):
+    replacement = State(messages=[_msg("replaced")])
+
+    async def node(agent, state: State, ctx) -> State:
+        return replacement
+
+    wf = Workflow().add_node("n", node).add_edge(START, "n").add_edge("n", END)
+
+    result = await wf.ainvoke(agent, state=State(messages=[_msg()]))
+
+    assert result is replacement
+
+
+@pytest.mark.unit
+async def test_coroutine_node_returning_none_keeps_the_mutated_state(agent):
+    async def node(agent, state: State, ctx) -> None:
+        state.messages.append(_msg("added"))
+
+    wf = Workflow().add_node("n", node).add_edge(START, "n").add_edge("n", END)
+
+    result = await wf.ainvoke(agent, state=State(messages=[_msg()]))
+
+    assert [m.content for m in result.messages] == ["seed", "added"]
+
+
+@pytest.mark.unit
+async def test_node_returning_something_else_is_rejected(agent):
+    async def node(agent, state: State, ctx):
+        return "not a state"
+
+    wf = Workflow().add_node("n", node).add_edge(START, "n").add_edge("n", END)
+
+    with pytest.raises(RuntimeError, match="Invalid return from node 'n'"):
+        await wf.ainvoke(agent, state=State(messages=[_msg()]))
