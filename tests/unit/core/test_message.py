@@ -28,3 +28,12 @@ def test_to_provider_dict_on_plain_message():
     d = Message(role="user", content="hi").to_provider_dict()
     assert "kind" not in d
     assert d["role"] == "user"
+
+
+@pytest.mark.unit
+def test_to_provider_dict_keeps_metadata_internal():
+    """Provenance kept in `metadata` must never reach the provider payload."""
+    msg = Message(role="user", content="hi", metadata={"envelope_id": "e-1"})
+    d = msg.to_provider_dict()
+    assert "metadata" not in d
+    assert msg.metadata == {"envelope_id": "e-1"}
