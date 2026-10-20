@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 
 [options]
@@ -177,7 +177,7 @@ wheels = [
 
 [[package]]
 name = "ant-ai"
-version = "1.12.1"
+version = "1.13.0"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk", extra = ["encryption", "grpc", "http-server", "sql", "telemetry"] },
