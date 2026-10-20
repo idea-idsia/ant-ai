@@ -5,11 +5,11 @@ from typing import Any, cast
 
 import openai
 from openai import AsyncOpenAI, OpenAI
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 from pydantic import BaseModel
 
-from ant_ai.core.message import Message, MessageChunk
-from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk
+from ant_ai.core.message import Message, MessageChunk, ToolFunction
+from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk, ToolCall
 from ant_ai.core.types import InvocationContext
 from ant_ai.llm.exceptions import ContextWindowExceededError
 from ant_ai.llm.protocol import ChatLLM
@@ -17,6 +17,47 @@ from ant_ai.llm.protocol import ChatLLM
 
 def _drop_none(**kwargs) -> dict[str, Any]:
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def _to_response_format(
+    response_format: dict | type[BaseModel] | None,
+) -> dict | None:
+    """`create()` rejects Pydantic classes, so send them as the JSON schema `parse()` would.
+
+    The strict schema comes from the public `pydantic_function_tool`; the helper
+    `parse()` itself uses lives in a private SDK module.
+    """
+    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        function = openai.pydantic_function_tool(response_format)["function"]
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "schema": function["parameters"],
+                "name": function["name"],
+                "strict": True,
+            },
+        }
+    return response_format
+
+
+def _to_chatllm_response(response: ChatCompletion) -> ChatLLMResponse:
+    message = response.choices[0].message
+    tool_calls: list[ToolCall] = [
+        ToolCall(
+            id=tc.id,
+            function=ToolFunction(
+                name=tc.function.name, arguments=tc.function.arguments
+            ),
+        )
+        for tc in (message.tool_calls or [])
+        if tc.type == "function"
+    ]
+    return ChatLLMResponse(
+        message=Message(role="assistant", content=message.content or ""),
+        tool_calls=tool_calls,
+        usage=response.usage.model_dump() if response.usage else None,
+        reasoning=getattr(message, "reasoning_content", None) or None,
+    )
 
 
 @contextmanager
@@ -86,11 +127,10 @@ class OpenAIChat(ChatLLM):
                 messages=openai_messages,
                 **_drop_none(
                     tools=tools,
-                    response_format=response_format,
+                    response_format=_to_response_format(response_format),
                 ),
             )
-        content = response.choices[0].message.content or ""
-        return ChatLLMResponse(message=Message(role="assistant", content=content))
+        return _to_chatllm_response(response)
 
     async def ainvoke(
         self,
@@ -108,11 +148,10 @@ class OpenAIChat(ChatLLM):
                 messages=openai_messages,
                 **_drop_none(
                     tools=tools,
-                    response_format=response_format,
+                    response_format=_to_response_format(response_format),
                 ),
             )
-        content = response.choices[0].message.content or ""
-        return ChatLLMResponse(message=Message(role="assistant", content=content))
+        return _to_chatllm_response(response)
 
     def stream(
         self,
@@ -132,7 +171,7 @@ class OpenAIChat(ChatLLM):
                     stream=True,
                     **_drop_none(
                         tools=tools,
-                        response_format=response_format,
+                        response_format=_to_response_format(response_format),
                     ),
                 )
 

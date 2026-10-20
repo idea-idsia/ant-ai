@@ -279,3 +279,94 @@ def test_api_base_none_uses_the_sdk_default(monkeypatch):
 
     assert chat.api_base is None
     assert str(chat.client.base_url) == "https://api.openai.com/v1/"
+
+
+def _tool_call_completion():
+    from openai.types.chat import ChatCompletion
+
+    return ChatCompletion.model_validate(
+        {
+            "id": "c",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "m",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_weather",
+                                    "arguments": '{"city": "Rome"}',
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12},
+        }
+    )
+
+
+@pytest.mark.unit
+async def test_invoke_and_ainvoke_return_tool_calls_and_usage(
+    monkeypatch, sample_messages
+):
+    chat = OpenAIChat(model="m", api_key="dummy")
+
+    async def acreate(**kwargs):
+        return _tool_call_completion()
+
+    monkeypatch.setattr(
+        chat.client.chat.completions, "create", lambda **_: _tool_call_completion()
+    )
+    monkeypatch.setattr(chat.async_client.chat.completions, "create", acreate)
+
+    for result in (chat.invoke(sample_messages), await chat.ainvoke(sample_messages)):
+        assert [
+            (tc.id, tc.function.name, tc.function.arguments) for tc in result.tool_calls
+        ] == [("call_1", "get_weather", '{"city": "Rome"}')]
+        assert result.usage is not None and result.usage["total_tokens"] == 12
+        assert result.message.content == ""
+
+
+@pytest.mark.unit
+async def test_pydantic_response_format_is_sent_as_json_schema(
+    monkeypatch, sample_messages, openai_sync_response, make_async_stream
+):
+    from pydantic import BaseModel
+
+    class Verdict(BaseModel):
+        ok: bool
+
+    chat = OpenAIChat(model="m", api_key="dummy")
+    captured: list[dict] = []
+
+    def create(**kwargs):
+        captured.append(kwargs)
+        if kwargs.get("stream"):
+            return make_async_stream([])
+        return openai_sync_response('{"ok": true}')
+
+    async def acreate(**kwargs):
+        return create(**kwargs)
+
+    monkeypatch.setattr(chat.client.chat.completions, "create", create)
+    monkeypatch.setattr(chat.async_client.chat.completions, "create", acreate)
+
+    chat.invoke(sample_messages, response_format=Verdict)
+    await chat.ainvoke(sample_messages, response_format=Verdict)
+    async for _ in chat.stream(sample_messages, response_format=Verdict):
+        pass
+
+    assert len(captured) == 3
+    for kwargs in captured:
+        assert kwargs["response_format"]["type"] == "json_schema"
+        assert kwargs["response_format"]["json_schema"]["name"] == "Verdict"
