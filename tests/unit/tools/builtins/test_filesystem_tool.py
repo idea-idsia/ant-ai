@@ -163,3 +163,101 @@ def test_symlinks_inside_workspace_are_kept(
     (workspace / "link.txt").symlink_to(workspace / "real" / "a.txt")
     assert "alias/a.txt" in fs_tool.list_dir()
     assert "link.txt:1: TARGET" in fs_tool.search("TARGET")
+
+
+@pytest.fixture()
+def ten_lines(workspace: Path) -> Path:
+    path = workspace / "ten.txt"
+    path.write_text("".join(f"line {i}\n" for i in range(10)), encoding="utf-8")
+    return path
+
+
+def test_read_file_without_range_returns_the_whole_file(
+    ten_lines: Path, fs_tool: FilesystemTool
+) -> None:
+    assert fs_tool.read_file("ten.txt") == ten_lines.read_text(encoding="utf-8")
+
+
+def test_read_file_with_offset_and_limit_returns_those_lines(
+    ten_lines: Path, fs_tool: FilesystemTool
+) -> None:
+    assert fs_tool.read_file("ten.txt", offset=3, limit=2) == "line 3\nline 4\n"
+    assert fs_tool.read_file("ten.txt", offset=8) == "line 8\nline 9\n"
+    assert fs_tool.read_file("ten.txt", limit=1) == "line 0\n"
+
+
+def test_read_file_limit_past_the_end_stops_at_the_end(
+    ten_lines: Path, fs_tool: FilesystemTool
+) -> None:
+    assert fs_tool.read_file("ten.txt", offset=9, limit=1000) == "line 9\n"
+
+
+@pytest.mark.parametrize(
+    ("offset", "limit", "match"),
+    [(-1, None, "offset"), (0, 0, "limit"), (10, None, "past the end")],
+)
+def test_read_file_rejects_a_bad_range(
+    ten_lines: Path,
+    fs_tool: FilesystemTool,
+    offset: int,
+    limit: int | None,
+    match: str,
+) -> None:
+    with pytest.raises(ToolError, match=match):
+        fs_tool.read_file("ten.txt", offset=offset, limit=limit)
+
+
+def test_edit_file_replaces_the_one_occurrence(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "calc.py").write_text(
+        "def add(a, b):\n    return a - b\n", encoding="utf-8"
+    )
+    assert "1 occurrence" in fs_tool.edit_file("calc.py", "a - b", "a + b")
+    assert (workspace / "calc.py").read_text(encoding="utf-8") == (
+        "def add(a, b):\n    return a + b\n"
+    )
+
+
+def test_edit_file_refuses_an_ambiguous_edit_unless_replace_all(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "x.txt").write_text("a\na\n", encoding="utf-8")
+    with pytest.raises(ToolError, match="2 times"):
+        fs_tool.edit_file("x.txt", "a", "b")
+    assert (workspace / "x.txt").read_text(encoding="utf-8") == "a\na\n"
+    assert "2 occurrences" in fs_tool.edit_file("x.txt", "a", "b", replace_all=True)
+    assert (workspace / "x.txt").read_text(encoding="utf-8") == "b\nb\n"
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "match"),
+    [("missing", "x", "not found"), ("", "x", "empty"), ("a", "a", "the same")],
+)
+def test_edit_file_rejects_an_edit_it_cannot_make(
+    workspace: Path, fs_tool: FilesystemTool, old: str, new: str, match: str
+) -> None:
+    (workspace / "x.txt").write_text("a\n", encoding="utf-8")
+    with pytest.raises(ToolError, match=match):
+        fs_tool.edit_file("x.txt", old, new)
+    assert (workspace / "x.txt").read_text(encoding="utf-8") == "a\n"
+
+
+def test_edit_file_keeps_windows_line_endings(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "crlf.txt").write_bytes(b"one\r\ntwo\r\n")
+    fs_tool.edit_file("crlf.txt", "two", "three")
+    assert (workspace / "crlf.txt").read_bytes() == b"one\r\nthree\r\n"
+
+
+def test_edit_file_missing_file_and_traversal_raise(fs_tool: FilesystemTool) -> None:
+    with pytest.raises(ToolError, match="missing.txt"):
+        fs_tool.edit_file("missing.txt", "a", "b")
+    with pytest.raises(ToolError, match="escapes"):
+        fs_tool.edit_file("../outside.txt", "a", "b")
+
+
+def test_edit_file_is_exposed_to_the_model(fs_tool: FilesystemTool) -> None:
+    names = [t.name for t in fs_tool._expand_namespace()]
+    assert "FilesystemTool_edit_file" in names
