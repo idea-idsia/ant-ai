@@ -229,6 +229,31 @@ Over A2A the task enters `input-required`; the caller resumes by sending the ans
 
 Use a clarification when the run genuinely cannot proceed without the answer. If the tool just needs to *tell* the user something and let the model carry on — a precondition it can't satisfy, say — raise a [`ToolError`](#reporting-failures) instead: the model sees the message, does what it can, and relays it in its answer.
 
+### Keeping a plan
+
+On a task with many steps, `planning=True` lets the agent write its plan, a list of items each `pending`, `in_progress` or `completed`, and shows it to the model before every call:
+
+```python
+agent = Agent(
+    name="worker",
+    system_prompt="For a task with several steps, write a plan with write_todos and keep it up to date.",
+    llm=llm,
+    planning=True,
+)
+```
+
+The plan is saved as `.plans/<agent>/<session_id>.md`, one folder per agent and one file per conversation, so it is still there when the next message of the conversation arrives, over A2A too, and an agent called over A2A in the same conversation keeps its own plan. It is a system message added to what the model receives, after any compression summary; the conversation in the state is not changed, so [`HistoryCompressionHook`][ant_ai.hooks.builtins.history_compression.HistoryCompressionHook] never removes it. The hook does not affect the model's output, so live streaming stays on.
+
+`planning=True` adds a [`PlanningTool`][ant_ai.tools.builtins.planning_tool.PlanningTool] and its [`PlanningHook`][ant_ai.hooks.builtins.planning.PlanningHook]. To keep the plans in another folder, add them by hand instead:
+
+```python
+from ant_ai.hooks.builtins import PlanningHook
+from ant_ai.tools.builtins import PlanningTool
+
+planning = PlanningTool(agent="worker", plan_dir="/data/plans")
+agent = Agent(name="worker", ..., tools=[planning], hooks=[PlanningHook(planning)])
+```
+
 ## Streaming a response
 
 [`Agent.stream()`][ant_ai.agent.agent.Agent.stream] drives the agent until it produces a final answer, yielding [`Event`][ant_ai.core.events.Event] objects at each step — LLM output, tool calls, tool results, and completion.

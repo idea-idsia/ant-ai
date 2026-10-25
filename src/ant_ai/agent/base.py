@@ -19,6 +19,7 @@ from ant_ai.agent.loop.loop import BaseAgentLoop
 from ant_ai.core.events import BaseEvent, FinalAnswerEvent
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext, State
+from ant_ai.hooks.builtins.planning import PlanningHook
 from ant_ai.hooks.layer import HookLayer
 from ant_ai.hooks.protocol import AgentHook
 from ant_ai.llm.protocol import ChatLLM
@@ -27,6 +28,7 @@ from ant_ai.skills.loader import SkillLoader
 from ant_ai.skills.presenter import MarkdownSkillPresenter, SkillPresenter
 from ant_ai.skills.protocol import AgentSkill
 from ant_ai.tools.builtins.memory_tool import MemoryTool
+from ant_ai.tools.builtins.planning_tool import PlanningTool
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import Tool
 
@@ -63,6 +65,11 @@ class BaseAgent(BaseModel):
         description="Pluggable memory backend for cross-session context, "
         "directly usable as an agent Tool (see MemoryTool).",
     )
+    planning: bool = Field(
+        default=False,
+        description="Give the agent a plan of its task, kept in a file "
+        "(adds a PlanningTool named after the agent and its PlanningHook).",
+    )
     skills: Path | list[Path] | None = Field(
         default=None,
         description="Path (or list of paths) to skills directories (agentskills.io standard).",
@@ -89,8 +96,13 @@ class BaseAgent(BaseModel):
         tools: list[Tool] = (
             [*self.tools, self.memory] if self.memory is not None else self.tools
         )
+        hooks: list[AgentHook] = self.hooks
+        if self.planning:
+            planning = PlanningTool(agent=self.name)
+            tools = [*tools, planning]
+            hooks = [*hooks, PlanningHook(planning)]
         self._registry = ToolRegistry(tools)
-        self._hook_layer = HookLayer(hooks=self.hooks)
+        self._hook_layer = HookLayer(hooks=hooks)
         self._skills = (
             SkillLoader(self.skills).load() if self.skills is not None else []
         )
