@@ -242,17 +242,7 @@ agent = Agent(
 )
 ```
 
-The plan is saved as `.plans/<agent>/<session_id>.md`, one folder per agent and one file per conversation, so it is still there when the next message of the conversation arrives, over A2A too, and an agent called over A2A in the same conversation keeps its own plan. It is a system message added to what the model receives, after any compression summary; the conversation in the state is not changed, so [`HistoryCompressionHook`][ant_ai.hooks.builtins.history_compression.HistoryCompressionHook] never removes it. The hook does not affect the model's output, so live streaming stays on.
-
-`planning=True` adds a [`PlanningTool`][ant_ai.tools.builtins.planning_tool.PlanningTool] and its [`PlanningHook`][ant_ai.hooks.builtins.planning.PlanningHook]. To keep the plans in another folder, add them by hand instead:
-
-```python
-from ant_ai.hooks.builtins import PlanningHook
-from ant_ai.tools.builtins import PlanningTool
-
-planning = PlanningTool(agent="worker", plan_dir="/data/plans")
-agent = Agent(name="worker", ..., tools=[planning], hooks=[PlanningHook(planning)])
-```
+The plan is saved in `.plans/<agent>/<session_id>.md`, so it is still there on the next message of the conversation, also over A2A. It is shown to the model as a system message, so [`HistoryCompressionHook`][ant_ai.hooks.builtins.history_compression.HistoryCompressionHook] never removes it.
 
 ## Streaming a response
 

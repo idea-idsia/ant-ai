@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import re
 from pathlib import Path
 from typing import Literal
@@ -10,8 +9,10 @@ from pydantic import BaseModel, Field
 from ant_ai.core.types import InvocationContext
 from ant_ai.tools.tool import Tool, ToolError
 
+PLAN_DIR: Path = Path(".plans")
+
 _MARK: dict[str, str] = {"pending": "[ ]", "in_progress": "[~]", "completed": "[x]"}
-_SAFE_NAME: re.Pattern[str] = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_UNSAFE: re.Pattern[str] = re.compile(r"[^A-Za-z0-9_-]")
 
 
 class Todo(BaseModel):
@@ -29,30 +30,26 @@ def render_plan(todos: list[Todo]) -> str:
 
 
 def _file_name(text: str) -> str:
-    # A name that is not a plain file name is replaced by its hash, so the
-    # file always stays inside plan_dir.
-    if _SAFE_NAME.fullmatch(text):
-        return text
-    return hashlib.sha256(text.encode()).hexdigest()[:32]
+    # Anything but letters, digits, - and _ becomes _, so the file stays inside PLAN_DIR.
+    return _UNSAFE.sub("_", text) or "_"
 
 
-def plan_path(planning: PlanningTool, ctx: InvocationContext | None) -> Path:
-    """The file that holds the plan of `planning.agent` in the conversation in `ctx`.
+def plan_path(agent: str, ctx: InvocationContext | None) -> Path:
+    """The file that holds the plan of `agent` in the conversation in `ctx`.
 
-    One folder per agent and one file per `session_id`, so two conversations
-    never share a plan, and neither do two agents of the same conversation
-    (over A2A the called agent receives the caller's `session_id`). Without a
-    context the plan goes to `default.md`.
+    `.plans/<agent>/<session_id>.md`: one file per conversation, and one folder
+    per agent, because over A2A the called agent receives the caller's
+    `session_id`. Without a context the plan goes to `default.md`.
     """
     session: str = ctx.session_id if ctx is not None else "default"
-    return planning.plan_dir / _file_name(planning.agent) / f"{_file_name(session)}.md"
+    return PLAN_DIR / _file_name(agent) / f"{_file_name(session)}.md"
 
 
-def read_plan(planning: PlanningTool, ctx: InvocationContext | None) -> str | None:
-    """The saved plan of `planning.agent` in the conversation in `ctx`, or None if it has none."""
+def read_plan(agent: str, ctx: InvocationContext | None) -> str | None:
+    """The saved plan of `agent` in the conversation in `ctx`, or None if it has none."""
     try:
-        text: str = plan_path(planning, ctx).read_text(encoding="utf-8")
-    except FileNotFoundError:
+        text: str = plan_path(agent, ctx).read_text(encoding="utf-8")
+    except OSError:
         return None
     return text or None
 
@@ -61,29 +58,12 @@ class PlanningTool(Tool):
     """
     Lets the agent keep a plan for a long task, saved as one file per conversation.
 
-    Example:
-        ```python
-        from ant_ai.agent import Agent
-        from ant_ai.hooks.builtins import PlanningHook
-        from ant_ai.tools.builtins import PlanningTool
+    Added with its `PlanningHook` by `Agent(planning=True)`. The agent can then call:
 
-        planning = PlanningTool(agent="worker")
-        agent = Agent(name="worker", tools=[planning], hooks=[PlanningHook(planning)], ...)
-        ```
-
-        The agent can now call:
-
-            - PlanningTool_write_todos(todos=[{"content": "fix the bug", "status": "in_progress"}])
-
-    Notes:
-        The plan is written to `plan_dir/<agent>/<session_id>.md`, so it is
-        still there when the next message of the same conversation arrives, also
-        over A2A, and it can be read by a person. `PlanningHook` shows it to the
-        model before every call.
+        - PlanningTool_write_todos(todos=[{"content": "fix the bug", "status": "in_progress"}])
     """
 
     agent: str = Field(description="Name of the agent; each agent has its own plans.")
-    plan_dir: Path = Field(default=Path(".plans"), description="Folder of the plans.")
 
     def write_todos(
         self, todos: list[Todo], ctx: InvocationContext | None = None
@@ -93,7 +73,7 @@ class PlanningTool(Tool):
         items: list[Todo] = [Todo.model_validate(t) for t in todos]
         if sum(t.status == "in_progress" for t in items) > 1:
             raise ToolError("only one item can be in_progress at a time")
-        path: Path = plan_path(self, ctx)
+        path: Path = plan_path(self.agent, ctx)
         if not items:
             path.unlink(missing_ok=True)
             return "Plan cleared."

@@ -67,8 +67,8 @@ class BaseAgent(BaseModel):
     )
     planning: bool = Field(
         default=False,
-        description="Give the agent a plan of its task, kept in a file "
-        "(adds a PlanningTool named after the agent and its PlanningHook).",
+        description="Let the agent keep a plan of its task in "
+        "`.plans/<agent>/<session_id>.md` (adds a PlanningTool and a PlanningHook).",
     )
     skills: Path | list[Path] | None = Field(
         default=None,
@@ -93,14 +93,14 @@ class BaseAgent(BaseModel):
 
     @model_validator(mode="after")
     def _build(self) -> BaseAgent:
-        tools: list[Tool] = (
-            [*self.tools, self.memory] if self.memory is not None else self.tools
-        )
-        hooks: list[AgentHook] = self.hooks
+        # Copies, so the agent's own fields are not changed and a rebuild adds nothing twice.
+        tools: list[Tool] = list(self.tools)
+        hooks: list[AgentHook] = list(self.hooks)
+        if self.memory is not None:
+            tools.append(self.memory)
         if self.planning:
-            planning = PlanningTool(agent=self.name)
-            tools = [*tools, planning]
-            hooks = [*hooks, PlanningHook(planning)]
+            tools.append(PlanningTool(agent=self.name))
+            hooks.append(PlanningHook(agent=self.name))
         self._registry = ToolRegistry(tools)
         self._hook_layer = HookLayer(hooks=hooks)
         self._skills = (
