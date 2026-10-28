@@ -231,7 +231,7 @@ Use a clarification when the run genuinely cannot proceed without the answer. If
 
 ### Keeping a plan
 
-On a task with many steps, `planning=True` lets the agent write its plan, a list of items each `pending`, `in_progress` or `completed`, and shows it to the model before every call:
+On a task with many steps, `planning=True` lets the agent write its plan, a list of items each `pending`, `in_progress` or `completed`, and keeps it in front of the model:
 
 ```python
 agent = Agent(
@@ -242,7 +242,7 @@ agent = Agent(
 )
 ```
 
-The plan is saved in `.plans/<agent>/<session_id>.md`, so it is still there on the next message of the conversation, also over A2A. It is shown to the model as a system message, so [`HistoryCompressionHook`][ant_ai.hooks.builtins.history_compression.HistoryCompressionHook] never removes it.
+The plan is saved in `.plans/<agent>/<session_id>.md`, so it is still there on the next message of the conversation, also over A2A, and it is cleared once every item is completed. When the conversation does not show it, because a new `State` was started for the same `session_id` or [`HistoryCompressionHook`][ant_ai.hooks.builtins.history_compression.HistoryCompressionHook] has summarised it away, it is added to the end of what the model receives. Without a `session_id` the plan is not saved, and agents left with the default name `BaseAgent` share one folder of plans.
 
 ## Streaming a response
 

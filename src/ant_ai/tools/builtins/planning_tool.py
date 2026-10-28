@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+import uuid
 from pathlib import Path
 from typing import Literal
 
@@ -8,8 +11,6 @@ from pydantic import BaseModel, Field
 
 from ant_ai.core.types import InvocationContext
 from ant_ai.tools.tool import Tool, ToolError
-
-PLAN_DIR: Path = Path(".plans")
 
 _MARK: dict[str, str] = {"pending": "[ ]", "in_progress": "[~]", "completed": "[x]"}
 _UNSAFE: re.Pattern[str] = re.compile(r"[^A-Za-z0-9_-]")
@@ -30,28 +31,47 @@ def render_plan(todos: list[Todo]) -> str:
 
 
 def _file_name(text: str) -> str:
-    # Anything but letters, digits, - and _ becomes _, so the file stays inside PLAN_DIR.
-    return _UNSAFE.sub("_", text) or "_"
+    # Readable, and inside the plans folder: anything but letters, digits, - and _
+    # becomes _. A changed name also gets a short hash after a ".", which a name
+    # left as it is cannot contain, so two names never share a file.
+    slug: str = _UNSAFE.sub("_", text)
+    if slug == text and text:
+        return text
+    return f"{slug}.{hashlib.sha256(text.encode()).hexdigest()[:8]}"
 
 
-def plan_path(agent: str, ctx: InvocationContext | None) -> Path:
-    """The file that holds the plan of `agent` in the conversation in `ctx`.
+class PlanStore(BaseModel):
+    """Keeps the plans as files, one per agent and conversation: `<root>/<agent>/<session_id>.md`."""
 
-    `.plans/<agent>/<session_id>.md`: one file per conversation, and one folder
-    per agent, because over A2A the called agent receives the caller's
-    `session_id`. Without a context the plan goes to `default.md`.
-    """
-    session: str = ctx.session_id if ctx is not None else "default"
-    return PLAN_DIR / _file_name(agent) / f"{_file_name(session)}.md"
+    root: Path = Field(default=Path(".plans"), description="Folder of the plans.")
 
+    def path(self, agent: str, session_id: str) -> Path:
+        """The file of the plan of `agent` in the conversation `session_id`."""
+        return self.root / _file_name(agent) / f"{_file_name(session_id)}.md"
 
-def read_plan(agent: str, ctx: InvocationContext | None) -> str | None:
-    """The saved plan of `agent` in the conversation in `ctx`, or None if it has none."""
-    try:
-        text: str = plan_path(agent, ctx).read_text(encoding="utf-8")
-    except OSError:
-        return None
-    return text or None
+    def read(self, agent: str, session_id: str) -> str | None:
+        """The plan, or None if there is none."""
+        try:
+            text: str = self.path(agent, session_id).read_text(encoding="utf-8")
+        except OSError:
+            return None
+        return text or None
+
+    def write(self, agent: str, session_id: str, text: str) -> None:
+        """Save the plan, replacing the previous one."""
+        path: Path = self.path(agent, session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Write a temporary file and rename it, so a reader never sees half a plan.
+        tmp: Path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def delete(self, agent: str, session_id: str) -> None:
+        """Remove the plan, if there is one."""
+        self.path(agent, session_id).unlink(missing_ok=True)
 
 
 class PlanningTool(Tool):
@@ -64,6 +84,9 @@ class PlanningTool(Tool):
     """
 
     agent: str = Field(description="Name of the agent; each agent has its own plans.")
+    store: PlanStore = Field(
+        default_factory=PlanStore, description="Where the plans are kept."
+    )
 
     def write_todos(
         self, todos: list[Todo], ctx: InvocationContext | None = None
@@ -73,11 +96,16 @@ class PlanningTool(Tool):
         items: list[Todo] = [Todo.model_validate(t) for t in todos]
         if sum(t.status == "in_progress" for t in items) > 1:
             raise ToolError("only one item can be in_progress at a time")
-        path: Path = plan_path(self.agent, ctx)
-        if not items:
-            path.unlink(missing_ok=True)
-            return "Plan cleared."
         text: str = render_plan(items)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        # Without a conversation there is no next message to keep the plan for:
+        # the model sees it in this result.
+        if ctx is None:
+            return text or "Plan cleared."
+        if not items:
+            self.store.delete(self.agent, ctx.session_id)
+            return "Plan cleared."
+        if all(t.status == "completed" for t in items):
+            self.store.delete(self.agent, ctx.session_id)
+            return f"{text}\n\nAll items are completed, so the plan is cleared."
+        self.store.write(self.agent, ctx.session_id, text)
         return text

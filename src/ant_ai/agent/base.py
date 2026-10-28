@@ -28,7 +28,7 @@ from ant_ai.skills.loader import SkillLoader
 from ant_ai.skills.presenter import MarkdownSkillPresenter, SkillPresenter
 from ant_ai.skills.protocol import AgentSkill
 from ant_ai.tools.builtins.memory_tool import MemoryTool
-from ant_ai.tools.builtins.planning_tool import PlanningTool
+from ant_ai.tools.builtins.planning_tool import PlanningTool, PlanStore
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import Tool
 
@@ -67,8 +67,8 @@ class BaseAgent(BaseModel):
     )
     planning: bool = Field(
         default=False,
-        description="Let the agent keep a plan of its task in "
-        "`.plans/<agent>/<session_id>.md` (adds a PlanningTool and a PlanningHook).",
+        description="Let the agent keep a plan of its task, saved in "
+        "`.plans/<agent>/<session_id>.md`.",
     )
     skills: Path | list[Path] | None = Field(
         default=None,
@@ -99,8 +99,9 @@ class BaseAgent(BaseModel):
         if self.memory is not None:
             tools.append(self.memory)
         if self.planning:
-            tools.append(PlanningTool(agent=self.name))
-            hooks.append(PlanningHook(agent=self.name))
+            store = PlanStore()
+            tools.append(PlanningTool(agent=self.name, store=store))
+            hooks.append(PlanningHook(agent=self.name, store=store))
         self._registry = ToolRegistry(tools)
         self._hook_layer = HookLayer(hooks=hooks)
         self._skills = (
