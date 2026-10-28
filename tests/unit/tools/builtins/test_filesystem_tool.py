@@ -181,20 +181,29 @@ def test_read_file_without_range_returns_the_whole_file(
 def test_read_file_with_offset_and_limit_returns_those_lines(
     ten_lines: Path, fs_tool: FilesystemTool
 ) -> None:
-    assert fs_tool.read_file("ten.txt", offset=3, limit=2) == "line 3\nline 4\n"
-    assert fs_tool.read_file("ten.txt", offset=8) == "line 8\nline 9\n"
+    assert fs_tool.read_file("ten.txt", offset=4, limit=2) == "line 3\nline 4\n"
+    assert fs_tool.read_file("ten.txt", offset=9) == "line 8\nline 9\n"
     assert fs_tool.read_file("ten.txt", limit=1) == "line 0\n"
+
+
+def test_read_file_offset_is_the_line_number_search_reports(
+    ten_lines: Path, fs_tool: FilesystemTool
+) -> None:
+    hit = fs_tool.search("line 3")
+    assert hit == "ten.txt:4: line 3"
+    lineno = int(hit.split(":")[1])
+    assert fs_tool.read_file("ten.txt", offset=lineno, limit=1) == "line 3\n"
 
 
 def test_read_file_limit_past_the_end_stops_at_the_end(
     ten_lines: Path, fs_tool: FilesystemTool
 ) -> None:
-    assert fs_tool.read_file("ten.txt", offset=9, limit=1000) == "line 9\n"
+    assert fs_tool.read_file("ten.txt", offset=10, limit=1000) == "line 9\n"
 
 
 @pytest.mark.parametrize(
     ("offset", "limit", "match"),
-    [(-1, None, "offset"), (0, 0, "limit"), (10, None, "past the end")],
+    [(0, None, "offset"), (1, 0, "limit"), (11, None, "past the end")],
 )
 def test_read_file_rejects_a_bad_range(
     ten_lines: Path,
@@ -249,6 +258,23 @@ def test_edit_file_keeps_windows_line_endings(
     (workspace / "crlf.txt").write_bytes(b"one\r\ntwo\r\n")
     fs_tool.edit_file("crlf.txt", "two", "three")
     assert (workspace / "crlf.txt").read_bytes() == b"one\r\nthree\r\n"
+
+
+def test_edit_file_matches_several_lines_of_a_windows_file(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    # The model writes "\n", the file has "\r\n".
+    (workspace / "crlf.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+    fs_tool.edit_file("crlf.txt", "one\ntwo", "uno\ndue")
+    assert (workspace / "crlf.txt").read_bytes() == b"uno\r\ndue\r\nthree\r\n"
+
+
+def test_edit_file_leaves_the_other_line_endings_of_a_mixed_file(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "mixed.txt").write_bytes(b"a\r\nb\r\nc\nd\n")
+    fs_tool.edit_file("mixed.txt", "a\nb", "x\ny")
+    assert (workspace / "mixed.txt").read_bytes() == b"x\r\ny\r\nc\nd\n"
 
 
 def test_edit_file_missing_file_and_traversal_raise(fs_tool: FilesystemTool) -> None:

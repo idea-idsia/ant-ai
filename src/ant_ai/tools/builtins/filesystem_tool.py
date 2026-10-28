@@ -27,7 +27,7 @@ class FilesystemTool(Tool):
         The agent can now call:
 
             - FilesystemTool_read_file(path="notes.txt")
-            - FilesystemTool_read_file(path="big.log", offset=200, limit=50)
+            - FilesystemTool_read_file(path="big.log", offset=201, limit=50)
             - FilesystemTool_write_file(path="output.txt", content="hello")
             - FilesystemTool_edit_file(path="app.py", old_string="a - b", new_string="a + b")
             - FilesystemTool_list_dir(path="src/")
@@ -62,22 +62,23 @@ class FilesystemTool(Tool):
         rel: str = entry.relative_to(self.workspace_root).as_posix()
         return self._ignore_spec.match_file(f"{rel}/" if is_dir else rel)
 
-    def read_file(self, path: str, offset: int = 0, limit: int | None = None) -> str:
-        """Read a file. Path is relative to /workspace. Without `offset` and `limit` the whole file is returned; for a long file, pass `offset` (first line, counting from 0) and `limit` (number of lines) to read only that part."""
-        if offset < 0:
-            raise ToolError("offset must be 0 or more")
+    def read_file(self, path: str, offset: int = 1, limit: int | None = None) -> str:
+        """Read a file. Path is relative to /workspace. Without `offset` and `limit` the whole file is returned; for a long file, pass `offset` (first line, counting from 1 as `search` does) and `limit` (number of lines) to read only that part."""
+        if offset < 1:
+            raise ToolError("offset must be 1 or more")
         if limit is not None and limit < 1:
             raise ToolError("limit must be 1 or more")
         text: str = self._read(path)
-        if offset == 0 and limit is None:
+        if offset == 1 and limit is None:
             return text
         lines: list[str] = text.splitlines(keepends=True)
-        if offset > 0 and offset >= len(lines):
+        if offset > 1 and offset > len(lines):
             raise ToolError(
                 f"offset {offset} is past the end of {path} ({len(lines)} lines)"
             )
-        end: int | None = None if limit is None else offset + limit
-        return "".join(lines[offset:end])
+        start: int = offset - 1
+        end: int | None = None if limit is None else start + limit
+        return "".join(lines[start:end])
 
     def edit_file(
         self, path: str, old_string: str, new_string: str, replace_all: bool = False
@@ -89,7 +90,13 @@ class FilesystemTool(Tool):
             raise ToolError("old_string and new_string are the same")
         # newline="": keep the file's own line endings on the way in and out.
         text: str = self._read(path, newline="")
-        count: int = text.count(old_string)
+        # The model writes "\n" even for a file with "\r\n": match either, and
+        # write new_string with the file's line ending. The rest stays as it is.
+        eol: str = "\r\n" if "\r\n" in text else "\n"
+        old_lines: list[str] = old_string.replace("\r\n", "\n").split("\n")
+        pattern: Pattern[str] = re.compile(r"\r?\n".join(map(re.escape, old_lines)))
+        new: str = new_string.replace("\r\n", "\n").replace("\n", eol)
+        count: int = len(pattern.findall(text))
         if count == 0:
             raise ToolError(f"old_string not found in {path}")
         if count > 1 and not replace_all:
@@ -98,7 +105,9 @@ class FilesystemTool(Tool):
             )
         try:
             self._resolve(path).write_text(
-                text.replace(old_string, new_string), encoding="utf-8", newline=""
+                pattern.sub(lambda _: new, text, count=0 if replace_all else 1),
+                encoding="utf-8",
+                newline="",
             )
         except OSError as e:
             raise ToolError(f"{e.strerror or e}: {path}") from e
