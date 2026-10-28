@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from pathlib import Path
 from re import Pattern
 
@@ -9,6 +10,10 @@ import pathspec
 from pydantic import PrivateAttr
 
 from ant_ai.tools.tool import Tool, ToolError
+
+# The tool calls of one step run in parallel: edits and writes take turns, so an
+# edit never writes back a file that another call changed after it was read.
+_WRITE_LOCK: threading.Lock = threading.Lock()
 
 
 class FilesystemTool(Tool):
@@ -88,29 +93,30 @@ class FilesystemTool(Tool):
             raise ToolError("old_string is empty")
         if old_string == new_string:
             raise ToolError("old_string and new_string are the same")
-        # newline="": keep the file's own line endings on the way in and out.
-        text: str = self._read(path, newline="")
-        # The model writes "\n" even for a file with "\r\n": match either, and
-        # write new_string with the file's line ending. The rest stays as it is.
-        eol: str = "\r\n" if "\r\n" in text else "\n"
-        old_lines: list[str] = old_string.replace("\r\n", "\n").split("\n")
-        pattern: Pattern[str] = re.compile(r"\r?\n".join(map(re.escape, old_lines)))
-        new: str = new_string.replace("\r\n", "\n").replace("\n", eol)
-        count: int = len(pattern.findall(text))
-        if count == 0:
-            raise ToolError(f"old_string not found in {path}")
-        if count > 1 and not replace_all:
-            raise ToolError(
-                f"old_string appears {count} times in {path}: add surrounding text to make it unique, or set replace_all"
-            )
-        try:
-            self._resolve(path).write_text(
-                pattern.sub(lambda _: new, text, count=0 if replace_all else 1),
-                encoding="utf-8",
-                newline="",
-            )
-        except OSError as e:
-            raise ToolError(f"{e.strerror or e}: {path}") from e
+        with _WRITE_LOCK:
+            # newline="": keep the file's own line endings on the way in and out.
+            text: str = self._read(path, newline="")
+            # The model writes "\n" even for a file with "\r\n": match either, and
+            # write new_string with the file's line ending. The rest stays as it is.
+            eol: str = "\r\n" if "\r\n" in text else "\n"
+            old_lines: list[str] = old_string.replace("\r\n", "\n").split("\n")
+            pattern: Pattern[str] = re.compile(r"\r?\n".join(map(re.escape, old_lines)))
+            new: str = new_string.replace("\r\n", "\n").replace("\n", eol)
+            count: int = len(pattern.findall(text))
+            if count == 0:
+                raise ToolError(f"old_string not found in {path}")
+            if count > 1 and not replace_all:
+                raise ToolError(
+                    f"old_string appears {count} times in {path}: add surrounding text to make it unique, or set replace_all"
+                )
+            try:
+                self._resolve(path).write_text(
+                    pattern.sub(lambda _: new, text, count=0 if replace_all else 1),
+                    encoding="utf-8",
+                    newline="",
+                )
+            except OSError as e:
+                raise ToolError(f"{e.strerror or e}: {path}") from e
         replaced: int = count if replace_all else 1
         return f"Replaced {replaced} occurrence{'' if replaced == 1 else 's'} in {path}"
 
@@ -119,7 +125,8 @@ class FilesystemTool(Tool):
         try:
             target: Path = self._resolve(path)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            with _WRITE_LOCK:
+                target.write_text(content, encoding="utf-8")
             return f"Written {len(content.encode('utf-8'))} bytes to {path}"
         except ValueError as e:
             raise ToolError(str(e)) from e

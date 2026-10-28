@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -275,6 +277,27 @@ def test_edit_file_leaves_the_other_line_endings_of_a_mixed_file(
     (workspace / "mixed.txt").write_bytes(b"a\r\nb\r\nc\nd\n")
     fs_tool.edit_file("mixed.txt", "a\nb", "x\ny")
     assert (workspace / "mixed.txt").read_bytes() == b"x\r\ny\r\nc\nd\n"
+
+
+async def test_edits_of_one_step_to_the_same_file_are_all_kept(
+    workspace: Path, fs_tool: FilesystemTool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The tool calls of one step run in parallel; make each edit slow between
+    # reading and writing the file, so both read it before either writes.
+    read = FilesystemTool._read
+
+    def slow_read(self, path, newline=None):
+        text = read(self, path, newline)
+        time.sleep(0.05)
+        return text
+
+    monkeypatch.setattr(FilesystemTool, "_read", slow_read)
+    (workspace / "config.txt").write_text("a=1\nb=1\n", encoding="utf-8")
+    await asyncio.gather(
+        asyncio.to_thread(fs_tool.edit_file, "config.txt", "a=1", "a=2"),
+        asyncio.to_thread(fs_tool.edit_file, "config.txt", "b=1", "b=2"),
+    )
+    assert (workspace / "config.txt").read_text(encoding="utf-8") == "a=2\nb=2\n"
 
 
 def test_edit_file_missing_file_and_traversal_raise(fs_tool: FilesystemTool) -> None:
