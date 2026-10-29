@@ -48,26 +48,19 @@ class PlanningHook(AgentHook):
         plan: str | None = None
         if ctx is not None and state.messages:
             plan = await asyncio.to_thread(self.store.read, self.agent, ctx.session_id)
-        shown: bool = any(
+        if plan is not None and not any(
             isinstance(m, ToolCallResultMessage) and m.content == plan
-            for m in state.messages
-        )
-        if plan is None or shown:
-            async for item in call_next(state, ctx):
-                yield item
-            return
-        last: BaseMessage = state.messages[-1]
-        view: State = state.model_copy(
-            update={
-                "messages": [
-                    *state.messages[:-1],
-                    last.model_copy(
-                        update={
-                            "content": f"{last.content or ''}\n\n{_PLAN_PREFIX}{plan}"
-                        }
-                    ),
-                ]
-            }
-        )
-        async for item in call_next(view, ctx):
+            for m in reversed(state.messages)
+        ):
+            last: BaseMessage = state.messages[-1]
+            content: str = f"{last.content or ''}\n\n{_PLAN_PREFIX}{plan}"
+            state = state.model_copy(
+                update={
+                    "messages": [
+                        *state.messages[:-1],
+                        last.model_copy(update={"content": content}),
+                    ]
+                }
+            )
+        async for item in call_next(state, ctx):
             yield item
