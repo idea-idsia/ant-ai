@@ -77,7 +77,7 @@ class FilesystemTool(Tool):
         if offset == 1 and limit is None:
             return text
         lines: list[str] = text.splitlines(keepends=True)
-        if offset > 1 and offset > len(lines):
+        if offset > max(len(lines), 1):
             raise ToolError(
                 f"offset {offset} is past the end of {path} ({len(lines)} lines)"
             )
@@ -96,12 +96,19 @@ class FilesystemTool(Tool):
         with _WRITE_LOCK:
             # newline="": keep the file's own line endings on the way in and out.
             text: str = self._read(path, newline="")
-            # The model writes "\n" even for a file with "\r\n": match either, and
-            # write new_string with the file's line ending. The rest stays as it is.
-            eol: str = "\r\n" if "\r\n" in text else "\n"
+            # The model writes "\n" even for a file with "\r\n": match either.
+            file_eol: str = "\r\n" if "\r\n" in text else "\n"
             old_lines: list[str] = old_string.replace("\r\n", "\n").split("\n")
             pattern: Pattern[str] = re.compile(r"\r?\n".join(map(re.escape, old_lines)))
-            new: str = new_string.replace("\r\n", "\n").replace("\n", eol)
+            new_lines: list[str] = new_string.replace("\r\n", "\n").split("\n")
+
+            def replace(match: re.Match[str]) -> str:
+                found: str = match.group()
+                eol: str = (
+                    "\r\n" if "\r\n" in found else "\n" if "\n" in found else file_eol
+                )
+                return eol.join(new_lines)
+
             count: int = len(pattern.findall(text))
             if count == 0:
                 raise ToolError(f"old_string not found in {path}")
@@ -111,7 +118,7 @@ class FilesystemTool(Tool):
                 )
             try:
                 self._resolve(path).write_text(
-                    pattern.sub(lambda _: new, text, count=0 if replace_all else 1),
+                    pattern.sub(replace, text, count=0 if replace_all else 1),
                     encoding="utf-8",
                     newline="",
                 )

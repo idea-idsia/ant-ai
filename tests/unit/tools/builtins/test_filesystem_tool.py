@@ -310,3 +310,11 @@ def test_edit_file_missing_file_and_traversal_raise(fs_tool: FilesystemTool) -> 
 def test_edit_file_is_exposed_to_the_model(fs_tool: FilesystemTool) -> None:
     names = [t.name for t in fs_tool._expand_namespace()]
     assert "FilesystemTool_edit_file" in names
+
+
+def test_edit_file_keeps_the_line_ending_of_the_lines_it_replaces(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "mixed.txt").write_bytes(b"a\r\nb\r\nc\nd\n")
+    fs_tool.edit_file("mixed.txt", "c\nd", "x\ny")
+    assert (workspace / "mixed.txt").read_bytes() == b"a\r\nb\r\nx\ny\n"
