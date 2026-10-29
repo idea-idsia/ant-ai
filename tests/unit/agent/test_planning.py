@@ -147,6 +147,18 @@ def test_a_plain_name_is_kept_and_two_names_never_share_a_file():
 
 
 @pytest.mark.unit
+def test_a_long_session_id_is_cut_and_its_plan_is_kept():
+    long_id = "s" * 300
+    path = STORE.path("a", long_id)
+    assert len(path.name) < 100
+    assert path != STORE.path("a", "s" * 301)
+
+    PlanningTool(agent="a").write_todos(PLAN, ctx=InvocationContext(session_id=long_id))
+
+    assert "fix the bug" in STORE.read("a", long_id)
+
+
+@pytest.mark.unit
 def test_without_a_context_the_plan_is_not_saved(in_tmp: Path):
     assert PlanningTool(agent="a").write_todos(PLAN) == (
         "- [x] read the code\n- [~] fix the bug"

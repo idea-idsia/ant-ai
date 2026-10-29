@@ -14,6 +14,7 @@ from ant_ai.tools.tool import Tool, ToolError
 
 _MARK: dict[str, str] = {"pending": "[ ]", "in_progress": "[~]", "completed": "[x]"}
 _UNSAFE: re.Pattern[str] = re.compile(r"[^A-Za-z0-9_-]")
+_MAX_NAME: int = 64
 
 
 class Todo(BaseModel):
@@ -35,9 +36,9 @@ def _file_name(text: str) -> str:
     # becomes _. A changed name also gets a short hash after a ".", which a name
     # left as it is cannot contain, so two names never share a file.
     slug: str = _UNSAFE.sub("_", text)
-    if slug == text and text:
+    if slug == text and 0 < len(text) <= _MAX_NAME:
         return text
-    return f"{slug}.{hashlib.sha256(text.encode()).hexdigest()[:8]}"
+    return f"{slug[:_MAX_NAME]}.{hashlib.sha256(text.encode()).hexdigest()[:8]}"
 
 
 class PlanStore(BaseModel):
