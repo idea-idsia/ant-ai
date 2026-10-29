@@ -19,6 +19,7 @@ from ant_ai.agent.loop.loop import BaseAgentLoop
 from ant_ai.core.events import BaseEvent, FinalAnswerEvent
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext, State
+from ant_ai.hooks.builtins.planning import PlanningHook
 from ant_ai.hooks.layer import HookLayer
 from ant_ai.hooks.protocol import AgentHook
 from ant_ai.llm.protocol import ChatLLM
@@ -27,6 +28,7 @@ from ant_ai.skills.loader import SkillLoader
 from ant_ai.skills.presenter import MarkdownSkillPresenter, SkillPresenter
 from ant_ai.skills.protocol import AgentSkill
 from ant_ai.tools.builtins.memory_tool import MemoryTool
+from ant_ai.tools.builtins.planning_tool import PlanningTool, PlanStore
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import Tool
 
@@ -63,6 +65,11 @@ class BaseAgent(BaseModel):
         description="Pluggable memory backend for cross-session context, "
         "directly usable as an agent Tool (see MemoryTool).",
     )
+    planning: bool = Field(
+        default=False,
+        description="Let the agent keep a plan of its task, saved in "
+        "`.plans/<agent>/<session_id>.md`.",
+    )
     skills: Path | list[Path] | None = Field(
         default=None,
         description="Path (or list of paths) to skills directories (agentskills.io standard).",
@@ -86,11 +93,17 @@ class BaseAgent(BaseModel):
 
     @model_validator(mode="after")
     def _build(self) -> BaseAgent:
-        tools: list[Tool] = (
-            [*self.tools, self.memory] if self.memory is not None else self.tools
-        )
+        # Copies, so the agent's own fields are not changed and a rebuild adds nothing twice.
+        tools: list[Tool] = list(self.tools)
+        hooks: list[AgentHook] = list(self.hooks)
+        if self.memory is not None:
+            tools.append(self.memory)
+        if self.planning:
+            store = PlanStore()
+            tools.append(PlanningTool(agent=self.name, store=store))
+            hooks.append(PlanningHook(agent=self.name, store=store))
         self._registry = ToolRegistry(tools)
-        self._hook_layer = HookLayer(hooks=self.hooks)
+        self._hook_layer = HookLayer(hooks=hooks)
         self._skills = (
             SkillLoader(self.skills).load() if self.skills is not None else []
         )

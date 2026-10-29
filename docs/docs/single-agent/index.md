@@ -229,6 +229,21 @@ Over A2A the task enters `input-required`; the caller resumes by sending the ans
 
 Use a clarification when the run genuinely cannot proceed without the answer. If the tool just needs to *tell* the user something and let the model carry on — a precondition it can't satisfy, say — raise a [`ToolError`](#reporting-failures) instead: the model sees the message, does what it can, and relays it in its answer.
 
+### Keeping a plan
+
+On a task with many steps, `planning=True` lets the agent write its plan, a list of items each `pending`, `in_progress` or `completed`, and keeps it in front of the model:
+
+```python
+agent = Agent(
+    name="worker",
+    system_prompt="For a task with several steps, write a plan with write_todos and keep it up to date.",
+    llm=llm,
+    planning=True,
+)
+```
+
+The plan is saved in `.plans/<agent>/<session_id>.md`, so it is still there on the next message of the conversation, also over A2A, and it is cleared once every item is completed. When the conversation does not show it, because a new `State` was started for the same `session_id` or [`HistoryCompressionHook`][ant_ai.hooks.builtins.history_compression.HistoryCompressionHook] has summarised it away, it is added to the end of what the model receives. Without a `session_id` the plan is not saved, and agents left with the default name `BaseAgent` share one folder of plans.
+
 ## Streaming a response
 
 [`Agent.stream()`][ant_ai.agent.agent.Agent.stream] drives the agent until it produces a final answer, yielding [`Event`][ant_ai.core.events.Event] objects at each step — LLM output, tool calls, tool results, and completion.
