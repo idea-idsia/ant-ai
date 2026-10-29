@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -163,3 +165,156 @@ def test_symlinks_inside_workspace_are_kept(
     (workspace / "link.txt").symlink_to(workspace / "real" / "a.txt")
     assert "alias/a.txt" in fs_tool.list_dir()
     assert "link.txt:1: TARGET" in fs_tool.search("TARGET")
+
+
+@pytest.fixture()
+def ten_lines(workspace: Path) -> Path:
+    path = workspace / "ten.txt"
+    path.write_text("".join(f"line {i}\n" for i in range(10)), encoding="utf-8")
+    return path
+
+
+def test_read_file_without_range_returns_the_whole_file(
+    ten_lines: Path, fs_tool: FilesystemTool
+) -> None:
+    assert fs_tool.read_file("ten.txt") == ten_lines.read_text(encoding="utf-8")
+
+
+def test_read_file_with_offset_and_limit_returns_those_lines(
+    ten_lines: Path, fs_tool: FilesystemTool
+) -> None:
+    assert fs_tool.read_file("ten.txt", offset=4, limit=2) == "line 3\nline 4\n"
+    assert fs_tool.read_file("ten.txt", offset=9) == "line 8\nline 9\n"
+    assert fs_tool.read_file("ten.txt", limit=1) == "line 0\n"
+
+
+def test_read_file_offset_is_the_line_number_search_reports(
+    ten_lines: Path, fs_tool: FilesystemTool
+) -> None:
+    hit = fs_tool.search("line 3")
+    assert hit == "ten.txt:4: line 3"
+    lineno = int(hit.split(":")[1])
+    assert fs_tool.read_file("ten.txt", offset=lineno, limit=1) == "line 3\n"
+
+
+def test_read_file_limit_past_the_end_stops_at_the_end(
+    ten_lines: Path, fs_tool: FilesystemTool
+) -> None:
+    assert fs_tool.read_file("ten.txt", offset=10, limit=1000) == "line 9\n"
+
+
+@pytest.mark.parametrize(
+    ("offset", "limit", "match"),
+    [(0, None, "offset"), (1, 0, "limit"), (11, None, "past the end")],
+)
+def test_read_file_rejects_a_bad_range(
+    ten_lines: Path,
+    fs_tool: FilesystemTool,
+    offset: int,
+    limit: int | None,
+    match: str,
+) -> None:
+    with pytest.raises(ToolError, match=match):
+        fs_tool.read_file("ten.txt", offset=offset, limit=limit)
+
+
+def test_edit_file_replaces_the_one_occurrence(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "calc.py").write_text(
+        "def add(a, b):\n    return a - b\n", encoding="utf-8"
+    )
+    assert "1 occurrence" in fs_tool.edit_file("calc.py", "a - b", "a + b")
+    assert (workspace / "calc.py").read_text(encoding="utf-8") == (
+        "def add(a, b):\n    return a + b\n"
+    )
+
+
+def test_edit_file_refuses_an_ambiguous_edit_unless_replace_all(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "x.txt").write_text("a\na\n", encoding="utf-8")
+    with pytest.raises(ToolError, match="2 times"):
+        fs_tool.edit_file("x.txt", "a", "b")
+    assert (workspace / "x.txt").read_text(encoding="utf-8") == "a\na\n"
+    assert "2 occurrences" in fs_tool.edit_file("x.txt", "a", "b", replace_all=True)
+    assert (workspace / "x.txt").read_text(encoding="utf-8") == "b\nb\n"
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "match"),
+    [("missing", "x", "not found"), ("", "x", "empty"), ("a", "a", "the same")],
+)
+def test_edit_file_rejects_an_edit_it_cannot_make(
+    workspace: Path, fs_tool: FilesystemTool, old: str, new: str, match: str
+) -> None:
+    (workspace / "x.txt").write_text("a\n", encoding="utf-8")
+    with pytest.raises(ToolError, match=match):
+        fs_tool.edit_file("x.txt", old, new)
+    assert (workspace / "x.txt").read_text(encoding="utf-8") == "a\n"
+
+
+def test_edit_file_keeps_windows_line_endings(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "crlf.txt").write_bytes(b"one\r\ntwo\r\n")
+    fs_tool.edit_file("crlf.txt", "two", "three")
+    assert (workspace / "crlf.txt").read_bytes() == b"one\r\nthree\r\n"
+
+
+def test_edit_file_matches_several_lines_of_a_windows_file(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    # The model writes "\n", the file has "\r\n".
+    (workspace / "crlf.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+    fs_tool.edit_file("crlf.txt", "one\ntwo", "uno\ndue")
+    assert (workspace / "crlf.txt").read_bytes() == b"uno\r\ndue\r\nthree\r\n"
+
+
+def test_edit_file_leaves_the_other_line_endings_of_a_mixed_file(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "mixed.txt").write_bytes(b"a\r\nb\r\nc\nd\n")
+    fs_tool.edit_file("mixed.txt", "a\nb", "x\ny")
+    assert (workspace / "mixed.txt").read_bytes() == b"x\r\ny\r\nc\nd\n"
+
+
+async def test_edits_of_one_step_to_the_same_file_are_all_kept(
+    workspace: Path, fs_tool: FilesystemTool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The tool calls of one step run in parallel; make each edit slow between
+    # reading and writing the file, so both read it before either writes.
+    read = FilesystemTool._read
+
+    def slow_read(self, path, newline=None):
+        text = read(self, path, newline)
+        time.sleep(0.05)
+        return text
+
+    monkeypatch.setattr(FilesystemTool, "_read", slow_read)
+    (workspace / "config.txt").write_text("a=1\nb=1\n", encoding="utf-8")
+    await asyncio.gather(
+        asyncio.to_thread(fs_tool.edit_file, "config.txt", "a=1", "a=2"),
+        asyncio.to_thread(fs_tool.edit_file, "config.txt", "b=1", "b=2"),
+    )
+    assert (workspace / "config.txt").read_text(encoding="utf-8") == "a=2\nb=2\n"
+
+
+def test_edit_file_missing_file_and_traversal_raise(fs_tool: FilesystemTool) -> None:
+    with pytest.raises(ToolError, match="missing.txt"):
+        fs_tool.edit_file("missing.txt", "a", "b")
+    with pytest.raises(ToolError, match="escapes"):
+        fs_tool.edit_file("../outside.txt", "a", "b")
+
+
+def test_edit_file_is_exposed_to_the_model(fs_tool: FilesystemTool) -> None:
+    names = [t.name for t in fs_tool._expand_namespace()]
+    assert "FilesystemTool_edit_file" in names
+
+
+def test_edit_file_keeps_the_line_ending_of_the_lines_it_replaces(
+    workspace: Path, fs_tool: FilesystemTool
+) -> None:
+    (workspace / "mixed.txt").write_bytes(b"a\r\nb\r\nc\nd\n")
+    fs_tool.edit_file("mixed.txt", "c\nd", "x\ny")
+    assert (workspace / "mixed.txt").read_bytes() == b"a\r\nb\r\nx\ny\n"
