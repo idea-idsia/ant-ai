@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from ant_ai.core._files import write_atomic
+from ant_ai.core._files import lock_dir, write_atomic
 
 
 def test_write_creates_the_file_and_its_directories(tmp_path: Path) -> None:
@@ -51,7 +53,17 @@ def test_the_text_is_on_disk_before_the_rename(
         lambda src, dst: (calls.append("replace"), replace(src, dst)),
     )
     write_atomic(tmp_path / "notes.md", "hello\n")
-    assert calls == ["fsync", "replace"]
+    # The file before the rename, then on POSIX its directory after it.
+    assert calls == (
+        ["fsync", "replace", "fsync"] if os.name == "posix" else ["fsync", "replace"]
+    )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+def test_a_new_file_is_readable_by_its_owner_only(tmp_path: Path) -> None:
+    path = tmp_path / "notes.md"
+    write_atomic(path, "hello\n")
+    assert path.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
@@ -70,3 +82,40 @@ def test_a_symlinked_file_is_written_through_the_link(tmp_path: Path) -> None:
     write_atomic(link, "hello\n")
     assert link.is_symlink()
     assert target.read_text(encoding="utf-8") == "hello\n"
+
+
+def test_lock_dir_creates_the_directory(tmp_path: Path) -> None:
+    with lock_dir(tmp_path / "a" / "notes.md"):
+        assert (tmp_path / "a").is_dir()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="flock is POSIX")
+def test_lock_dir_excludes_other_processes(tmp_path: Path) -> None:
+    import fcntl
+
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from pathlib import Path; from ant_ai.core._files import lock_dir\n"
+            "with lock_dir(Path(sys.argv[1])):\n"
+            "    print('locked', flush=True); sys.stdin.readline()",
+            str(tmp_path / "notes.md"),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert child.stdout is not None and child.stdout.readline() == "locked\n"
+        fd = os.open(tmp_path, os.O_RDONLY)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+    finally:
+        child.communicate("\n", timeout=10)
+    # Released when the other process lets go.
+    with lock_dir(tmp_path / "notes.md"):
+        pass
