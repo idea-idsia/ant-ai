@@ -381,3 +381,17 @@ site/
 .codegraph/
 .idea/
 .guardrails/
+
+# CoderMind ignores (managed by `cmind init/update`)
+.cmind/*
+!.cmind/config.toml
+.rpgkit/
+.venv_dev/
+.cmind_dev_env/
+.vscode/mcp.json
+.vscode/tasks.json
+.mcp.json
+.claude/commands/
+
+.github/agents/
+.github/prompts/
