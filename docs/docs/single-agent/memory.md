@@ -4,11 +4,14 @@ title: Memory
 
 # Agent memory
 
-The `memory` field on [`Agent`][ant_ai.agent.agent.Agent] gives the agent a long-term memory that persists knowledge across conversations. The built-in backend, [`Mem0Memory`](#built-in-backend-mem0), keeps facts in the [mem0](https://app.mem0.ai/) cloud service, searched by meaning and kept apart per user.
+The `memory` field on [`Agent`][ant_ai.agent.agent.Agent] gives the agent a long-term memory that persists knowledge across conversations. Two backends are built in:
+
+- [`Mem0Memory`](#built-in-backend-mem0) keeps facts in the [mem0](https://app.mem0.ai/) cloud service, searched by meaning and kept apart per user.
+- [`FileMemory`](#file-based-memory-memorymd) keeps the whole memory in one Markdown file, with no service or API key.
 
 ## How it works
 
-A memory is a tool namespace: setting `memory` on `Agent` registers the backend's tools, which the LLM calls like any other tool. They are named after the backend class, e.g. `Mem0Memory_search`/`Mem0Memory_add`.
+A memory is a tool namespace: setting `memory` on `Agent` registers the backend's tools, which the LLM calls like any other tool. They are named after the backend class, e.g. `Mem0Memory_search`/`Mem0Memory_add` or `FileMemory_read`/`FileMemory_write`.
 
 The model decides when to call them — memory is not retrieved automatically before every turn or written back automatically at the end. The tool descriptions nudge the model to recall before answering questions that might depend on stored context, and to save facts as soon as it learns them. Recall therefore depends on the model choosing to call the tools — for applications that need exhaustive capture, reinforce this in the agent's `system_prompt` (see the [full example](#full-example) below), since a weaker or less instruction-following model may not always call them.
 
@@ -118,6 +121,42 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## File-based memory: `MEMORY.md`
+
+[`FileMemory`][ant_ai.memory.backends.file.FileMemory] keeps the agent's long-term memory in one Markdown file. It needs no service and no API key. You can read and edit the file by hand, keep it in git, and use it offline and in tests.
+
+```python
+from ant_ai import Agent
+from ant_ai.llm.integrations import LiteLLMChat
+from ant_ai.memory.backends.file import FileMemory
+
+agent = Agent(
+    name="Assistant",
+    llm=LiteLLMChat("gpt-5-mini"),
+    system_prompt=(
+        "You are a helpful assistant with a long-term memory. Read it with "
+        "FileMemory_read at the start of each conversation, and save "
+        "durable facts about the user with FileMemory_write as soon as "
+        "you learn them."
+    ),
+    memory=FileMemory(path="./agent_state/MEMORY.md"),
+)
+```
+
+The memory is meant to stay short, so the model reads and writes it whole, with two tools:
+
+| Tool | What it does |
+|------|--------------|
+| `FileMemory_read()` | Returns the whole file, or `No memories saved yet.` when there is none. |
+| `FileMemory_write(content)` | Replaces the whole file. To save a fact the model writes the memory with the fact added; to forget one, without it. |
+
+Because a write replaces everything, it is refused unless the conversation has read the memory as it is now. A model cannot erase a memory it has not seen, or undo a change that another conversation, or someone editing the file, made since it read it. It is told to read again and redo its change. A write longer than `max_chars` (10,000 characters by default, `None` for no limit) is refused too, asking the model to shorten the memory.
+
+The file and its parent directories are created on the first write. Each write goes to a temporary file, flushed to disk, that is then renamed over `MEMORY.md`, so a crash, even of the machine, never leaves the file half-written. The file keeps its permissions, so a private `MEMORY.md` stays private. Failures, such as a missing permission, raise [`ToolError`][ant_ai.tools.tool.ToolError], and the model gets them as a recoverable `ERROR: ...` result.
+
+!!! note "One file, shared by everyone"
+    Unlike `Mem0Memory`, `FileMemory` does not scope memories by `user_id`: whatever `ctx` says, every conversation and user of the memory reads and writes the same file. When users' memories must stay apart, as behind an A2A server, give each user their own agent and `path`.
 
 ## Writing your own backend
 

@@ -54,5 +54,6 @@ classDiagram
     A2AAgentTool --> A2AConfig : configured by
     ChatLLM <|.. LiteLLMChat : implements
     Memory <|-- Mem0Memory : extends
+    Memory <|-- FileMemory : extends
     ObservabilitySink <|.. CompositeSink : implements
     ObservabilitySink <|.. LangfuseSink : implements

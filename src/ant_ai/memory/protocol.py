@@ -10,7 +10,8 @@ class Memory(Tool):
     A memory is a tool namespace: its public methods are the tools the model
     calls to recall and save what it knows, registered as `<ClassName>_<method>`
     when the memory is set as `Agent(memory=...)`. Each backend picks the tools
-    that fit its storage: `Mem0Memory`, for one, searches and adds facts.
+    that fit its storage: `Mem0Memory` searches and adds facts, `FileMemory` reads
+    and writes one Markdown file.
 
     Example:
         ```python
