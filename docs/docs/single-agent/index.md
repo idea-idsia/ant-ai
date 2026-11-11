@@ -151,7 +151,7 @@ def whoami(ctx: InvocationContext) -> str:
     return ctx.user_id or "anonymous"
 ```
 
-Use this for anything scoped to the caller rather than the conversation — per-user data lookups, multi-tenant isolation, audit logging. [`MemoryTool`][ant_ai.tools.builtins.memory_tool.MemoryTool] (see [Agent memory](memory.md)) is a built-in example: its `search`/`add` tool methods take `ctx` this way to scope memories per user.
+Use this for anything scoped to the caller rather than the conversation — per-user data lookups, multi-tenant isolation, audit logging. [`Mem0Memory`][ant_ai.memory.backends.mem0.Mem0Memory] (see [Agent memory](memory.md)) is a built-in example: its `search`/`add` tool methods take `ctx` this way to scope memories per user.
 
 ### Custom invocation context
 
