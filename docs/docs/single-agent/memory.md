@@ -73,6 +73,9 @@ task_client.send_task(
 
 The [`A2AExecutor`][ant_ai.a2a.executor.A2AExecutor] forwards it into `InvocationContext` automatically.
 
+!!! warning "The client chooses `user_id`"
+    The metadata comes from the client, so a client can send another user's `user_id` and reach their memories. When users must not see each other's memories, authenticate requests and set `user_id` from the authenticated identity, for example in a [custom `from_metadata`](index.md#custom-invocation-context), rather than trusting the value the client sends.
+
 ### Full example
 
 ```python
@@ -153,7 +156,7 @@ The memory is meant to stay short, so the model reads and writes it whole, with 
 
 Because a write replaces everything, it is refused unless the conversation has read the memory as it is now. A model cannot erase a memory it has not seen, or undo a change that another conversation, or someone editing the file, made since it read it. It is told to read again and redo its change. A write longer than `max_chars` (10,000 characters by default, `None` for no limit) is refused too, asking the model to shorten the memory.
 
-The file and its parent directories are created on the first write. Each write goes to a temporary file, flushed to disk, that is then renamed over `MEMORY.md`, so a crash, even of the machine, never leaves the file half-written. The file keeps its permissions, so a private `MEMORY.md` stays private. Failures, such as a missing permission, raise [`ToolError`][ant_ai.tools.tool.ToolError], and the model gets them as a recoverable `ERROR: ...` result.
+The file and its parent directories are created on the first write. Each write goes to a temporary file, flushed to disk, that is then renamed over `MEMORY.md`, so a crash, even of the machine, never leaves the file half-written. A new file is readable by its owner only, and an existing one keeps its permissions. Writes take turns, across threads and, on POSIX, across processes sharing the file, by locking its directory, so two conversations that read the same memory cannot both replace it. The lock does not stop someone editing the file by hand at the very moment of a write. Failures, such as a missing permission, raise [`ToolError`][ant_ai.tools.tool.ToolError], and the model gets them as a recoverable `ERROR: ...` result.
 
 !!! note "One file, shared by everyone"
     Unlike `Mem0Memory`, `FileMemory` does not scope memories by `user_id`: whatever `ctx` says, every conversation and user of the memory reads and writes the same file. When users' memories must stay apart, as behind an A2A server, give each user their own agent and `path`.
@@ -172,12 +175,20 @@ class NotesMemory(Memory):
 
     def recall(self, ctx: InvocationContext | None = None) -> list[str]:
         """Everything you saved about this user in earlier conversations."""
-        return self.notes.get(ctx.user_id if ctx else "", [])
+        return self.notes.get(_owner(ctx), [])
 
     def save(self, note: str, ctx: InvocationContext | None = None) -> str:
         """Save one durable fact about the user for future conversations."""
-        self.notes.setdefault(ctx.user_id if ctx else "", []).append(note)
+        self.notes.setdefault(_owner(ctx), []).append(note)
         return "Saved."
+
+
+def _owner(ctx: InvocationContext | None) -> str:
+    # Without a user, keep the notes to the session, so that sessions without a
+    # user_id do not share them.
+    if ctx is None:
+        raise ValueError("NotesMemory needs an InvocationContext")
+    return f"user:{ctx.user_id}" if ctx.user_id else f"session:{ctx.session_id}"
 ```
 
 A method that declares `ctx` receives the current [`InvocationContext`][ant_ai.core.types.InvocationContext], which `ToolStep` injects when the model calls the tool; it is never shown to the model. Use `ctx.user_id` to keep each user's memories apart. Methods may be sync or async, and private methods (`_name`) are not exposed.

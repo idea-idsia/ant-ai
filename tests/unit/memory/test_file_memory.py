@@ -140,6 +140,52 @@ async def test_of_two_writes_from_one_read_only_the_first_is_kept(
     )
 
 
+def test_a_cleared_memory_is_not_restored_by_a_stale_write(
+    memory: FileMemory, memory_path: Path
+) -> None:
+    saved(memory_path, "- likes tea\n")
+    memory.read(ctx=S1)
+    memory.read(ctx=S2)
+    assert memory.write("", ctx=S2) == "Memory cleared."
+    with pytest.raises(ToolError, match="changed since you last read it"):
+        memory.write("- likes tea\n- likes coffee\n", ctx=S1)
+    assert memory_path.read_text(encoding="utf-8") == ""
+
+
+def test_a_deleted_memory_is_not_restored_by_a_stale_write(
+    memory: FileMemory, memory_path: Path
+) -> None:
+    saved(memory_path, "- likes tea\n")
+    memory.read(ctx=S1)
+    memory_path.unlink()
+    with pytest.raises(ToolError, match="changed since you last read it"):
+        memory.write("- likes tea\n- likes coffee\n", ctx=S1)
+    memory.read(ctx=S1)
+    memory.write("- likes coffee\n", ctx=S1)
+
+
+def test_an_empty_file_must_be_read_before_the_first_write(
+    memory: FileMemory, memory_path: Path
+) -> None:
+    saved(memory_path, "")
+    with pytest.raises(ToolError, match="changed since you last read it"):
+        memory.write("- likes tea\n", ctx=S1)
+    memory.read(ctx=S1)
+    assert memory.write("- likes tea\n", ctx=S1) == "Memory saved."
+
+
+def test_a_read_by_one_user_does_not_let_another_write(
+    memory: FileMemory, memory_path: Path
+) -> None:
+    alice = InvocationContext(session_id="s", user_id="alice")
+    bob = InvocationContext(session_id="s", user_id="bob")
+    saved(memory_path, "- likes tea\n")
+    memory.read(ctx=alice)
+    with pytest.raises(ToolError, match="changed since you last read it"):
+        memory.write("- likes coffee\n", ctx=bob)
+    memory.write("- likes coffee\n", ctx=alice)
+
+
 def test_a_conversation_read_long_ago_must_read_again(
     memory: FileMemory, memory_path: Path
 ) -> None:

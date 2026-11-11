@@ -153,6 +153,9 @@ def whoami(ctx: InvocationContext) -> str:
 
 Use this for anything scoped to the caller rather than the conversation — per-user data lookups, multi-tenant isolation, audit logging. [`Mem0Memory`][ant_ai.memory.backends.mem0.Mem0Memory] (see [Agent memory](memory.md)) is a built-in example: its `search`/`add` tool methods take `ctx` this way to scope memories per user.
 
+!!! warning "Scoping is only as safe as the identity behind it"
+    Behind an A2A server, `ctx.user_id` comes from the request metadata, which the client writes. Unless the server sets it from an authenticated identity, any client can claim another user's `user_id` and read or change their data. Before relying on `user_id` to keep users apart, authenticate requests and overwrite or reject a `user_id` that does not belong to the caller, for example in your own `from_metadata`.
+
 ### Custom invocation context
 
 Subclass `InvocationContext` to carry your own request-scoped fields — a tenant, a feature flag, tags for your tracing backend — through the whole run. Tools receive the subclass instance, and the A2A and ACP entry points build it for you from the incoming request:
