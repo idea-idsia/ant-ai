@@ -36,6 +36,8 @@ from acp.schema import (
     PromptResponse,
     Range,
     ResumeSessionResponse,
+    SessionCapabilities,
+    SessionDeleteCapabilities,
     SessionInfo,
     SetProviderResponse,
     SetSessionConfigOptionResponse,
@@ -133,6 +135,9 @@ class ACPAdapter(ACPAgent):
             agent_info=Implementation(name=self._agent.name, version="1.0.0"),
             agent_capabilities=AgentCapabilities(
                 load_session=True,
+                session_capabilities=SessionCapabilities(
+                    delete=SessionDeleteCapabilities()
+                ),
                 mcp_capabilities=McpCapabilities(http=True, sse=True),
             ),
         )

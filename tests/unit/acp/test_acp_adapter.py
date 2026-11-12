@@ -156,6 +156,14 @@ async def test_initialize_advertises_mcp_http_and_sse():
     assert mcp.sse is True
 
 
+@pytest.mark.asyncio
+async def test_initialize_advertises_session_delete():
+    result = await _make_adapter().initialize(protocol_version=1)
+    sessions = result.agent_capabilities.session_capabilities
+    assert sessions is not None
+    assert sessions.delete is not None
+
+
 # ---------------------------------------------------------------------------
 # Embedded resource content blocks
 # ---------------------------------------------------------------------------

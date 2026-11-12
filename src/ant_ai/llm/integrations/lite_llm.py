@@ -8,10 +8,11 @@ from typing import cast
 import litellm
 from litellm import CustomStreamWrapper, ModelResponse, acompletion, completion
 from litellm.types.utils import (
+    ChatCompletionDeltaCustomToolCall,
     ChatCompletionMessageCustomToolCall,
-    ChatCompletionMessageToolCall,
     Choices,
 )
+from loguru import logger
 from pydantic import BaseModel
 
 from ant_ai.core.message import BaseMessage, Message, MessageChunk, ToolFunction
@@ -21,15 +22,11 @@ from ant_ai.llm.exceptions import ContextWindowExceededError
 from ant_ai.llm.protocol import ChatLLM
 
 
-def _tool_function(
-    tc: ChatCompletionMessageToolCall | ChatCompletionMessageCustomToolCall,
-) -> ToolFunction:
-    """Name and arguments of a tool call; a custom tool's input is its arguments."""
-    if isinstance(tc, ChatCompletionMessageCustomToolCall):
-        return ToolFunction(name=tc.custom.name, arguments=tc.custom.input)
-    return ToolFunction(
-        name=tc.function.name or "", arguments=tc.function.arguments or ""
-    )
+def _skip_custom_call(call_id: str | None) -> None:
+    # Only function tools are declared, so a custom (free-form) call has no tool
+    # to run. It is dropped rather than passed off as a function call; its ID
+    # never enters the history, so no tool result is owed for it.
+    logger.warning(f"Dropping custom tool call {call_id}: only function tools run")
 
 
 def to_chatllm_response(
@@ -42,10 +39,20 @@ def to_chatllm_response(
         content=choice.message.get("content", ""),
     )
 
-    tool_calls: list[ToolCall] = [
-        ToolCall(id=tc.id, function=_tool_function(tc))
-        for tc in (choice.message.tool_calls or [])
-    ]
+    tool_calls: list[ToolCall] = []
+    for tc in choice.message.tool_calls or []:
+        if isinstance(tc, ChatCompletionMessageCustomToolCall):
+            _skip_custom_call(tc.id)
+            continue
+        tool_calls.append(
+            ToolCall(
+                id=tc.id,
+                function=ToolFunction(
+                    name=tc.function.name or "",
+                    arguments=tc.function.arguments or "",
+                ),
+            )
+        )
 
     reasoning = getattr(choice.message, "reasoning_content", None) or None
 
@@ -187,6 +194,10 @@ class LiteLLMChat(ChatLLM):
                         )
 
                     for tc in getattr(choice_delta, "tool_calls", None) or []:
+                        if isinstance(tc, ChatCompletionDeltaCustomToolCall):
+                            if tc.id:  # only the first fragment carries the ID
+                                _skip_custom_call(tc.id)
+                            continue
                         yield ChatLLMStreamChunk(
                             delta=MessageChunk(role="assistant", delta=""),
                             tool_calls={
