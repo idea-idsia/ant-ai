@@ -7,7 +7,11 @@ from typing import cast
 
 import litellm
 from litellm import CustomStreamWrapper, ModelResponse, acompletion, completion
-from litellm.types.utils import Choices
+from litellm.types.utils import (
+    ChatCompletionMessageCustomToolCall,
+    ChatCompletionMessageToolCall,
+    Choices,
+)
 from pydantic import BaseModel
 
 from ant_ai.core.message import BaseMessage, Message, MessageChunk, ToolFunction
@@ -15,6 +19,17 @@ from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk, ToolCall
 from ant_ai.core.types import InvocationContext
 from ant_ai.llm.exceptions import ContextWindowExceededError
 from ant_ai.llm.protocol import ChatLLM
+
+
+def _tool_function(
+    tc: ChatCompletionMessageToolCall | ChatCompletionMessageCustomToolCall,
+) -> ToolFunction:
+    """Name and arguments of a tool call; a custom tool's input is its arguments."""
+    if isinstance(tc, ChatCompletionMessageCustomToolCall):
+        return ToolFunction(name=tc.custom.name, arguments=tc.custom.input)
+    return ToolFunction(
+        name=tc.function.name or "", arguments=tc.function.arguments or ""
+    )
 
 
 def to_chatllm_response(
@@ -28,13 +43,7 @@ def to_chatllm_response(
     )
 
     tool_calls: list[ToolCall] = [
-        ToolCall(
-            id=tc.id,
-            function=ToolFunction(
-                name=tc.function.name or "",  # ty:ignore[unresolved-attribute]
-                arguments=tc.function.arguments or "",  # ty:ignore[unresolved-attribute]
-            ),
-        )
+        ToolCall(id=tc.id, function=_tool_function(tc))
         for tc in (choice.message.tool_calls or [])
     ]
 
@@ -43,7 +52,7 @@ def to_chatllm_response(
     return ChatLLMResponse(
         message=message,
         tool_calls=tool_calls,
-        usage=resp.usage.model_dump(),  # ty:ignore[unresolved-attribute]
+        usage=resp.usage.model_dump(),  # ty:ignore[missing-attribute]
         reasoning=reasoning,
     )
 

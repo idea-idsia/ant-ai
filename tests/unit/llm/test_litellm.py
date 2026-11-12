@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import pytest
+from litellm.types.utils import (
+    ChatCompletionCustomToolCallPayload,
+    ChatCompletionMessageCustomToolCall,
+)
 
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat, to_chatllm_response
@@ -194,6 +198,22 @@ def test_to_chatllm_response_maps_tool_calls(litellm_response, dummy_tool_call):
     assert out.tool_calls[1].id == "call_2"
     assert out.tool_calls[1].function.name == ""
     assert out.tool_calls[1].function.arguments == ""
+
+
+@pytest.mark.unit
+def test_to_chatllm_response_maps_custom_tool_calls(litellm_response):
+    """A custom tool call has no `function`; its name and raw input are used."""
+    custom = ChatCompletionMessageCustomToolCall(
+        id="call_c",
+        custom=ChatCompletionCustomToolCallPayload(name="grep", input="TODO src/"),
+    )
+    resp = litellm_response("", tool_calls=[custom])
+
+    out: ChatLLMResponse = to_chatllm_response(resp)
+
+    assert out.tool_calls[0].id == "call_c"
+    assert out.tool_calls[0].function.name == "grep"
+    assert out.tool_calls[0].function.arguments == "TODO src/"
 
 
 @pytest.mark.unit

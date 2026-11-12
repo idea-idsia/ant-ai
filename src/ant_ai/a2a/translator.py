@@ -50,7 +50,7 @@ def handler(*event_types: type[BaseEvent]):
     """
 
     def decorator(fn: UnboundHandler):
-        fn._event_types = event_types  # ty:ignore[unresolved-attribute]
+        fn._event_types = event_types  # ty:ignore[missing-attribute]
         return fn
 
     return decorator

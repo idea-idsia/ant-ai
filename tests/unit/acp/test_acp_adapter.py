@@ -3,14 +3,17 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from acp import RequestError
 from acp.schema import (
     AgentMessageChunk,
     AvailableCommandsUpdate,
     ClientCapabilities,
+    DeleteSessionResponse,
     EmbeddedResourceContentBlock,
     FileSystemCapabilities,
     HttpHeader,
     HttpMcpServer,
+    LogoutResponse,
     McpServerStdio,
     SseMcpServer,
     TextContentBlock,
@@ -277,6 +280,45 @@ async def test_close_session_cleans_up_state():
     assert sid not in adapter._session_agents
     assert sid not in adapter._session_cwds
     assert sid not in adapter._session_commands_sent
+
+
+@pytest.mark.asyncio
+async def test_delete_session_cleans_up_state():
+    adapter = _make_adapter()
+    session = await adapter.new_session(cwd="/project")
+    sid = session.session_id
+
+    resp = await adapter.delete_session(session_id=sid)
+
+    assert isinstance(resp, DeleteSessionResponse)
+    assert sid not in adapter._sessions
+    assert sid not in adapter._session_agents
+    assert sid not in adapter._session_cwds
+
+
+@pytest.mark.asyncio
+async def test_logout_succeeds_without_auth():
+    assert isinstance(await _make_adapter().logout(), LogoutResponse)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("call", "method"),
+    [
+        (lambda a: a.list_providers(), "providers/list"),
+        (lambda a: a.set_provider("p", "openai", "http://x"), "providers/set"),
+        (lambda a: a.disable_provider("p"), "providers/disable"),
+        (lambda a: a.mcp_message("c", "tools/list"), "mcp/message"),
+        (lambda a: a.start_nes(), "nes/start"),
+        (lambda a: a.close_nes("s"), "nes/close"),
+    ],
+)
+async def test_unadvertised_requests_are_refused(call, method):
+    with pytest.raises(RequestError) as exc:
+        await call(_make_adapter())
+
+    assert exc.value.code == -32601
+    assert exc.value.data == {"method": method}
 
 
 # ---------------------------------------------------------------------------
