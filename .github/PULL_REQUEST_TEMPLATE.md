@@ -4,27 +4,19 @@
 
 ## Changes
 
-<!-- Concrete list of what changed.
-- Added retry logic to `ToolExecutor` with exponential backoff
-- Updated `Agent.run()` to accept a `timeout` parameter
--->
+<!-- Concrete list of what changed. -->
 
 -
 
+## Test plan
+
+<!-- Tests added or changed, and anything run by hand (examples, live providers). -->
+
 ## Closes
 
-<!-- Link issues this PR resolves. -->
+<!-- Issues this PR resolves; for a stacked PR add "Depends on #<base PR>". Remove if none. -->
 
 Closes #
 
-## Release
-
-<!-- Apply a bump label if this PR should cut a release, otherwise skip. -->
-
-- [ ] `bump:patch` — bug fix
-- [ ] `bump:minor` — new functionality
-- [ ] `bump:major` — breaking change
-
-## Docs
-
-<!-- If public APIs changed, briefly note what was updated or what still needs updating. Remove if not applicable. -->
+<!-- Releases: add a bump:* label only on the last PR of a batch (CONTRIBUTING.md → Releases).
+     Docs: if public APIs changed, update docstrings and docs/ in this PR. -->

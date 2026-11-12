@@ -8,6 +8,9 @@ updates:
     target-branch: "main"
     commit-message:
       prefix: "ci"
+    groups:
+      github-actions:
+        patterns: ["*"]
 
   - package-ecosystem: "uv"
     directory: "/"
@@ -16,3 +19,15 @@ updates:
     target-branch: "main"
     commit-message:
       prefix: "chore"
+    cooldown:
+      default-days: 2 # Matches exclude-newer = "P2D" in pyproject.toml.
+    groups:
+      uv-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # Major bumps blocked by upstream caps; they fail the update run every week.
+      - dependency-name: "openai" # guardrails-ai requires openai<3
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "huggingface-hub" # litellm requires huggingface-hub<2
+        update-types: ["version-update:semver-major"]

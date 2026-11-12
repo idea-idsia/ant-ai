@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+reviews:
+  profile: chill
+  high_level_summary: false # The PR template's Changes list is the summary.
+  poem: false
+  in_progress_fortune: false
+  sequence_diagrams: false
+  auto_review:
+    drafts: false
+    ignore_title_keywords: ["WIP"]
+    base_branches: [".*"] # Also review stacked PRs whose base is not main.
+  path_filters:
+    - "!uv.lock"
+  path_instructions:
+    - path: "src/**/*.py"
+      instructions: >-
+        Public APIs must be fully typed and have Google-style docstrings.
+        Flag new `# type: ignore`, `# ty: ignore` or `# noqa`: the code should be fixed instead.
+    - path: "tests/**/*.py"
+      instructions: >-
+        Tests that call live services need @pytest.mark.external; vLLM-backed tests need @pytest.mark.vllm.
+  tools:
+    pylint:
+      enabled: false # Ruff covers these; avoids duplicate comments.
+    flake8:
+      enabled: false
+  pre_merge_checks:
+    title:
+      mode: warning
+      requirements: >-
+        Conventional Commits: `type(scope): summary`, type one of feat, fix, docs, refactor,
+        test, chore, perf, ci; imperative mood; at most 72 characters; no trailing period;
+        `!` before the colon for breaking changes.
+    description:
+      mode: warning
+knowledge_base:
+  code_guidelines:
+    filePatterns: ["CONTRIBUTING.md"]
