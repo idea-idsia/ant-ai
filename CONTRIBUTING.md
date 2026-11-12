@@ -207,8 +207,9 @@ uv run mkdocs build   # static build
 ### Submitting
 
 1. Open the PR — GitHub will auto-populate the [PR template](.github/PULL_REQUEST_TEMPLATE.md).
-1. Fill in every section completely — incomplete PRs will be returned.
-1. Tick the correct **commit type**. Add a **bump label** only if this PR cuts a release (see [Releases](#releases)).
+1. Give the PR a [Conventional Commits](#commit-messages) title and the matching type label (`feat`, `fix`, …).
+1. Fill in every section of the template; remove **Closes** only if no issue applies.
+1. Add a **bump label** only if this PR cuts a release (see [Releases](#releases)).
 1. Ensure all CI jobs pass (`lint`, `type-check`, `run-pytest`). PRs are merged through the merge queue, which re-runs CI on the PR combined with `main`.
 1. Keep PRs focused: one concern per PR.
 1. Ask a maintainer for a review when the PR changes the public API or behaviour other components rely on. Other PRs may be merged by their author once CI passes; address any CodeRabbit comments first.
