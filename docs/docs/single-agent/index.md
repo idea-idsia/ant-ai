@@ -151,7 +151,10 @@ def whoami(ctx: InvocationContext) -> str:
     return ctx.user_id or "anonymous"
 ```
 
-Use this for anything scoped to the caller rather than the conversation — per-user data lookups, multi-tenant isolation, audit logging. [`MemoryTool`][ant_ai.tools.builtins.memory_tool.MemoryTool] (see [Agent memory](memory.md)) is a built-in example: its `search`/`add` tool methods take `ctx` this way to scope memories per user.
+Use this for anything scoped to the caller rather than the conversation — per-user data lookups, multi-tenant isolation, audit logging. [`Mem0Memory`][ant_ai.memory.backends.mem0.Mem0Memory] (see [Agent memory](memory.md)) is a built-in example: its `search`/`add` tool methods take `ctx` this way to scope memories per user.
+
+!!! warning "Scoping is only as safe as the identity behind it"
+    Behind an A2A server, `ctx.user_id` comes from the request metadata, which the client writes. Unless the server sets it from an authenticated identity, any client can claim another user's `user_id` and read or change their data. Before relying on `user_id` to keep users apart, authenticate requests and overwrite or reject a `user_id` that does not belong to the caller, for example in your own `from_metadata`.
 
 ### Custom invocation context
 

@@ -39,8 +39,8 @@ from ant_ai.llm.protocol import ChatLLM
 from ant_ai.memory.protocol import Memory
 from ant_ai.steps.llm_step import LLMStep
 from ant_ai.steps.tool_step import ToolStep
-from ant_ai.tools.builtins.memory_tool import MemoryTool
 from ant_ai.tools.registry import ToolRegistry
+from ant_ai.tools.tool import Tool
 
 
 async def run_step(step, state, ctx=None) -> StepResult:
@@ -646,14 +646,16 @@ async def test_agent_hook_critique_message_is_injected_into_retry_state():
     assert any(CRITIQUE_MARKER in c for c in retry_contents)
 
 
-class RecordingMemory(MemoryTool):
-    """Minimal `MemoryTool` backend used to test `Agent(memory=...)` wiring."""
+class RecordingMemory(Memory):
+    """Minimal `Memory` backend used to test `Agent(memory=...)` wiring."""
 
-    async def retrieve(self, query, *, top_k=5, **kwargs):
-        return [Message(role="system", content=f"fact about {query}")]
+    async def search(self, query: str, ctx: InvocationContext | None = None):
+        """Search memory."""
+        return [f"fact about {query}"]
 
-    async def update(self, messages, **kwargs):
-        pass
+    async def add(self, facts: list[str], ctx: InvocationContext | None = None):
+        """Save facts."""
+        return "Saved."
 
 
 @pytest.mark.unit
@@ -689,16 +691,13 @@ async def test_agent_without_memory_has_no_memory_tools():
 
 
 @pytest.mark.unit
-def test_agent_memory_field_rejects_plain_memory_not_memory_tool():
-    """`Agent.memory` requires a `MemoryTool` (Tool-capable), not just a bare
-    `Memory` implementation — a plain `Memory` can't be registered as a tool."""
+def test_agent_memory_field_rejects_a_tool_that_is_not_a_memory():
+    """`Agent.memory` takes a `Memory`; other tools go in `tools`."""
 
-    class PlainMemory(Memory):
-        async def retrieve(self, query, *, top_k=5, **kwargs):
-            return []
-
-        async def update(self, messages, **kwargs):
-            pass
+    class Notes(Tool):
+        def read(self) -> str:
+            """Read the notes."""
+            return ""
 
     class DummyLLM(ChatLLM):
         async def ainvoke(
@@ -711,7 +710,7 @@ def test_agent_memory_field_rejects_plain_memory_not_memory_tool():
             name="test",
             system_prompt="sys",
             llm=DummyLLM(),
-            memory=PlainMemory(),
+            memory=Notes(),
         )
 
 
@@ -722,14 +721,12 @@ async def test_stream_with_memory_tool_call_injects_ctx_end_to_end():
     proving the ctx-injection path works end-to-end, not just in isolation."""
     received: dict[str, Any] = {}
 
-    class RecordingMemoryWithCtx(MemoryTool):
-        async def retrieve(self, query, *, top_k=5, ctx=None, **kwargs):
+    class RecordingMemoryWithCtx(Memory):
+        async def search(self, query: str, ctx: InvocationContext | None = None):
+            """Search memory."""
             received["ctx"] = ctx
             received["query"] = query
-            return [Message(role="system", content="likes rust")]
-
-        async def update(self, messages, **kwargs):
-            pass
+            return ["likes rust"]
 
     class TwoStepLLM(ChatLLM):
         def __init__(self):

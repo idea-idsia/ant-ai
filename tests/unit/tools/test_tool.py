@@ -130,8 +130,7 @@ def test_namespace_methods_inherited_from_intermediate_tool_subclass():
     """A concrete subclass that only implements a non-Tool mixin's abstract
     protocol method still inherits a Tool-subclass ancestor's own namespace
     (tool) methods, even though it doesn't redefine them in its own class
-    body. Mirrors the Memory (plain mixin) / MemoryTool (Tool subclass with
-    search/save) / Mem0Memory (implements only retrieve/update) shape."""
+    body."""
 
     class Protocol:
         def fetch(self) -> int:

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
-import uuid
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ant_ai.core._files import write_atomic
 from ant_ai.core.types import InvocationContext
 from ant_ai.tools.tool import Tool, ToolError
 
@@ -60,15 +59,7 @@ class PlanStore(BaseModel):
 
     def write(self, agent: str, session_id: str, text: str) -> None:
         """Save the plan, replacing the previous one."""
-        path: Path = self.path(agent, session_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Write a temporary file and rename it, so a reader never sees half a plan.
-        tmp: Path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, path)
-        finally:
-            tmp.unlink(missing_ok=True)
+        write_atomic(self.path(agent, session_id), text)
 
     def delete(self, agent: str, session_id: str) -> None:
         """Remove the plan, if there is one."""

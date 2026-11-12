@@ -6,57 +6,55 @@ from mem0 import AsyncMemoryClient
 from mem0.client.types import SearchMemoryOptions
 from pydantic import Field, PrivateAttr, model_validator
 
-from ant_ai.core.message import BaseMessage, Message
 from ant_ai.core.types import InvocationContext
-from ant_ai.tools.builtins.memory_tool import MemoryTool
+from ant_ai.memory.protocol import Memory
 
 
-def _resolve_scope(
-    ctx: InvocationContext | None, kwargs: dict[str, Any]
-) -> dict[str, str]:
-    """Build a mem0 filters dict from `ctx`, or bare entity ids in kwargs.
+def _resolve_scope(ctx: InvocationContext | None) -> dict[str, str]:
+    """Build a mem0 filters dict from `ctx`.
 
     ctx.user_id  → user_id  (cross-session)
     ctx.session_id → run_id (session-scoped fallback)
 
     Raises:
-        ValueError: If no scoping information (ctx or a bare
-            user_id/run_id/agent_id/app_id) is available — without this,
-            retrieve/update would hit mem0 unscoped, pooling memory across
-            every user and session.
+        ValueError: If there is no `ctx` — without it, search/add would hit
+            mem0 unscoped, pooling memory across every user and session.
     """
-    if ctx is not None:
-        if ctx.user_id:
-            return {"user_id": ctx.user_id}
-        return {"run_id": ctx.session_id}
-    filters: dict[str, str] = {}
-    for key in ("user_id", "run_id", "agent_id", "app_id"):
-        val = kwargs.pop(key, None)
-        if val is not None:
-            filters[key] = val
-    if not filters:
+    if ctx is None:
         raise ValueError(
             "Mem0Memory requires scoping information (pass ctx=... with a "
-            "session_id/user_id, or an explicit user_id/run_id/agent_id/"
-            "app_id) to avoid pooling memory across every user and session."
+            "session_id/user_id) to avoid pooling memory across every user "
+            "and session."
         )
-    return filters
+    if ctx.user_id:
+        return {"user_id": ctx.user_id}
+    return {"run_id": ctx.session_id}
 
 
-class Mem0Memory(MemoryTool):
+class Mem0Memory(Memory):
     """
-    mem0 cloud backend for AgentMemory.
+    Long-term memory kept by the mem0 cloud service, searched by meaning.
 
     Requires MEM0_API_KEY in the environment, or pass ``api_key`` explicitly.
+    Memories are kept per `ctx.user_id`, or per `ctx.session_id` when there is no
+    user.
 
-    Example::
+    Example:
+        ```python
+        from ant_ai.agent import Agent
+        from ant_ai.memory.backends.mem0 import Mem0Memory
 
-        memory = Mem0Memory(api_key="m0-...")
-        msgs = await memory.retrieve("user preferences", user_id="alice")
-        await memory.update(conversation, user_id="alice")
+        agent = Agent(memory=Mem0Memory(), ...)
+        ```
+
+        The agent can now call:
+
+            - Mem0Memory_search(query="user preferences")
+            - Mem0Memory_add(facts=["The user prefers answers in Italian"])
     """
 
     api_key: str | None = Field(default=None)
+    top_k: int = Field(default=5, ge=1, description="Most memories one search returns.")
     _client: Any = PrivateAttr()
 
     @model_validator(mode="after")
@@ -68,33 +66,28 @@ class Mem0Memory(MemoryTool):
         )
         return self
 
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        top_k: int = 5,
-        ctx: InvocationContext | None = None,
-        **kwargs: Any,
-    ) -> list[Message]:
-        filters = _resolve_scope(ctx, kwargs)
-        options = SearchMemoryOptions(filters=filters or None, top_k=top_k)
+    async def search(
+        self, query: str, ctx: InvocationContext | None = None
+    ) -> list[str]:
+        """Search long-term memory for facts relevant to `query`. Call this
+        whenever recalling something about the user or a past conversation
+        would help answer the current request."""
+        filters: dict[str, str] = _resolve_scope(ctx)
+        options = SearchMemoryOptions(filters=filters, top_k=self.top_k)
         results: Any = await self._client.search(query, options=options)
-        return [
-            Message(role="system", content=r["memory"])
-            for r in results.get("results", [])
-        ]
+        return [r["memory"] for r in results.get("results", []) if r.get("memory")]
 
-    async def update(
-        self,
-        messages: list[BaseMessage],
-        *,
-        ctx: InvocationContext | None = None,
-        **kwargs: Any,
-    ) -> None:
-        filters = _resolve_scope(ctx, kwargs)
-        msg_dicts: list[dict[str, str]] = [
-            {"role": m.role, "content": m.content} for m in messages if m.content
-        ]
-        if not msg_dicts:
-            return
-        await self._client.add(msg_dicts, **filters)
+    async def add(self, facts: list[str], ctx: InvocationContext | None = None) -> str:
+        """Persist one or more durable facts (user preferences, personal
+        details, explicit "remember this" instructions) for future
+        conversations. Call this proactively as soon as you learn something
+        worth keeping — do not wait to be asked, and do not wait until the
+        end of the conversation."""
+        facts = [f for f in facts if f]
+        if not facts:
+            return "Nothing to save."
+        filters: dict[str, str] = _resolve_scope(ctx)
+        await self._client.add(
+            [{"role": "system", "content": f} for f in facts], **filters
+        )
+        return f"Saved {len(facts)} fact(s) to memory."

@@ -213,8 +213,8 @@ class Tool(BaseModel):
         all public callables as "namespace methods".
 
         Namespace methods declared on an intermediate Tool-subclass ancestor
-        (e.g. a shared base class's own tool methods, like `MemoryTool.search`)
-        are inherited even when a concrete subclass doesn't redefine them —
+        (e.g. a shared base class's own tool methods) are inherited even when
+        a concrete subclass doesn't redefine them —
         only methods first introduced on `Tool`/`BaseModel` itself, or on a
         non-Tool mixin (e.g. an abstract protocol's own methods), are excluded.
         """

@@ -1,42 +1,38 @@
 from __future__ import annotations
 
-from typing import Any
-
-from pydantic import BaseModel
-
-from ant_ai.core.message import BaseMessage, Message
-from ant_ai.core.types import InvocationContext
+from ant_ai.tools.tool import Tool
 
 
-class Memory(BaseModel):
+class Memory(Tool):
     """
-    Pluggable memory interface for agents.
+    Base class for an agent's long-term memory, kept across conversations.
 
-    Implement `retrieve` and `update` to connect any memory backend.
-    Both methods take `ctx` explicitly — the same `InvocationContext`
-    `Tool`/`ToolStep` inject into any tool method that declares a `ctx`
-    parameter (see `MemoryTool`) — plus `**kwargs` for backend-specific
-    parameters (e.g. mem0's `user_id`, `filters`, `run_id`) callers can pass
-    when not going through `ctx`.
+    A memory is a tool namespace: its public methods are the tools the model
+    calls to recall and save what it knows, registered as `<ClassName>_<method>`
+    when the memory is set as `Agent(memory=...)`. Each backend picks the tools
+    that fit its storage: `Mem0Memory` searches and adds facts, `FileMemory` reads
+    and writes one Markdown file.
+
+    Example:
+        ```python
+        from ant_ai.core.types import InvocationContext
+        from ant_ai.memory import Memory
+
+
+        class NotesMemory(Memory):
+            notes: list[str] = []
+
+            def recall(self, ctx: InvocationContext | None = None) -> list[str]:
+                # The docstring of a method is the tool description the model reads.
+                return self.notes
+
+            def save(self, note: str, ctx: InvocationContext | None = None) -> str:
+                self.notes.append(note)
+                return "Saved."
+        ```
+
+    Notes:
+        A method that declares `ctx` receives the current `InvocationContext`
+        (e.g. `ctx.user_id`, to keep each user's memories apart); it is never
+        shown to the model.
     """
-
-    async def retrieve(
-        self,
-        query: str,
-        *,
-        top_k: int = 5,
-        ctx: InvocationContext | None = None,
-        **kwargs: Any,
-    ) -> list[Message]:
-        """Return relevant memories as Messages, ready to inject into agent state."""
-        raise NotImplementedError
-
-    async def update(
-        self,
-        messages: list[BaseMessage],
-        *,
-        ctx: InvocationContext | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Persist new knowledge from the current session."""
-        raise NotImplementedError

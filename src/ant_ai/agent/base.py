@@ -23,11 +23,11 @@ from ant_ai.hooks.builtins.planning import PlanningHook
 from ant_ai.hooks.layer import HookLayer
 from ant_ai.hooks.protocol import AgentHook
 from ant_ai.llm.protocol import ChatLLM
+from ant_ai.memory.protocol import Memory
 from ant_ai.observer import obs
 from ant_ai.skills.loader import SkillLoader
 from ant_ai.skills.presenter import MarkdownSkillPresenter, SkillPresenter
 from ant_ai.skills.protocol import AgentSkill
-from ant_ai.tools.builtins.memory_tool import MemoryTool
 from ant_ai.tools.builtins.planning_tool import PlanningTool, PlanStore
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import Tool
@@ -60,10 +60,10 @@ class BaseAgent(BaseModel):
         default_factory=list,
         description="Lifecycle hooks for the agent.",
     )
-    memory: MemoryTool | None = Field(
+    memory: Memory | None = Field(
         default=None,
-        description="Pluggable memory backend for cross-session context, "
-        "directly usable as an agent Tool (see MemoryTool).",
+        description="Long-term memory kept across conversations; its tools are "
+        "added to the agent's (see Memory).",
     )
     planning: bool = Field(
         default=False,
