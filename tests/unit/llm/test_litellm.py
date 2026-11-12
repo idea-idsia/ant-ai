@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+from litellm.types.utils import (
+    ChatCompletionCustomToolCallPayload,
+    ChatCompletionDeltaCustomToolCall,
+    ChatCompletionDeltaCustomToolCallPayload,
+    ChatCompletionMessageCustomToolCall,
+)
 
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat, to_chatllm_response
@@ -194,6 +202,57 @@ def test_to_chatllm_response_maps_tool_calls(litellm_response, dummy_tool_call):
     assert out.tool_calls[1].id == "call_2"
     assert out.tool_calls[1].function.name == ""
     assert out.tool_calls[1].function.arguments == ""
+
+
+@pytest.mark.unit
+def test_to_chatllm_response_drops_custom_tool_calls(litellm_response, dummy_tool_call):
+    """A custom (free-form) call has no function tool to run, so it is dropped
+    instead of being passed off as a function call with non-JSON arguments."""
+    custom = ChatCompletionMessageCustomToolCall(
+        id="call_c",
+        custom=ChatCompletionCustomToolCallPayload(name="grep", input="TODO src/"),
+    )
+    resp = litellm_response(
+        "", tool_calls=[custom, dummy_tool_call(call_id="call_f", name="do_thing")]
+    )
+
+    out: ChatLLMResponse = to_chatllm_response(resp)
+
+    assert [tc.id for tc in out.tool_calls] == ["call_f"]
+
+
+@pytest.mark.unit
+async def test_stream_drops_custom_tool_call_fragments(
+    monkeypatch, sample_messages, litellm_tool_call_chunk, make_async_stream
+):
+    import ant_ai.llm.integrations.lite_llm as wrapper_module
+
+    custom = ChatCompletionDeltaCustomToolCall(
+        id="call_c",
+        index=0,
+        custom=ChatCompletionDeltaCustomToolCallPayload(name="grep", input="TODO"),
+    )
+    fragments = [
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(content=None, tool_calls=[custom])
+                )
+            ]
+        ),
+        litellm_tool_call_chunk(
+            index=1, call_id="call_f", name="my_tool", arguments="{}"
+        ),
+    ]
+
+    async def fake_acompletion(*, model, messages, stream=False, **kwargs):
+        return make_async_stream(fragments)
+
+    monkeypatch.setattr(wrapper_module, "acompletion", fake_acompletion)
+
+    chunks = [c async for c in LiteLLMChat(model="m").stream(sample_messages)]
+
+    assert [c.tool_calls["id"] for c in chunks if c.tool_calls] == ["call_f"]
 
 
 @pytest.mark.unit

@@ -35,7 +35,7 @@ def handler(*event_types: type[BaseEvent]):
     """Marks a method as the handler for the given event types."""
 
     def decorator(fn: UnboundHandler) -> UnboundHandler:
-        fn._event_types = event_types  # ty:ignore[unresolved-attribute]
+        fn._event_types = event_types  # ty:ignore[missing-attribute]
         return fn
 
     return decorator

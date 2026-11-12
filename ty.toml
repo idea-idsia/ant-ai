@@ -6,7 +6,7 @@ exclude = ["tests"]
 # Third-party libraries often lack complete stubs; these fire on legitimate dynamic
 # attribute access (e.g. litellm, langfuse) — demote to warnings so CI stays green
 # while still surfacing them in the IDE.
-unresolved-attribute = "warn"
+missing-attribute = "warn"
 possibly-missing-attribute = "warn"
 
 # Union types re-exported through multiple paths in third-party packages can cause

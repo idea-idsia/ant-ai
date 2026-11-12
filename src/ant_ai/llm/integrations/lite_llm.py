@@ -7,7 +7,12 @@ from typing import cast
 
 import litellm
 from litellm import CustomStreamWrapper, ModelResponse, acompletion, completion
-from litellm.types.utils import Choices
+from litellm.types.utils import (
+    ChatCompletionDeltaCustomToolCall,
+    ChatCompletionMessageCustomToolCall,
+    Choices,
+)
+from loguru import logger
 from pydantic import BaseModel
 
 from ant_ai.core.message import BaseMessage, Message, MessageChunk, ToolFunction
@@ -15,6 +20,13 @@ from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk, ToolCall
 from ant_ai.core.types import InvocationContext
 from ant_ai.llm.exceptions import ContextWindowExceededError
 from ant_ai.llm.protocol import ChatLLM
+
+
+def _skip_custom_call(call_id: str | None) -> None:
+    # Only function tools are declared, so a custom (free-form) call has no tool
+    # to run. It is dropped rather than passed off as a function call; its ID
+    # never enters the history, so no tool result is owed for it.
+    logger.warning(f"Dropping custom tool call {call_id}: only function tools run")
 
 
 def to_chatllm_response(
@@ -27,23 +39,27 @@ def to_chatllm_response(
         content=choice.message.get("content", ""),
     )
 
-    tool_calls: list[ToolCall] = [
-        ToolCall(
-            id=tc.id,
-            function=ToolFunction(
-                name=tc.function.name or "",  # ty:ignore[unresolved-attribute]
-                arguments=tc.function.arguments or "",  # ty:ignore[unresolved-attribute]
-            ),
+    tool_calls: list[ToolCall] = []
+    for tc in choice.message.tool_calls or []:
+        if isinstance(tc, ChatCompletionMessageCustomToolCall):
+            _skip_custom_call(tc.id)
+            continue
+        tool_calls.append(
+            ToolCall(
+                id=tc.id,
+                function=ToolFunction(
+                    name=tc.function.name or "",
+                    arguments=tc.function.arguments or "",
+                ),
+            )
         )
-        for tc in (choice.message.tool_calls or [])
-    ]
 
     reasoning = getattr(choice.message, "reasoning_content", None) or None
 
     return ChatLLMResponse(
         message=message,
         tool_calls=tool_calls,
-        usage=resp.usage.model_dump(),  # ty:ignore[unresolved-attribute]
+        usage=resp.usage.model_dump(),  # ty:ignore[missing-attribute]
         reasoning=reasoning,
     )
 
@@ -178,6 +194,10 @@ class LiteLLMChat(ChatLLM):
                         )
 
                     for tc in getattr(choice_delta, "tool_calls", None) or []:
+                        if isinstance(tc, ChatCompletionDeltaCustomToolCall):
+                            if tc.id:  # only the first fragment carries the ID
+                                _skip_custom_call(tc.id)
+                            continue
                         yield ChatLLMStreamChunk(
                             delta=MessageChunk(role="assistant", delta=""),
                             tool_calls={
