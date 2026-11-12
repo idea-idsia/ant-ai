@@ -4,6 +4,11 @@ on:
     push:
         branches: [main]
     pull_request:
+    merge_group:
+
+concurrency:
+    group: ci-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
     lint:
@@ -16,7 +21,7 @@ jobs:
                   python-version: "3.14"
                   enable-cache: true
 
-            - run: uv sync --group dev
+            - run: uv sync --locked --group dev
 
             - run: uv run ruff check .
 
@@ -33,7 +38,7 @@ jobs:
                   python-version: "3.14"
                   enable-cache: true
 
-            - run: uv sync --all-packages --all-groups --all-extras
+            - run: uv sync --locked --all-packages --all-groups --all-extras
 
             - run: uv run ty check
 
@@ -49,7 +54,7 @@ jobs:
 
             - run: sudo apt-get install -y graphviz
 
-            - run: uv sync --all-packages --all-groups --all-extras
+            - run: uv sync --locked --all-packages --all-groups --all-extras
 
             - run: uv run pytest -m "not vllm and not external" --cov --cov-report=term --cov-report=xml --junitxml=junit.xml
 
@@ -95,7 +100,7 @@ jobs:
                   python-version: "3.14"
                   enable-cache: true
 
-            - run: uv sync --all-packages --all-groups --all-extras
+            - run: uv sync --locked --all-packages --all-groups --all-extras
 
             - run: uv run pytest -m "postgres" --cov --cov-report=term --junitxml=report-postgres.xml
               env:
