@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from pathlib import Path
 from typing import Annotated
 
@@ -16,7 +17,12 @@ from pydantic import (
 )
 
 from ant_ai.agent.loop.loop import BaseAgentLoop
-from ant_ai.core.events import BaseEvent, FinalAnswerEvent
+from ant_ai.core.events import (
+    BaseEvent,
+    ClarificationNeededEvent,
+    FinalAnswerEvent,
+    MaxStepsReachedEvent,
+)
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks.builtins.planning import PlanningHook
@@ -30,7 +36,14 @@ from ant_ai.skills.presenter import MarkdownSkillPresenter, SkillPresenter
 from ant_ai.skills.protocol import AgentSkill
 from ant_ai.tools.builtins.planning_tool import PlanningTool, PlanStore
 from ant_ai.tools.registry import ToolRegistry
-from ant_ai.tools.tool import Tool
+from ant_ai.tools.tool import Tool, ToolError, tool
+
+
+class SubagentTask(BaseModel):
+    task: str = Field(
+        description="The complete task. The subagent sees nothing else of the "
+        "conversation, so include every detail it needs."
+    )
 
 
 class BaseAgent(BaseModel):
@@ -275,6 +288,72 @@ class BaseAgent(BaseModel):
                 "invoke() cannot be called while an event loop is already running. "
                 "Use `await ainvoke(...)` instead."
             )
+
+    def as_tool(
+        self,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        max_steps: int = 10,
+    ) -> Tool:
+        """
+        Return this agent as a tool of another agent.
+
+        Each call runs the agent on a new conversation that holds only the
+        task, and returns only its final answer: the files it reads and the
+        tools it calls stay out of the caller's conversation. The caller's
+        `InvocationContext` is passed on, so the run shares the session and
+        the trace.
+
+        Example:
+
+            explorer = Agent(name="explorer", description="Searches the code base.",
+                             system_prompt="...", llm=llm, tools=[FilesystemTool()])
+            lead = Agent(name="lead", system_prompt="...", llm=llm,
+                         tools=[explorer.as_tool()])
+
+        Args:
+            name: Tool name, by default the agent's name. Providers accept only
+                letters, digits, `_` and `-`.
+            description: Tool description, by default the agent's description.
+            max_steps: Step budget of each run.
+
+        Returns:
+            A tool with one argument, `task`.
+
+        Raises:
+            ValueError: The agent was built with `planning=True`; only the
+                agent that talks to the user keeps a plan.
+        """
+        if self.planning:
+            raise ValueError(
+                f"Agent '{self.name}' has planning=True: a subagent does not keep a plan."
+            )
+
+        async def run(task: str, ctx: InvocationContext | None = None) -> str:
+            state = State(messages=[Message(role="user", content=task)])
+            # aclosing: an early exit closes the run now, so its after_agent hooks run.
+            async with aclosing(
+                self.stream(state, max_steps=max_steps, ctx=ctx)
+            ) as events:
+                async for event in events:
+                    if isinstance(event, FinalAnswerEvent):
+                        return event.content
+                    if isinstance(event, ClarificationNeededEvent):
+                        raise ToolError(
+                            f"{self.name} needs more information: {event.content}"
+                        )
+                    if isinstance(event, MaxStepsReachedEvent):
+                        raise ToolError(
+                            f"{self.name} stopped after {max_steps} steps without an answer"
+                        )
+            raise ToolError(f"{self.name} ended without an answer")
+
+        return tool(
+            name=name or self.name,
+            description=description or self.description,
+            args_model=SubagentTask,
+        )(run)
 
     @abstractmethod
     def add_tool(self, tool: Tool) -> None:
