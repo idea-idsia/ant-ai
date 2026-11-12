@@ -19,7 +19,7 @@ Closes #
 
 ## Release
 
-<!-- Apply a bump label if this PR should cut a release, otherwise skip. -->
+<!-- Most PRs cut no release: leave these unticked. Add a bump label only on the last PR of a batch that should ship, sized for the largest change since the last tag. See CONTRIBUTING.md → Releases. -->
 
 - [ ] `bump:patch` — bug fix
 - [ ] `bump:minor` — new functionality

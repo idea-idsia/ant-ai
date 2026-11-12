@@ -208,10 +208,10 @@ uv run mkdocs build   # static build
 
 1. Open the PR — GitHub will auto-populate the [PR template](.github/PULL_REQUEST_TEMPLATE.md).
 1. Fill in every section completely — incomplete PRs will be returned.
-1. Tick the correct **commit type** and apply the appropriate **bump label** (or confirm none is needed).
-1. Ensure all CI jobs pass (`lint`, `type-check`, `run-pytest`).
+1. Tick the correct **commit type**. Add a **bump label** only if this PR cuts a release (see [Releases](#releases)).
+1. Ensure all CI jobs pass (`lint`, `type-check`, `run-pytest`). PRs are merged through the merge queue, which re-runs CI on the PR combined with `main`.
 1. Keep PRs focused: one concern per PR.
-1. Request at least **one review** from a project maintainer.
+1. Ask a maintainer for a review when the PR changes the public API or behaviour other components rely on. Other PRs may be merged by their author once CI passes; address any CodeRabbit comments first.
 1. Do not force-push once a review has started — add new commits instead.
 
 ### Review checklist
@@ -230,11 +230,11 @@ Reviewers apply the following criteria to every PR:
 
 ## Releases
 
-Releases are fully automated and triggered by a label on the merged PR.
+Releases are fully automated and triggered by a label on the merged PR. We release in batches, not on every PR.
 
 ### Labels
 
-Apply exactly one of these labels before merging:
+Most PRs carry **no** bump label and merge without cutting a release. When a batch of changes is ready to ship, put exactly one bump label on the **last PR of the batch**, sized for the largest change in the batch since the last tag (any `feat` → `bump:minor`, any breaking change → `bump:major`, otherwise `bump:patch`):
 
 | Label        | Semver segment bumped | When to use                            |
 | ------------ | --------------------- | -------------------------------------- |
@@ -242,16 +242,16 @@ Apply exactly one of these labels before merging:
 | `bump:minor` | `x.Y.0`               | New backwards-compatible functionality |
 | `bump:major` | `X.0.0`               | Breaking changes                       |
 
-PRs without a bump label are merged silently — no release is cut.
+The label only works on a PR that targets `main`; on a stacked PR, put it on the one that merges into `main`. To release changes already on `main` without a PR, run the **Release** workflow manually from the Actions tab and pick the bump type.
 
 ### What happens on merge
 
 ```
-PR merged with bump:* label
+PR merged with bump:* label (or Release workflow run manually)
         ↓
-release.yml — bumps version in pyproject.toml + uv.lock, commits to main, creates git tag
+release.yml — bumps version in pyproject.toml + uv.lock, commits to main, pushes a vX.Y.Z tag
         ↓
-publish.yml — triggered by the new GitHub Release → builds → TestPyPI → PyPI
+publish.yml — triggered by the tag push → builds → PyPI → creates the GitHub Release with generated notes
 ```
 
 The version bump commit uses the message `chore(release): bump version to vX.Y.Z` and is pushed directly to `main` by the `github-actions[bot]`.
