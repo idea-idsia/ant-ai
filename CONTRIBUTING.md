@@ -235,7 +235,7 @@ Releases are fully automated and triggered by a label on the merged PR. We relea
 
 ### Labels
 
-Most PRs carry **no** bump label and merge without cutting a release. When a batch of changes is ready to ship, put exactly one bump label on the **last PR of the batch**, sized for the largest change in the batch since the last tag (any `feat` → `bump:minor`, any breaking change → `bump:major`, otherwise `bump:patch`):
+Most PRs carry **no** bump label and merge without cutting a release. When a batch of changes is ready to ship, put exactly one bump label on the **last PR of the batch**, sized for the largest change in the batch since the last tag (any `feat` → `bump:minor`, any breaking change → `bump:major`, otherwise `bump:patch`). The release is cut from `main` as it is when the Release workflow starts, so it also includes any PR merged in the meantime, including PRs merged together by the merge queue: size the label for all of them, and hold other merges until the `chore(release)` commit lands.
 
 | Label        | Semver segment bumped | When to use                            |
 | ------------ | --------------------- | -------------------------------------- |

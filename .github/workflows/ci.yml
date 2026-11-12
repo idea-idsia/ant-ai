@@ -6,9 +6,13 @@ on:
     pull_request:
     merge_group:
 
+permissions:
+    contents: read
+
+# Superseded PR runs are cancelled; push and merge-queue runs get a unique group so none is dropped.
 concurrency:
-    group: ci-${{ github.ref }}
-    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+    cancel-in-progress: true
 
 jobs:
     lint:
