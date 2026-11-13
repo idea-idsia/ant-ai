@@ -228,7 +228,7 @@ async for event in agent.stream(state, ctx=ctx):
         # then call agent.stream(state, ctx=ctx) again
 ```
 
-Over A2A the task enters `input-required`; the caller resumes by sending the answer with the same `context_id`, and the agent rebuilds the transcript from task history.
+Over A2A the task stays `input-required`; the caller continues it by sending the answer with the task's `task_id`, as A2A specifies, and the agent resumes with the task's history and the turns it references.
 
 Use a clarification when the run genuinely cannot proceed without the answer. If the tool just needs to *tell* the user something and let the model carry on — a precondition it can't satisfy, say — raise a [`ToolError`](#reporting-failures) instead: the model sees the message, does what it can, and relays it in its answer.
 

@@ -100,7 +100,7 @@ http://quality-agent:9003/
 4. The target agent runs its own workflow, streams events back, and returns a final answer.
 5. The source agent incorporates the result as a tool result and continues its ReAct loop.
 
-If the target agent needs something only a person can answer, it [asks for clarification](../single-agent/index.md#asking-the-user-for-input) and its task ends `input-required`. The question is passed up the chain rather than handed to the source agent's model as an ordinary result: the source agent's run stops with a `ClarificationNeededEvent` carrying the question, so the user is asked. When the user replies and the source agent calls the same collaborator again in that session, the call references the task that asked, so the target agent resumes with its own history and reads the new message as the answer.
+If the target agent needs something only a person can answer, it [asks for clarification](../single-agent/index.md#asking-the-user-for-input) and its task ends `input-required`. The question is passed up the chain rather than handed to the source agent's model as an ordinary result: the source agent's run stops with a `ClarificationNeededEvent` carrying the question, so the user is asked. The target agent's task stays `input-required`. When the user replies and the source agent calls the same collaborator again in that session, the call continues that task (it sends the task's `task_id`, as A2A specifies), so the target agent resumes with its own history and reads the new message as the answer.
 
 See [Architecture](../architecture/index.md) for the full event-streaming sequence diagram, and [Streaming](../single-agent/streaming.md#over-a2a) for how live token deltas are forwarded (or not) between agents in a colony.
 
