@@ -10,6 +10,7 @@ from ant_ai.a2a.client import A2AClient
 from ant_ai.a2a.config import A2AConfig
 from ant_ai.a2a.session import current_session_id
 from ant_ai.core.events import ClarificationNeededEvent, FinalAnswerEvent
+from ant_ai.core.result import ClarificationNeededOutput
 from ant_ai.core.types import InvocationContext
 from ant_ai.tools.tool import Tool
 
@@ -28,7 +29,9 @@ class A2AAgentTool(Tool):
     _a2a: A2AClient | None = PrivateAttr(default=None)
     _initialized: bool = PrivateAttr(default=False)
     _agent_card: AgentCard | None = PrivateAttr(default=None)
-    _last_task_id: str | None = PrivateAttr(default=None)
+    # Remote tasks waiting on an answer, by caller session. The tool instance is
+    # shared by every session, so one slot would hand a task to the wrong one.
+    _pending_tasks: dict[str | None, str] = PrivateAttr(default_factory=dict)
 
     @model_validator(mode="after")
     def _set_defaults(self) -> A2AAgentTool:
@@ -78,24 +81,41 @@ class A2AAgentTool(Tool):
 
         async def _call_remote(
             message: str, ctx: InvocationContext | None = None
-        ) -> str:
+        ) -> str | ClarificationNeededOutput:
+            """Send `message` to the remote agent and return its answer.
+
+            When the remote agent asks a question instead (its task ends
+            `input-required`), the question is returned as a
+            `ClarificationNeededOutput`, so the caller's run stops and the
+            user is asked. The next call in the same session references
+            that task, so the remote agent resumes with its own history and
+            reads the message as the answer.
+            """
             await self._ensure_initialized()
             self._ensure_a2a()
             if self._a2a is None:
                 raise RuntimeError("A2A client not initialized")
 
+            session_id: str | None = current_session_id.get(None)
+            pending: str | None = self._pending_tasks.pop(session_id, None)
+
             last_text: str = ""
             async for ev in self._a2a.send_message(
                 message,
-                context_id=current_session_id.get(None),
+                context_id=session_id,
                 # Only an agent marked `trusted` receives the caller's context.
                 request_metadata=ctx.outbound_metadata()
                 if ctx and self.config.trusted
                 else None,
+                reference_task_ids=[pending] if pending else None,
             ):
                 if ev.content:
                     last_text: str = ev.content
-                if isinstance(ev, (FinalAnswerEvent, ClarificationNeededEvent)):
+                if isinstance(ev, ClarificationNeededEvent):
+                    if ev.task_id:
+                        self._pending_tasks[session_id] = ev.task_id
+                    return ClarificationNeededOutput(question=ev.content or last_text)
+                if isinstance(ev, FinalAnswerEvent):
                     break
             return last_text
 
