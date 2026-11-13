@@ -1,10 +1,20 @@
 import sys
 
+import httpx
 import pytest
+from a2a.utils.errors import TaskNotFoundError
 
 from ant_ai.a2a.agent import A2AAgentTool
+from ant_ai.a2a.client import AgentClientError
 from ant_ai.a2a.config import A2AConfig
-from ant_ai.core.events import ContentDeltaEvent, FinalAnswerEvent, UpdateEvent
+from ant_ai.a2a.session import current_session_id
+from ant_ai.core.events import (
+    ClarificationNeededEvent,
+    ContentDeltaEvent,
+    FinalAnswerEvent,
+    UpdateEvent,
+)
+from ant_ai.core.result import ClarificationNeededOutput
 from ant_ai.core.types import InvocationContext
 
 MODULE = sys.modules[A2AAgentTool.__module__]
@@ -50,7 +60,12 @@ async def test_ensure_initialized_populates_card_a2a_and_metadata(monkeypatch, c
             return agent_card
 
         async def send_message(
-            self, message: str, context_id=None, request_metadata=None
+            self,
+            message: str,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
         ):
             # Not used in this test
             if False:  # pragma: no cover
@@ -106,7 +121,12 @@ async def test_ensure_initialized_does_not_override_existing_name_or_description
             return agent_card
 
         async def send_message(
-            self, message: str, context_id=None, request_metadata=None
+            self,
+            message: str,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
         ):
             if False:  # pragma: no cover
                 yield None
@@ -143,7 +163,12 @@ async def test_call_remote_returns_last_event_content_until_final(monkeypatch, c
             return DummyAgentCard(name="remote-agent", description="desc")
 
         async def send_message(
-            self, message: str, context_id=None, request_metadata=None
+            self,
+            message: str,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
         ):
             yield UpdateEvent(content="Hello ")
             yield UpdateEvent(content="Hello world")
@@ -173,7 +198,12 @@ async def test_call_remote_ignores_content_delta_events(monkeypatch, config):
             return DummyAgentCard(name="remote-agent", description="desc")
 
         async def send_message(
-            self, message: str, context_id=None, request_metadata=None
+            self,
+            message: str,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
         ):
             yield ContentDeltaEvent(delta="Hel", stream_id="s1", is_first=True)
             yield ContentDeltaEvent(delta="lo", stream_id="s1")
@@ -198,7 +228,12 @@ async def test_call_remote_no_events_returns_empty_string(monkeypatch, config):
             return DummyAgentCard(name="remote-agent", description="desc")
 
         async def send_message(
-            self, message: str, context_id=None, request_metadata=None
+            self,
+            message: str,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
         ):
             if False:
                 yield None
@@ -222,7 +257,12 @@ async def test_call_remote_exceptions_bubble(monkeypatch, config):
             return DummyAgentCard(name="remote-agent", description="desc")
 
         async def send_message(
-            self, message: str, context_id=None, request_metadata=None
+            self,
+            message: str,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
         ):
             raise RuntimeError("boom")
             if False:  # pragma: no cover
@@ -319,7 +359,12 @@ async def test_a2a_agent_tool_model_dump_openai_compatible(monkeypatch, config):
             return agent_card
 
         async def send_message(
-            self, message: str, context_id=None, request_metadata=None
+            self,
+            message: str,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
         ):
             if False:  # pragma: no cover
                 yield None
@@ -375,7 +420,12 @@ async def test_a2a_agent_tool_is_single_callable_and_ainvoke_works(monkeypatch, 
             return DummyAgentCard(name="remote-agent", description="desc")
 
         async def send_message(
-            self, message: str, context_id=None, request_metadata=None
+            self,
+            message: str,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
         ):
             yield UpdateEvent(content="Hello world")
             yield FinalAnswerEvent(content="Hello world")
@@ -398,7 +448,14 @@ def _capturing_client(seen: dict):
         async def get_agent_card(self):
             return DummyAgentCard(name="remote-agent", description="desc")
 
-        async def send_message(self, message, context_id=None, request_metadata=None):
+        async def send_message(
+            self,
+            message,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
+        ):
             seen["metadata"] = request_metadata
             yield FinalAnswerEvent(content="ok")
 
@@ -463,7 +520,14 @@ async def test_call_remote_without_context_sends_no_metadata(monkeypatch, config
         async def get_agent_card(self):
             return DummyAgentCard(name="remote-agent", description="desc")
 
-        async def send_message(self, message, context_id=None, request_metadata=None):
+        async def send_message(
+            self,
+            message,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
+        ):
             seen["metadata"] = request_metadata
             yield FinalAnswerEvent(content="ok")
 
@@ -473,3 +537,215 @@ async def test_call_remote_without_context_sends_no_metadata(monkeypatch, config
     await tool.ainvoke(message="hi", ctx=None)
 
     assert seen["metadata"] is None
+
+
+def _clarifying_client(calls: list[dict]):
+    """A remote agent that asks a question on its first task, then answers."""
+
+    class FakeA2AClient:
+        def __init__(self, config):
+            self.config = config
+
+        async def get_agent_card(self):
+            return DummyAgentCard(name="remote-agent", description="desc")
+
+        async def send_message(
+            self,
+            message,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
+        ):
+            calls.append(
+                {
+                    "message": message,
+                    "context_id": context_id,
+                    "task_id": task_id,
+                    "refs": reference_task_ids,
+                }
+            )
+            if len(calls) == 1:
+                yield UpdateEvent(content="thinking")
+                yield ClarificationNeededEvent(content="Which city?", task_id="t1")
+                yield UpdateEvent(content="never read")
+            else:
+                yield FinalAnswerEvent(content=f"answer to {message}", task_id="t2")
+
+    return FakeA2AClient
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_remote_clarification_is_passed_up_as_clarification(monkeypatch, config):
+    """A remote input-required becomes a ClarificationNeededOutput, so the
+    caller's run stops and the user is asked, instead of the question being
+    handed to the calling model as an ordinary result."""
+    calls: list[dict] = []
+    monkeypatch.setattr(MODULE, "A2AClient", _clarifying_client(calls))
+    tool: A2AAgentTool = await A2AAgentTool.from_config(config)
+
+    result = await tool.ainvoke(message="weather?", ctx=None)
+
+    assert isinstance(result, ClarificationNeededOutput)
+    assert result.question == "Which city?"
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_answer_resumes_the_remote_task_once(monkeypatch, config):
+    """The call after a clarification continues the task that asked (its
+    `task_id`, as A2A specifies for `input-required`), so the remote agent
+    resumes with its own history; the task is continued only once."""
+    calls: list[dict] = []
+    monkeypatch.setattr(MODULE, "A2AClient", _clarifying_client(calls))
+    tool: A2AAgentTool = await A2AAgentTool.from_config(config)
+
+    token = current_session_id.set("s1")
+    try:
+        await tool.ainvoke(message="weather?", ctx=None)
+        answer = await tool.ainvoke(message="Lugano", ctx=None)
+        await tool.ainvoke(message="and tomorrow?", ctx=None)
+    finally:
+        current_session_id.reset(token)
+
+    assert answer == "answer to Lugano"
+    assert [c["task_id"] for c in calls] == [None, "t1", None]
+    assert [c["refs"] for c in calls] == [None, None, None]
+    assert {c["context_id"] for c in calls} == {"s1"}
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_pending_remote_task_is_kept_per_session(monkeypatch, config):
+    """The tool is shared by every session: a question asked in one session
+    must not be resumed by a call from another."""
+    calls: list[dict] = []
+    monkeypatch.setattr(MODULE, "A2AClient", _clarifying_client(calls))
+    tool: A2AAgentTool = await A2AAgentTool.from_config(config)
+
+    for session, message in [("s1", "weather?"), ("s2", "hello"), ("s1", "Lugano")]:
+        token = current_session_id.set(session)
+        try:
+            await tool.ainvoke(message=message, ctx=None)
+        finally:
+            current_session_id.reset(token)
+
+    assert [(c["context_id"], c["task_id"]) for c in calls] == [
+        ("s1", None),
+        ("s2", None),
+        ("s1", "t1"),
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_pending_task_falls_back_to_the_ctx_session(monkeypatch, config):
+    """Outside the A2A executor there is no ambient session: the caller's
+    `ctx.session_id` scopes the waiting task, so two callers never share it."""
+    calls: list[dict] = []
+    monkeypatch.setattr(MODULE, "A2AClient", _clarifying_client(calls))
+    tool: A2AAgentTool = await A2AAgentTool.from_config(config)
+
+    def ctx(session: str) -> InvocationContext:
+        return InvocationContext(session_id=session)
+
+    await tool.ainvoke(message="weather?", ctx=ctx("s1"))
+    await tool.ainvoke(message="hello", ctx=ctx("s2"))
+    await tool.ainvoke(message="Lugano", ctx=ctx("s1"))
+
+    assert [(c["context_id"], c["task_id"]) for c in calls] == [
+        ("s1", None),
+        ("s2", None),
+        ("s1", "t1"),
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_no_session_keeps_no_pending_task(monkeypatch, config):
+    """Without any session a waiting task could only be kept in one slot shared
+    by every caller, so it is not kept: the next call starts a new task."""
+    calls: list[dict] = []
+    monkeypatch.setattr(MODULE, "A2AClient", _clarifying_client(calls))
+    tool: A2AAgentTool = await A2AAgentTool.from_config(config)
+
+    await tool.ainvoke(message="weather?", ctx=None)
+    await tool.ainvoke(message="Lugano", ctx=None)
+
+    assert [c["task_id"] for c in calls] == [None, None]
+
+
+def _resume_failing_client(calls: list[dict], error: Exception):
+    """Asks a question on the first call, fails the second with `error`
+    (as `A2AClient` raises it), then answers."""
+
+    class FakeA2AClient:
+        def __init__(self, config):
+            self.config = config
+
+        async def get_agent_card(self):
+            return DummyAgentCard(name="remote-agent", description="desc")
+
+        async def send_message(
+            self,
+            message,
+            context_id=None,
+            request_metadata=None,
+            task_id=None,
+            reference_task_ids=None,
+        ):
+            calls.append({"message": message, "task_id": task_id})
+            if len(calls) == 1:
+                yield ClarificationNeededEvent(content="Which city?", task_id="t1")
+            elif len(calls) == 2:
+                raise AgentClientError(f"Agent client error: {error}") from error
+            else:
+                yield FinalAnswerEvent(content="sunny")
+
+    return FakeA2AClient
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_failed_resume_keeps_the_pending_task(monkeypatch, config):
+    """A resume that fails in transport keeps the waiting task, so the retry
+    still continues it; it is cleared once a call succeeds."""
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        MODULE,
+        "A2AClient",
+        _resume_failing_client(calls, httpx.ConnectError("connection refused")),
+    )
+    tool: A2AAgentTool = await A2AAgentTool.from_config(config)
+    ctx = InvocationContext(session_id="s1")
+
+    await tool.ainvoke(message="weather?", ctx=ctx)
+    with pytest.raises(AgentClientError):
+        await tool.ainvoke(message="Lugano", ctx=ctx)
+    await tool.ainvoke(message="Lugano", ctx=ctx)
+    await tool.ainvoke(message="and tomorrow?", ctx=ctx)
+
+    assert [c["task_id"] for c in calls] == [None, "t1", "t1", None]
+
+
+@pytest.mark.unit
+@pytest.mark.a2a
+async def test_rejected_resume_drops_the_pending_task(monkeypatch, config):
+    """When the remote agent rejects the waiting task (e.g. it no longer
+    exists), retrying it cannot work: the next call starts a new task."""
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        MODULE,
+        "A2AClient",
+        _resume_failing_client(calls, TaskNotFoundError("Task t1 not found")),
+    )
+    tool: A2AAgentTool = await A2AAgentTool.from_config(config)
+    ctx = InvocationContext(session_id="s1")
+
+    await tool.ainvoke(message="weather?", ctx=ctx)
+    with pytest.raises(AgentClientError):
+        await tool.ainvoke(message="Lugano", ctx=ctx)
+    await tool.ainvoke(message="Lugano", ctx=ctx)
+
+    assert [c["task_id"] for c in calls] == [None, "t1", None]

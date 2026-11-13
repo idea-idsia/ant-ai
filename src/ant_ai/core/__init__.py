@@ -16,6 +16,7 @@ from ant_ai.core.events import (
     ToolResultEvent,
     UpdateEvent,
     WorkflowEvent,
+    event_to_message,
 )
 from ant_ai.core.exceptions import HookBlockedError, HookMaxRetriesError
 from ant_ai.core.logging import bind_logger, configure_logging
@@ -61,6 +62,7 @@ __all__ = [
     "CompletedEvent",
     "ContentDeltaEvent",
     "AnyEvent",
+    "event_to_message",
     # exceptions
     "HookBlockedError",
     "HookMaxRetriesError",

@@ -165,6 +165,7 @@ def _stream_capturing_ctx(captured: dict):
 
 def _request_context(metadata: dict) -> MagicMock:
     context = MagicMock()
+    context.current_task = None
     context.metadata = metadata
     context.related_tasks = []
     context.get_user_input.return_value = "hi"

@@ -111,6 +111,7 @@ class A2AClient(BaseModel):
         *,
         request_metadata: dict | None = None,
         context_id: str | None = None,
+        task_id: str | None = None,
         reference_task_ids: list[str] | None = None,
     ) -> AsyncIterator[BaseEvent]:
         """Sends a message to the agent and yields events as responses are received.
@@ -118,7 +119,10 @@ class A2AClient(BaseModel):
         Args:
             message: The message to send to the agent.
             request_metadata: Optional metadata to include with the request.
-            context_id: Optional context ID for the message. If not provided, a new UUID will be generated.
+            context_id: Optional context ID for the message. If not provided, a new UUID will be
+                generated, unless `task_id` is given: the agent then takes it from the task.
+            task_id: Optional ID of a task waiting on input (`input-required`), to continue
+                that task with this message instead of starting a new one.
             reference_task_ids: Optional list of task IDs that this message references, for better traceability in task management.
 
         Yields:
@@ -131,8 +135,11 @@ class A2AClient(BaseModel):
             role=Role.ROLE_USER,
             parts=[Part(text=message)],
             message_id=str(uuid4()),
-            context_id=context_id or str(uuid4()),
         )
+        if task_id:
+            msg.task_id = task_id
+        if context_id or not task_id:
+            msg.context_id = context_id or str(uuid4())
         if reference_task_ids:
             msg.reference_task_ids.extend(reference_task_ids)
 
