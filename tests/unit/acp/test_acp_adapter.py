@@ -22,8 +22,20 @@ from acp.schema import (
 
 from ant_ai.acp.adapter import ACPAdapter
 from ant_ai.acp.commands import ACPCommand, ACPCommandContext
-from ant_ai.core.events import FinalAnswerEvent, StartEvent
-from ant_ai.core.message import Message
+from ant_ai.core.events import (
+    ClarificationNeededEvent,
+    FinalAnswerEvent,
+    StartEvent,
+    ToolCallingEvent,
+    ToolResultEvent,
+)
+from ant_ai.core.message import (
+    Message,
+    ToolCall,
+    ToolCallMessage,
+    ToolCallResultMessage,
+    ToolFunction,
+)
 
 
 def _make_adapter(commands=None) -> ACPAdapter:
@@ -131,6 +143,89 @@ async def test_prompt_appends_history():
     history = adapter._sessions[session.session_id]
     assert any(m.role == "user" for m in history)
     assert any(m.role == "assistant" and m.content == "Reply" for m in history)
+
+
+def _ask_call(call_id: str = "c1") -> ToolCall:
+    return ToolCall(id=call_id, function=ToolFunction(name="ask", arguments="{}"))
+
+
+async def _prompt(adapter: ACPAdapter, session_id: str, text: str, events) -> None:
+    async def _fake_stream(**_):
+        for event in events:
+            yield event
+
+    adapter._workflow.stream = MagicMock(return_value=_fake_stream())
+    await adapter.prompt(
+        prompt=[TextContentBlock(type="text", text=text)], session_id=session_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_prompt_keeps_tool_calls_and_results_in_history():
+    adapter = _make_adapter()
+    sid = (await adapter.new_session(cwd="/tmp")).session_id
+    adapter._workflow.create_state.return_value = MagicMock()
+
+    await _prompt(
+        adapter,
+        sid,
+        "Look it up",
+        [
+            ToolCallingEvent(tool_calls=(_ask_call(),)),
+            ToolResultEvent(content="42", tool_call_id="c1", name="ask"),
+            FinalAnswerEvent(content="It is 42."),
+        ],
+    )
+
+    history = adapter._sessions[sid]
+    assert [type(m) for m in history] == [
+        Message,
+        ToolCallMessage,
+        ToolCallResultMessage,
+        Message,
+    ]
+    assert history[2].tool_call_id == "c1" and history[2].content == "42"
+    assert history[3].role == "assistant" and history[3].content == "It is 42."
+
+
+@pytest.mark.asyncio
+async def test_clarification_question_survives_into_the_next_prompt():
+    """A turn that stops on a clarification has no final answer; its question
+    must still be in history when the user's reply arrives as the next prompt."""
+    adapter = _make_adapter()
+    sid = (await adapter.new_session(cwd="/tmp")).session_id
+    adapter._workflow.create_state.return_value = MagicMock()
+
+    await _prompt(
+        adapter,
+        sid,
+        "Open the config",
+        [
+            ToolCallingEvent(tool_calls=(_ask_call(),)),
+            ToolResultEvent(content="Which one?", tool_call_id="c1", name="ask"),
+            ClarificationNeededEvent(content="Which one?"),
+        ],
+    )
+
+    history = adapter._sessions[sid]
+    assert [type(m) for m in history] == [
+        Message,
+        ToolCallMessage,
+        ToolCallResultMessage,
+    ]
+    assert history[2].content == "Which one?"
+
+    await _prompt(adapter, sid, "The second one", [FinalAnswerEvent(content="ok")])
+
+    resumed = adapter._workflow.create_state.call_args.kwargs["messages"]
+    assert [type(m) for m in resumed] == [
+        Message,
+        ToolCallMessage,
+        ToolCallResultMessage,
+        Message,
+    ]
+    assert resumed[2].content == "Which one?"
+    assert resumed[3].role == "user" and resumed[3].content == "The second one"
 
 
 # ---------------------------------------------------------------------------

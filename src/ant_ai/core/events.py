@@ -4,7 +4,13 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from ant_ai.core.message import ToolCall
+from ant_ai.core.message import (
+    AnyMessage,
+    Message,
+    ToolCall,
+    ToolCallMessage,
+    ToolCallResultMessage,
+)
 
 type EventSource = Literal["agent", "action", "workflow"]
 """Sources where events are generated during a run."""
@@ -231,3 +237,34 @@ type AnyEvent = Annotated[
     | ContentDeltaEvent,
     Field(discriminator="kind"),
 ]
+
+
+def event_to_message(event: BaseEvent) -> AnyMessage | None:
+    """Return the transcript message an event stands for, if it stands for one.
+
+    Replaying these messages after a run rebuilds what the model saw: tool
+    calls, their results, and the final answer. A run that stopped on a
+    clarification ends with the clarified call's result (its question), so the
+    user's reply can follow it directly. Every other event (reasoning, deltas,
+    status updates, the `ClarificationNeededEvent` itself) adds nothing.
+
+    Args:
+        event: An event streamed from a run.
+
+    Returns:
+        A `ToolCallMessage` for a `ToolCallingEvent`, a `ToolCallResultMessage`
+        for a `ToolResultEvent`, an assistant `Message` for a
+        `FinalAnswerEvent`, or `None` for any other event.
+    """
+    if isinstance(event, ToolCallingEvent):
+        return ToolCallMessage(tool_calls=list(event.tool_calls))
+    if isinstance(event, ToolResultEvent):
+        return ToolCallResultMessage(
+            name=event.name,
+            tool_call_id=event.tool_call_id,
+            content=event.content,
+            is_error=event.is_error,
+        )
+    if isinstance(event, FinalAnswerEvent):
+        return Message(role="assistant", content=event.content)
+    return None
