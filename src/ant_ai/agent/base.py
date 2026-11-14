@@ -5,7 +5,7 @@ from abc import abstractmethod
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from pydantic import (
     BaseModel,
@@ -13,6 +13,7 @@ from pydantic import (
     Field,
     PrivateAttr,
     SkipValidation,
+    field_validator,
     model_validator,
 )
 
@@ -65,9 +66,10 @@ class BaseAgent(BaseModel):
         default="A base agent.",
         description="Human-readable description of the agent for documentation.",
     )
-    tools: list[Tool] = Field(
+    tools: list[Tool | BaseAgent] = Field(
         default_factory=list,
-        description="Tools available to the agent.",
+        description="Tools available to the agent. An agent in the list becomes "
+        "its `as_tool()` with the default settings.",
     )
     hooks: list[AgentHook] = Field(
         default_factory=list,
@@ -104,10 +106,18 @@ class BaseAgent(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _agents_as_tools(cls, tools: Any) -> Any:
+        if not isinstance(tools, list):
+            return tools
+        return [t.as_tool() if isinstance(t, BaseAgent) else t for t in tools]
+
     @model_validator(mode="after")
     def _build(self) -> BaseAgent:
         # Copies, so the agent's own fields are not changed and a rebuild adds nothing twice.
-        tools: list[Tool] = list(self.tools)
+        # After `_agents_as_tools` the list holds only tools.
+        tools = list(cast("list[Tool]", self.tools))
         hooks: list[AgentHook] = list(self.hooks)
         if self.memory is not None:
             tools.append(self.memory)
@@ -303,14 +313,15 @@ class BaseAgent(BaseModel):
         task, and returns only its final answer: the files it reads and the
         tools it calls stay out of the caller's conversation. The caller's
         `InvocationContext` is passed on, so the run shares the session and
-        the trace.
+        the trace. An agent put in the `tools` of another agent becomes this
+        tool with the default settings.
 
         Example:
 
             explorer = Agent(name="explorer", description="Searches the code base.",
                              system_prompt="...", llm=llm, tools=[FilesystemTool()])
             lead = Agent(name="lead", system_prompt="...", llm=llm,
-                         tools=[explorer.as_tool()])
+                         tools=[explorer])  # or explorer.as_tool(max_steps=20)
 
         Args:
             name: Tool name, by default the agent's name. Providers accept only

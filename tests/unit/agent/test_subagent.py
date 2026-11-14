@@ -10,7 +10,7 @@ from ant_ai.core.result import ClarificationNeededOutput
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks.protocol import AgentHook
 from ant_ai.llm.protocol import ChatLLM
-from ant_ai.tools.tool import ToolError, tool
+from ant_ai.tools.tool import Tool, ToolError, tool
 
 
 class ScriptedLLM(ChatLLM):
@@ -60,9 +60,7 @@ async def test_subagent_starts_from_the_task_and_returns_only_its_answer():
     sub_llm = ScriptedLLM(call("lookup", '{"key": "k"}'), answer("k is value of k"))
     researcher = agent(sub_llm, name="researcher", tools=[lookup])
     lead_llm = ScriptedLLM(call("researcher", '{"message": "find k"}'), answer("done"))
-    lead = Agent(
-        name="lead", system_prompt="lead", llm=lead_llm, tools=[researcher.as_tool()]
-    )
+    lead = Agent(name="lead", system_prompt="lead", llm=lead_llm, tools=[researcher])
 
     ctx = InvocationContext(session_id="s1")
     state = State(messages=[Message(role="user", content="what is k?")])
@@ -87,6 +85,27 @@ def test_defaults_come_from_the_agent_and_can_be_overridden():
 
     custom = sub.as_tool(name="w2", description="Other.")
     assert (custom.name, custom.description) == ("w2", "Other.")
+
+
+@pytest.mark.unit
+def test_an_agent_in_tools_becomes_its_default_tool():
+    @tool
+    def lookup(key: str) -> str:
+        """Look a key up."""
+        return key
+
+    sub = agent(ScriptedLLM(), name="writer", description="Writes text.")
+    lead = agent(ScriptedLLM(), name="lead", tools=[lookup, sub])
+
+    assert all(isinstance(t, Tool) for t in lead.tools)
+    assert [t.name for t in lead.tools] == ["lookup", "writer"]
+    assert lead.tools[1].parameters == sub.as_tool().parameters
+
+
+@pytest.mark.unit
+def test_an_agent_with_planning_in_tools_is_refused():
+    with pytest.raises(ValueError, match="does not keep a plan"):
+        agent(ScriptedLLM(), name="lead", tools=[agent(ScriptedLLM(), planning=True)])
 
 
 @pytest.mark.unit

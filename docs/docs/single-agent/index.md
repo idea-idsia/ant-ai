@@ -138,7 +138,7 @@ agent = Agent(..., tools=tools)
 
 ### Agents as tools (subagents)
 
-[`as_tool()`][ant_ai.agent.base.BaseAgent.as_tool] turns an agent into a tool of another agent, in the same process. Each call runs the agent on a new conversation that holds only the task, so the files it reads and the tools it calls stay out of the caller's conversation: the caller sees one tool call and the final answer.
+An agent in the `tools` of another agent becomes one of its tools, in the same process. Each call runs the agent on a new conversation that holds only the task, so the files it reads and the tools it calls stay out of the caller's conversation: the caller sees one tool call and the final answer.
 
 ```python
 from ant_ai.agent import Agent
@@ -151,10 +151,10 @@ explorer = Agent(
     llm=llm,
     tools=[FilesystemTool(workspace_root=".")],
 )
-lead = Agent(name="lead", system_prompt="...", llm=llm, tools=[explorer.as_tool()])
+lead = Agent(name="lead", system_prompt="...", llm=llm, tools=[explorer])
 ```
 
-The tool takes the name and description of the agent (`name=` and `description=` override them) and has one argument, `message`, as an [`A2AAgentTool`][ant_ai.a2a.agent.A2AAgentTool]: the model has to write the complete task, since the subagent sees nothing else of the conversation. Each run has 10 steps (`max_steps=`). The caller's `ctx` is passed on, so the run shares the session and the trace. If the subagent runs out of steps or asks for a clarification, the call fails like a raised [`ToolError`](#reporting-failures). An agent with `planning=True` is refused: only the agent that talks to the user keeps a plan. For agents in other processes, see [Multi-agent setup](../multi-agent/index.md).
+The tool takes the name and description of the agent and has one argument, `message`, as an [`A2AAgentTool`][ant_ai.a2a.agent.A2AAgentTool]: the model has to write the complete task, since the subagent sees nothing else of the conversation. Each run has 10 steps. To change these settings, pass [`as_tool()`][ant_ai.agent.base.BaseAgent.as_tool] instead of the agent: `explorer.as_tool(name="find", max_steps=20)`. The caller's `ctx` is passed on, so the run shares the session and the trace. If the subagent runs out of steps or asks for a clarification, the call fails like a raised [`ToolError`](#reporting-failures). An agent with `planning=True` is refused: only the agent that talks to the user keeps a plan. For agents in other processes, see [Multi-agent setup](../multi-agent/index.md).
 
 ### Receiving the invocation context (`ctx`)
 
