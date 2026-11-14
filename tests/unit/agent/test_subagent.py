@@ -59,7 +59,7 @@ async def test_subagent_starts_from_the_task_and_returns_only_its_answer():
 
     sub_llm = ScriptedLLM(call("lookup", '{"key": "k"}'), answer("k is value of k"))
     researcher = agent(sub_llm, name="researcher", tools=[lookup])
-    lead_llm = ScriptedLLM(call("researcher", '{"task": "find k"}'), answer("done"))
+    lead_llm = ScriptedLLM(call("researcher", '{"message": "find k"}'), answer("done"))
     lead = Agent(
         name="lead", system_prompt="lead", llm=lead_llm, tools=[researcher.as_tool()]
     )
@@ -90,10 +90,10 @@ def test_defaults_come_from_the_agent_and_can_be_overridden():
 
 
 @pytest.mark.unit
-def test_the_model_sees_only_the_task_argument():
+def test_the_model_sees_only_the_message_argument():
     params = agent(ScriptedLLM()).as_tool().parameters
-    assert list(params["properties"]) == ["task"]
-    assert params["required"] == ["task"]
+    assert list(params["properties"]) == ["message"]
+    assert params["required"] == ["message"]
     assert "ctx" not in str(params)
 
 
@@ -114,7 +114,7 @@ async def test_running_out_of_steps_is_an_error_for_the_caller():
     sub = agent(llm, tools=[spin]).as_tool(max_steps=2)
 
     with pytest.raises(ToolError, match="stopped after 2 steps"):
-        await sub.ainvoke(task="loop")
+        await sub.ainvoke(message="loop")
 
 
 @pytest.mark.unit
@@ -127,7 +127,7 @@ async def test_a_question_to_the_user_is_an_error_for_the_caller():
     sub = agent(ScriptedLLM(call("ask", "{}")), tools=[ask]).as_tool()
 
     with pytest.raises(ToolError, match="needs more information: Which file"):
-        await sub.ainvoke(task="fix it")
+        await sub.ainvoke(message="fix it")
 
 
 @pytest.mark.unit
@@ -147,5 +147,5 @@ async def test_the_subagent_run_is_closed_before_the_error_reaches_the_caller():
     sub = agent(llm, tools=[spin], hooks=[Record()]).as_tool(max_steps=1)
 
     with pytest.raises(ToolError):
-        await sub.ainvoke(task="loop")
+        await sub.ainvoke(message="loop")
     assert closed == ["after_agent"]

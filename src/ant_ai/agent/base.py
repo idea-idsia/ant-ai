@@ -40,7 +40,7 @@ from ant_ai.tools.tool import Tool, ToolError, tool
 
 
 class SubagentTask(BaseModel):
-    task: str = Field(
+    message: str = Field(
         description="The complete task. The subagent sees nothing else of the "
         "conversation, so include every detail it needs."
     )
@@ -319,7 +319,7 @@ class BaseAgent(BaseModel):
             max_steps: Step budget of each run.
 
         Returns:
-            A tool with one argument, `task`.
+            A tool with one argument, `message`, as `A2AAgentTool`.
 
         Raises:
             ValueError: The agent was built with `planning=True`; only the
@@ -330,8 +330,8 @@ class BaseAgent(BaseModel):
                 f"Agent '{self.name}' has planning=True: a subagent does not keep a plan."
             )
 
-        async def run(task: str, ctx: InvocationContext | None = None) -> str:
-            state = State(messages=[Message(role="user", content=task)])
+        async def run(message: str, ctx: InvocationContext | None = None) -> str:
+            state = State(messages=[Message(role="user", content=message)])
             # aclosing: an early exit closes the run now, so its after_agent hooks run.
             async with aclosing(
                 self.stream(state, max_steps=max_steps, ctx=ctx)
