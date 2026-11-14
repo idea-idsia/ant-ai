@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from pydantic import (
     BaseModel,
@@ -12,11 +13,17 @@ from pydantic import (
     Field,
     PrivateAttr,
     SkipValidation,
+    field_validator,
     model_validator,
 )
 
 from ant_ai.agent.loop.loop import BaseAgentLoop
-from ant_ai.core.events import BaseEvent, FinalAnswerEvent
+from ant_ai.core.events import (
+    BaseEvent,
+    ClarificationNeededEvent,
+    FinalAnswerEvent,
+    MaxStepsReachedEvent,
+)
 from ant_ai.core.message import Message
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks.builtins.planning import PlanningHook
@@ -30,7 +37,14 @@ from ant_ai.skills.presenter import MarkdownSkillPresenter, SkillPresenter
 from ant_ai.skills.protocol import AgentSkill
 from ant_ai.tools.builtins.planning_tool import PlanningTool, PlanStore
 from ant_ai.tools.registry import ToolRegistry
-from ant_ai.tools.tool import Tool
+from ant_ai.tools.tool import Tool, ToolError, tool
+
+
+class SubagentTask(BaseModel):
+    message: str = Field(
+        description="The complete task. The subagent sees nothing else of the "
+        "conversation, so include every detail it needs."
+    )
 
 
 class BaseAgent(BaseModel):
@@ -52,9 +66,10 @@ class BaseAgent(BaseModel):
         default="A base agent.",
         description="Human-readable description of the agent for documentation.",
     )
-    tools: list[Tool] = Field(
+    tools: list[Tool | BaseAgent] = Field(
         default_factory=list,
-        description="Tools available to the agent.",
+        description="Tools available to the agent. An agent in the list becomes "
+        "its `as_tool()` with the default settings.",
     )
     hooks: list[AgentHook] = Field(
         default_factory=list,
@@ -91,10 +106,18 @@ class BaseAgent(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _agents_as_tools(cls, tools: Any) -> Any:
+        if not isinstance(tools, list):
+            return tools
+        return [t.as_tool() if isinstance(t, BaseAgent) else t for t in tools]
+
     @model_validator(mode="after")
     def _build(self) -> BaseAgent:
         # Copies, so the agent's own fields are not changed and a rebuild adds nothing twice.
-        tools: list[Tool] = list(self.tools)
+        # After `_agents_as_tools` the list holds only tools.
+        tools = list(cast("list[Tool]", self.tools))
         hooks: list[AgentHook] = list(self.hooks)
         if self.memory is not None:
             tools.append(self.memory)
@@ -275,6 +298,73 @@ class BaseAgent(BaseModel):
                 "invoke() cannot be called while an event loop is already running. "
                 "Use `await ainvoke(...)` instead."
             )
+
+    def as_tool(
+        self,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        max_steps: int = 10,
+    ) -> Tool:
+        """
+        Return this agent as a tool of another agent.
+
+        Each call runs the agent on a new conversation that holds only the
+        task, and returns only its final answer: the files it reads and the
+        tools it calls stay out of the caller's conversation. The caller's
+        `InvocationContext` is passed on, so the run shares the session and
+        the trace. An agent put in the `tools` of another agent becomes this
+        tool with the default settings.
+
+        Example:
+
+            explorer = Agent(name="explorer", description="Searches the code base.",
+                             system_prompt="...", llm=llm, tools=[FilesystemTool()])
+            lead = Agent(name="lead", system_prompt="...", llm=llm,
+                         tools=[explorer])  # or explorer.as_tool(max_steps=20)
+
+        Args:
+            name: Tool name, by default the agent's name. Providers accept only
+                letters, digits, `_` and `-`.
+            description: Tool description, by default the agent's description.
+            max_steps: Step budget of each run.
+
+        Returns:
+            A tool with one argument, `message`, as `A2AAgentTool`.
+
+        Raises:
+            ValueError: The agent was built with `planning=True`; only the
+                agent that talks to the user keeps a plan.
+        """
+        if self.planning:
+            raise ValueError(
+                f"Agent '{self.name}' has planning=True: a subagent does not keep a plan."
+            )
+
+        async def run(message: str, ctx: InvocationContext | None = None) -> str:
+            state = State(messages=[Message(role="user", content=message)])
+            # aclosing: an early exit closes the run now, so its after_agent hooks run.
+            async with aclosing(
+                self.stream(state, max_steps=max_steps, ctx=ctx)
+            ) as events:
+                async for event in events:
+                    if isinstance(event, FinalAnswerEvent):
+                        return event.content
+                    if isinstance(event, ClarificationNeededEvent):
+                        raise ToolError(
+                            f"{self.name} needs more information: {event.content}"
+                        )
+                    if isinstance(event, MaxStepsReachedEvent):
+                        raise ToolError(
+                            f"{self.name} stopped after {max_steps} steps without an answer"
+                        )
+            raise ToolError(f"{self.name} ended without an answer")
+
+        return tool(
+            name=name or self.name,
+            description=description or self.description,
+            args_model=SubagentTask,
+        )(run)
 
     @abstractmethod
     def add_tool(self, tool: Tool) -> None:

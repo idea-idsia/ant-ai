@@ -136,6 +136,26 @@ tools = await mcp_tools_from_url("http://localhost:8000/mcp", namespace="remote"
 agent = Agent(..., tools=tools)
 ```
 
+### Agents as tools (subagents)
+
+An agent in the `tools` of another agent becomes one of its tools, in the same process. Each call runs the agent on a new conversation that holds only the task, so the files it reads and the tools it calls stay out of the caller's conversation: the caller sees one tool call and the final answer.
+
+```python
+from ant_ai.agent import Agent
+from ant_ai.tools.builtins import FilesystemTool
+
+explorer = Agent(
+    name="explorer",
+    description="Finds where something is done in the code base and answers with file and line.",
+    system_prompt="Answer the question you are given. Cite files and lines.",
+    llm=llm,
+    tools=[FilesystemTool(workspace_root=".")],
+)
+lead = Agent(name="lead", system_prompt="...", llm=llm, tools=[explorer])
+```
+
+The tool takes the name and description of the agent and has one argument, `message`, as an [`A2AAgentTool`][ant_ai.a2a.agent.A2AAgentTool]: the model has to write the complete task, since the subagent sees nothing else of the conversation. Each run has 10 steps. To change these settings, pass [`as_tool()`][ant_ai.agent.base.BaseAgent.as_tool] instead of the agent: `explorer.as_tool(name="find", max_steps=20)`. The caller's `ctx` is passed on, so the run shares the session and the trace. If the subagent runs out of steps or asks for a clarification, the call fails like a raised [`ToolError`](#reporting-failures). An agent with `planning=True` is refused: only the agent that talks to the user keeps a plan. For agents in other processes, see [Multi-agent setup](../multi-agent/index.md).
+
 ### Receiving the invocation context (`ctx`)
 
 Any tool — `@tool`-decorated function or namespace method — can declare a `ctx: InvocationContext` parameter to receive the real [`InvocationContext`][ant_ai.core.types.InvocationContext] passed to `agent.stream(...)`/`agent.ainvoke(...)`. It's injected automatically at call time and is hidden from the LLM-facing JSON schema — the model never sees or supplies it.
