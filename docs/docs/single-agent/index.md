@@ -245,7 +245,7 @@ agent = Agent(
 )
 ```
 
-The plan is saved in `.plans/<agent>/<session_id>.md`, so it is still there on the next message of the conversation, also over A2A, and it is cleared once every item is completed. When the conversation does not show it, because a new `State` was started for the same `session_id` or [`HistoryCompressionHook`][ant_ai.hooks.builtins.history_compression.HistoryCompressionHook] has summarised it away, it is added to the end of what the model receives. Without a `session_id` the plan is not saved, and agents left with the default name `BaseAgent` share one folder of plans.
+The plan is saved in `.plans/<agent>/<session_id>.md`, so it is still there on the next message of the conversation, also over A2A, and it is cleared once every item is completed. When the conversation does not show it, because a new `State` was started for the same `session_id` or [`HistoryCompressionHook`][ant_ai.hooks.builtins.history_compression.HistoryCompressionHook] has summarised it away, it is added to the end of what the model receives. Without a `session_id` the plan is not saved (see [Keeping a conversation](#keeping-a-conversation)), and agents left with the default name `BaseAgent` share one folder of plans.
 
 ## Streaming a response
 
@@ -281,6 +281,24 @@ Key event classes (all in [`ant_ai.core.events`][ant_ai.core.events]):
 | [`ToolResultEvent`][ant_ai.core.events.ToolResultEvent]           | Tool returned a result          |
 | [`FinalAnswerEvent`][ant_ai.core.events.FinalAnswerEvent]         | Agent produced its final answer |
 | [`MaxStepsReachedEvent`][ant_ai.core.events.MaxStepsReachedEvent] | Loop hit the step limit         |
+
+### Keeping a conversation
+
+A run belongs to a conversation only when its `ctx` has a `session_id`: the plan of `planning=True` is saved under it, the trace is grouped by it, and every event of the run carries it in `event.session_id` (events that already have one, such as those of a remote A2A agent, keep theirs). A run without a `ctx` has no session. To keep a conversation from a direct call, create the id yourself and pass the same `ctx` and `state` again on the next message:
+
+```python
+from uuid import uuid4
+
+ctx = InvocationContext(session_id=str(uuid4()))
+async for event in agent.stream(state, ctx=ctx):
+    ...
+
+state.add_message(Message(role="user", content="And now add a test."))
+async for event in agent.stream(state, ctx=ctx):
+    ...
+```
+
+The same works for `ainvoke` and for a [`Workflow`](#adding-a-workflow).
 
 ## Adding a Workflow
 

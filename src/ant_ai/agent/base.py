@@ -164,7 +164,8 @@ class BaseAgent(BaseModel):
         Yields:
             Event: Events produced during execution, including intermediate
             updates and the final answer event. Each event's `origin.agent`
-            is set to this agent's name unless already set.
+            is set to this agent's name, and its `session_id` to the one of
+            `ctx`, unless already set.
         """
         with obs.bind(
             session_id=ctx.session_id if ctx else "",
@@ -180,6 +181,8 @@ class BaseAgent(BaseModel):
                 ):
                     if event.origin.agent is None:
                         event.origin.agent = self.name
+                    if ctx is not None and event.session_id is None:
+                        event.session_id = ctx.session_id
                     yield event
             finally:
                 await self._hook_layer.run_after_agent(state, ctx)

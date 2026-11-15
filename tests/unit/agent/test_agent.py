@@ -789,3 +789,26 @@ async def test_stream_names_the_agent_in_every_event_origin():
 
     assert events
     assert all(e.origin.agent == "namer" for e in events)
+
+
+@pytest.mark.unit
+async def test_stream_puts_the_session_id_of_the_ctx_on_every_event():
+    class NoToolLLM(ChatLLM):
+        async def ainvoke(
+            self, messages, *, ctx=None, tools=None, response_format=None
+        ):
+            return DummyResponse(
+                message=Message(role="assistant", content="final answer"),
+                tool_calls=[],
+            )
+
+    agent = Agent(name="a", system_prompt="sys", llm=NoToolLLM(), tools=[])
+    state = State(messages=[Message(role="user", content="hi")])
+
+    with_ctx = [
+        e async for e in agent.stream(state, ctx=InvocationContext(session_id="s1"))
+    ]
+    without_ctx = [e async for e in agent.stream(state, ctx=None)]
+
+    assert with_ctx and all(e.session_id == "s1" for e in with_ctx)
+    assert without_ctx and all(e.session_id is None for e in without_ctx)
