@@ -25,6 +25,9 @@ updates:
       uv-minor-and-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+      uv-security:
+        applies-to: security-updates
+        patterns: ["*"]
     ignore:
       # Major bumps blocked by upstream caps; they fail the update run every week.
       - dependency-name: "openai" # guardrails-ai requires openai<3
