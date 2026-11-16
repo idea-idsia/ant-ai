@@ -5,7 +5,6 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    target-branch: "main"
     commit-message:
       prefix: "ci"
     groups:
@@ -16,7 +15,6 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    target-branch: "main"
     commit-message:
       prefix: "chore"
     cooldown:
