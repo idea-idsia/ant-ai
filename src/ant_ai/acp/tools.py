@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from contextvars import ContextVar
 from typing import Any, Literal, cast
 
 from acp.interfaces import Client
 from acp.schema import (
     AgentPlanUpdate,
+    AllowedOutcome,
     ClientCapabilities,
+    PermissionOption,
+    PermissionOptionKind,
     PlanEntry,
+    ToolCallUpdate,
+    ToolKind,
 )
 from loguru import logger
 
@@ -65,6 +71,48 @@ def _require_terminal() -> tuple[Client, str]:
             "Check clientCapabilities.terminal during initialize()."
         )
     return client, session_id
+
+
+_PERMISSION_OPTIONS = [
+    PermissionOption(option_id="allow_once", name="Allow", kind="allow_once"),
+    PermissionOption(
+        option_id="allow_always", name="Always allow", kind="allow_always"
+    ),
+    PermissionOption(option_id="reject_once", name="Reject", kind="reject_once"),
+    PermissionOption(
+        option_id="reject_always", name="Always reject", kind="reject_always"
+    ),
+]
+
+
+async def request_permission(
+    title: str, *, kind: ToolKind = "other"
+) -> PermissionOptionKind | Literal["cancelled"]:
+    """Ask the user, through the client, to allow an action described by `title`.
+
+    Meant for tools that act on the user's machine: they call it before
+    acting and go on only on an `allow_*` answer. Returns the kind of the
+    option the user chose, or `"cancelled"` when the turn was cancelled
+    while waiting.
+
+    Raises:
+        RuntimeError: If called outside an ACP prompt turn.
+    """
+    client, session_id = _require_context()
+    response = await client.request_permission(
+        session_id=session_id,
+        tool_call=ToolCallUpdate(
+            tool_call_id=f"permission-{uuid.uuid4()}",
+            title=title,
+            kind=kind,
+            status="pending",
+        ),
+        options=_PERMISSION_OPTIONS,
+    )
+    outcome = response.outcome
+    if isinstance(outcome, AllowedOutcome):
+        return cast(PermissionOptionKind, outcome.option_id)
+    return "cancelled"
 
 
 @tool
