@@ -30,6 +30,7 @@ Or pick individual extras:
 | `viz` | Workflow graph visualization |
 | `guardrails-ai` | Guardrail hooks via [Guardrails AI](https://www.guardrailsai.com/) — see [below](#guardrails-ai-extra) for the extra hub-install step |
 | `datafog` | `PIIGuardrailHook`, a native PII-scanning guardrail hook — no hub install needed |
+| `cli` | The `ant` terminal client, see [Terminal client](../cli/index.md) |
 
 ```bash
 uv add "ant-ai[openai]"

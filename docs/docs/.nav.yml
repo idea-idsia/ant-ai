@@ -6,3 +6,4 @@ nav:
     - Single-agent: single-agent
     - Multi-agent: multi-agent
     - ACP: acp
+    - Terminal client: cli
