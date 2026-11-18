@@ -289,7 +289,8 @@ class ACPAdapter(ACPAgent):
                 raise
             return PromptResponse(stop_reason="cancelled")
         finally:
-            self._running.pop(session_id, None)
+            if self._running.get(session_id) is task:
+                del self._running[session_id]
 
         if session_id in self._sessions:
             self._sessions[session_id].append(Message(role="user", content=text))

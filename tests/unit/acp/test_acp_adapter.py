@@ -746,3 +746,46 @@ async def test_cancelling_the_prompt_itself_is_not_swallowed():
 
     with pytest.raises(asyncio.CancelledError):
         await turn
+
+
+@pytest.mark.asyncio
+async def test_a_finished_prompt_does_not_unregister_a_later_one():
+    adapter = _make_adapter()
+    session = await adapter.new_session(cwd="/tmp")
+    _connected_client(adapter)
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+
+    async def _first(**_):
+        yield StartEvent()
+        await release_first.wait()
+        yield FinalAnswerEvent(content="first")
+
+    async def _second(**_):
+        yield StartEvent()
+        second_started.set()
+        await asyncio.Event().wait()
+        yield FinalAnswerEvent(content="never")
+
+    adapter._workflow.create_state.return_value = MagicMock()
+    adapter._workflow.stream = MagicMock(side_effect=[_first(), _second()])
+
+    def prompt():
+        return asyncio.create_task(
+            adapter.prompt(
+                prompt=[TextContentBlock(type="text", text="Hi")],
+                session_id=session.session_id,
+            )
+        )
+
+    first = prompt()
+    await asyncio.sleep(0)
+    second = prompt()
+    await asyncio.wait_for(second_started.wait(), 1)
+    release_first.set()
+    await asyncio.wait_for(first, 1)
+
+    await adapter.cancel(session_id=session.session_id)
+    result = await asyncio.wait_for(second, 1)
+
+    assert result.stop_reason == "cancelled"
