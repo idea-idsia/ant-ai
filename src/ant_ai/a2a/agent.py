@@ -11,9 +11,8 @@ from ant_ai.a2a.client import A2AClient, AgentClientError
 from ant_ai.a2a.config import A2AConfig
 from ant_ai.a2a.session import current_session_id
 from ant_ai.core.events import ClarificationNeededEvent, FinalAnswerEvent
-from ant_ai.core.result import ClarificationNeededOutput
 from ant_ai.core.types import InvocationContext
-from ant_ai.tools.tool import Tool
+from ant_ai.tools.tool import Tool, ToolError
 
 
 class A2AAgentTool(Tool):
@@ -82,13 +81,13 @@ class A2AAgentTool(Tool):
 
         async def _call_remote(
             message: str, ctx: InvocationContext | None = None
-        ) -> str | ClarificationNeededOutput:
+        ) -> str:
             """Send `message` to the remote agent and return its answer.
 
             When the remote agent asks a question instead (its task ends
-            `input-required`), the question is returned as a
-            `ClarificationNeededOutput`, so the caller's run stops and the
-            user is asked. The next call in the same session continues that
+            `input-required`), the call fails with a `ToolError` carrying the
+            question, as `as_tool()` does: the calling model answers it or
+            asks the user. The next call in the same session continues that
             task (its `task_id`), so the remote agent resumes with its own
             history and reads the message as the answer.
             """
@@ -122,12 +121,15 @@ class A2AAgentTool(Tool):
                     if ev.content:
                         last_text: str = ev.content
                     if isinstance(ev, ClarificationNeededEvent):
+                        hint: str = ""
                         if session_id and ev.task_id:
                             self._pending_tasks[session_id] = ev.task_id
+                            hint = "\nCall it again with the answer; it continues where it stopped."
                         elif session_id:
                             self._pending_tasks.pop(session_id, None)
-                        return ClarificationNeededOutput(
-                            question=ev.content or last_text
+                        raise ToolError(
+                            f"{self.name} needs more information: "
+                            f"{ev.content or last_text}{hint}"
                         )
                     if isinstance(ev, FinalAnswerEvent):
                         break

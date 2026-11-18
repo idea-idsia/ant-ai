@@ -1,3 +1,4 @@
+import contextlib
 import sys
 
 import httpx
@@ -14,8 +15,8 @@ from ant_ai.core.events import (
     FinalAnswerEvent,
     UpdateEvent,
 )
-from ant_ai.core.result import ClarificationNeededOutput
 from ant_ai.core.types import InvocationContext
+from ant_ai.tools.tool import ToolError
 
 MODULE = sys.modules[A2AAgentTool.__module__]
 
@@ -577,18 +578,15 @@ def _clarifying_client(calls: list[dict]):
 
 @pytest.mark.unit
 @pytest.mark.a2a
-async def test_remote_clarification_is_passed_up_as_clarification(monkeypatch, config):
-    """A remote input-required becomes a ClarificationNeededOutput, so the
-    caller's run stops and the user is asked, instead of the question being
-    handed to the calling model as an ordinary result."""
+async def test_remote_clarification_is_a_tool_error_for_the_caller(monkeypatch, config):
+    """A remote input-required fails the call with the question, as for a
+    local subagent: the calling model answers it or asks the user."""
     calls: list[dict] = []
     monkeypatch.setattr(MODULE, "A2AClient", _clarifying_client(calls))
     tool: A2AAgentTool = await A2AAgentTool.from_config(config)
 
-    result = await tool.ainvoke(message="weather?", ctx=None)
-
-    assert isinstance(result, ClarificationNeededOutput)
-    assert result.question == "Which city?"
+    with pytest.raises(ToolError, match="needs more information: Which city"):
+        await tool.ainvoke(message="weather?", ctx=None)
 
 
 @pytest.mark.unit
@@ -603,7 +601,8 @@ async def test_answer_resumes_the_remote_task_once(monkeypatch, config):
 
     token = current_session_id.set("s1")
     try:
-        await tool.ainvoke(message="weather?", ctx=None)
+        with pytest.raises(ToolError, match="Which city"):
+            await tool.ainvoke(message="weather?", ctx=None)
         answer = await tool.ainvoke(message="Lugano", ctx=None)
         await tool.ainvoke(message="and tomorrow?", ctx=None)
     finally:
@@ -627,7 +626,8 @@ async def test_pending_remote_task_is_kept_per_session(monkeypatch, config):
     for session, message in [("s1", "weather?"), ("s2", "hello"), ("s1", "Lugano")]:
         token = current_session_id.set(session)
         try:
-            await tool.ainvoke(message=message, ctx=None)
+            with contextlib.suppress(ToolError):
+                await tool.ainvoke(message=message, ctx=None)
         finally:
             current_session_id.reset(token)
 
@@ -650,7 +650,8 @@ async def test_pending_task_falls_back_to_the_ctx_session(monkeypatch, config):
     def ctx(session: str) -> InvocationContext:
         return InvocationContext(session_id=session)
 
-    await tool.ainvoke(message="weather?", ctx=ctx("s1"))
+    with pytest.raises(ToolError, match="Which city"):
+        await tool.ainvoke(message="weather?", ctx=ctx("s1"))
     await tool.ainvoke(message="hello", ctx=ctx("s2"))
     await tool.ainvoke(message="Lugano", ctx=ctx("s1"))
 
@@ -670,7 +671,8 @@ async def test_no_session_keeps_no_pending_task(monkeypatch, config):
     monkeypatch.setattr(MODULE, "A2AClient", _clarifying_client(calls))
     tool: A2AAgentTool = await A2AAgentTool.from_config(config)
 
-    await tool.ainvoke(message="weather?", ctx=None)
+    with pytest.raises(ToolError, match="Which city"):
+        await tool.ainvoke(message="weather?", ctx=None)
     await tool.ainvoke(message="Lugano", ctx=None)
 
     assert [c["task_id"] for c in calls] == [None, None]
@@ -720,7 +722,8 @@ async def test_failed_resume_keeps_the_pending_task(monkeypatch, config):
     tool: A2AAgentTool = await A2AAgentTool.from_config(config)
     ctx = InvocationContext(session_id="s1")
 
-    await tool.ainvoke(message="weather?", ctx=ctx)
+    with pytest.raises(ToolError, match="Which city"):
+        await tool.ainvoke(message="weather?", ctx=ctx)
     with pytest.raises(AgentClientError):
         await tool.ainvoke(message="Lugano", ctx=ctx)
     await tool.ainvoke(message="Lugano", ctx=ctx)
@@ -743,7 +746,8 @@ async def test_rejected_resume_drops_the_pending_task(monkeypatch, config):
     tool: A2AAgentTool = await A2AAgentTool.from_config(config)
     ctx = InvocationContext(session_id="s1")
 
-    await tool.ainvoke(message="weather?", ctx=ctx)
+    with pytest.raises(ToolError, match="Which city"):
+        await tool.ainvoke(message="weather?", ctx=ctx)
     with pytest.raises(AgentClientError):
         await tool.ainvoke(message="Lugano", ctx=ctx)
     await tool.ainvoke(message="Lugano", ctx=ctx)
