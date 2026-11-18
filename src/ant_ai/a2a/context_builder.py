@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from typing import override
 
 from a2a.server.agent_execution import (
@@ -11,7 +12,6 @@ from a2a.server.context import ServerCallContext
 from a2a.server.id_generator import IDGenerator
 from a2a.server.tasks import TaskStore
 from a2a.types import SendMessageRequest, Task
-from google.protobuf.internal import containers as _containers
 
 from ant_ai.observer import obs
 
@@ -66,14 +66,27 @@ class HistoryRequestContextBuilder(RequestContextBuilder):
 
         related_tasks: list[Task] | None = None
 
-        if (
-            self._task_store
-            and self._should_populate_referred_tasks
-            and params
-            and params.message.reference_task_ids
-        ):
+        reference_ids: list[str] = (
+            list(params.message.reference_task_ids) if params else []
+        )
+        # A message that continues a task (one waiting on input) does not
+        # reference the earlier turns itself: the task's own messages do.
+        # Some request handlers pass only the id of that task, not the task.
+        continued: Task | None = task
+        if continued is None and task_id and self._task_store:
+            continued = await self._task_store.get(task_id, context=context)
+        if continued is not None:
+            reference_ids += [
+                tid for msg in continued.history for tid in msg.reference_task_ids
+            ]
+
+        if self._task_store and self._should_populate_referred_tasks and reference_ids:
             related_tasks: list[Task] = await self.collect_all_referenced_tasks(
-                context, self._task_store, params.message.reference_task_ids
+                context,
+                self._task_store,
+                reference_ids,
+                # The task being continued is not related to itself.
+                visited={continued.id} if continued is not None else None,
             )
 
         return RequestContext(
@@ -91,7 +104,7 @@ class HistoryRequestContextBuilder(RequestContextBuilder):
         self,
         context: ServerCallContext,
         task_store: TaskStore,
-        initial_ids: _containers.RepeatedScalarFieldContainer[str],
+        initial_ids: Sequence[str],
         visited: set[str] | None = None,
     ) -> list[Task]:
         """

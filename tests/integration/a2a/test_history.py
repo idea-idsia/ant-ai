@@ -10,7 +10,13 @@ from ant_ai.a2a.client import A2AClient
 from ant_ai.a2a.colony import Colony
 from ant_ai.a2a.config import A2AConfig
 from ant_ai.agent.agent import Agent
-from ant_ai.core.events import ContentDeltaEvent, Event, FinalAnswerEvent
+from ant_ai.core.events import (
+    ClarificationNeededEvent,
+    ContentDeltaEvent,
+    Event,
+    FinalAnswerEvent,
+)
+from ant_ai.core.result import ClarificationNeededOutput
 from ant_ai.hooks.builtins.history_compression import HistoryCompressionHook
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat
 from ant_ai.tools.tool import tool
@@ -904,3 +910,138 @@ async def test_compression_checkpoint_supersedes_older_checkpoints(scripted_llm)
         f"Message count in later turns grew to {max_tail} — the newest "
         f"checkpoint is not superseding the older one.\nAll counts: {counts}"
     )
+
+
+def _make_clarifying_colony() -> tuple[Colony, socket.socket]:
+    """A colony whose agent has a tool that asks the user which city."""
+
+    @tool
+    def ask_city() -> ClarificationNeededOutput:
+        """Ask the user which city they mean."""
+        return ClarificationNeededOutput(question="Which city?")
+
+    sock = _bound_socket()
+    port = sock.getsockname()[1]
+    agent = Agent(
+        name="sticky",
+        llm=LiteLLMChat("test-model"),
+        system_prompt=STICKY_AGENT_SYS,
+        description="Clarification test agent",
+        tools=[ask_city],
+    )
+    colony = Colony()
+    colony.agent(
+        "sticky",
+        agent=agent,
+        workflow=build_single_node_workflow(),
+        card=_make_agent_card(port),
+    )
+    return colony, sock
+
+
+def _install_clarifying_dispatch(scripted_llm, asks_on: int) -> dict[int, list]:
+    """Call `ask_city` on LLM call `asks_on`; answer every other call with text."""
+    captured: dict[int, list] = {}
+
+    async def dispatch(*, messages, **_):
+        n = len(captured) + 1
+        captured[n] = list(messages)
+        if n == asks_on:
+            return make_tool_response("ask_city", "{}", call_id=f"tc-{n}")
+        return make_text_response(f"Reply {n}.")
+
+    scripted_llm.install(dispatch)
+    return captured
+
+
+async def _ask_and_get_task(client: A2AClient, message: str, **kwargs) -> str:
+    """Send `message`; assert the agent asks a question and return its task id."""
+    events = [ev async for ev in client.send_message(message, **kwargs)]
+    asked = [e for e in events if isinstance(e, ClarificationNeededEvent)]
+    assert asked, f"Expected a clarification, got {[e.kind for e in events]}"
+    assert asked[-1].task_id
+    return asked[-1].task_id
+
+
+@pytest.mark.integration
+@pytest.mark.a2a
+async def test_answer_continues_the_task_that_asked(scripted_llm):
+    """A message sent with the `task_id` of a task waiting on input continues
+    that task: the run sees the request, the question and the answer once."""
+    captured = _install_clarifying_dispatch(scripted_llm, asks_on=1)
+    colony, sock = _make_clarifying_colony()
+    server, srv_task = await _start_server(colony.asgi(agent_name="sticky"), sock)
+    client = _client(sock.getsockname()[1])
+    try:
+        ctx = str(uuid4())
+        task_id = await _ask_and_get_task(client, "Weather tomorrow?", context_id=ctx)
+
+        events = [
+            ev
+            async for ev in client.send_message(
+                "Lugano", context_id=ctx, task_id=task_id
+            )
+        ]
+        await client.aclose()
+    finally:
+        await _stop_server(server, srv_task)
+
+    assert any(isinstance(e, FinalAnswerEvent) for e in events)
+    assert {e.task_id for e in events if e.task_id} == {task_id}
+    text = _all_text(captured[2])
+    assert "Weather tomorrow?" in text
+    assert "Which city?" in text
+    assert text.count("Lugano") == 1
+
+
+@pytest.mark.integration
+@pytest.mark.a2a
+async def test_continued_task_keeps_the_turns_it_references(scripted_llm):
+    """A task that asked on a later turn still sees the earlier turns it
+    referenced when the answer continues it by `task_id`."""
+    captured = _install_clarifying_dispatch(scripted_llm, asks_on=2)
+    colony, sock = _make_clarifying_colony()
+    server, srv_task = await _start_server(colony.asgi(agent_name="sticky"), sock)
+    client = _client(sock.getsockname()[1])
+    try:
+        ctx = str(uuid4())
+        _, task_1 = await _send_turn(client, "My name is Ada.", context_id=ctx)
+        task_2 = await _ask_and_get_task(
+            client, "Weather tomorrow?", context_id=ctx, reference_task_ids=[task_1]
+        )
+        async for _ in client.send_message("Lugano", context_id=ctx, task_id=task_2):
+            pass
+        await client.aclose()
+    finally:
+        await _stop_server(server, srv_task)
+
+    text = _all_text(captured[3])
+    assert "My name is Ada." in text
+    assert "Weather tomorrow?" in text
+    assert "Which city?" in text
+
+
+@pytest.mark.integration
+@pytest.mark.a2a
+async def test_new_task_referencing_a_task_that_asked_sees_the_question(
+    scripted_llm,
+):
+    """A client may also answer with a new task that references the task that
+    asked (the usual way to continue a conversation). The question, still the
+    status message of that waiting task, must be part of the history."""
+    captured = _install_clarifying_dispatch(scripted_llm, asks_on=1)
+    colony, sock = _make_clarifying_colony()
+    server, srv_task = await _start_server(colony.asgi(agent_name="sticky"), sock)
+    client = _client(sock.getsockname()[1])
+    try:
+        ctx = str(uuid4())
+        task_id = await _ask_and_get_task(client, "Weather tomorrow?", context_id=ctx)
+        await _send_turn(client, "Lugano", context_id=ctx, reference_task_ids=[task_id])
+        await client.aclose()
+    finally:
+        await _stop_server(server, srv_task)
+
+    text = _all_text(captured[2])
+    assert "Weather tomorrow?" in text
+    assert "Which city?" in text
+    assert text.count("Lugano") == 1
