@@ -33,6 +33,7 @@ from acp.schema import (
     NesRepository,
     NesSuggestContext,
     NewSessionResponse,
+    PermissionOptionKind,
     Position,
     PromptResponse,
     Range,
@@ -58,6 +59,7 @@ from ant_ai.acp.tools import (
     _acp_capabilities,
     _acp_client,
     _acp_cwd,
+    _acp_permissions,
     _acp_session_id,
 )
 from ant_ai.acp.translator import HVEventToACP
@@ -114,6 +116,7 @@ class ACPAdapter(ACPAgent):
         self._sessions: dict[str, list[BaseMessage]] = {}
         self._session_agents: dict[str, Agent] = {}
         self._session_cwds: dict[str, str] = {}
+        self._session_permissions: dict[str, dict[str, PermissionOptionKind]] = {}
         self._session_commands_sent: set[str] = set()
         self._running: dict[str, asyncio.Task[None]] = {}
         self._translator = HVEventToACP()
@@ -221,6 +224,7 @@ class ACPAdapter(ACPAgent):
         _acp_client.set(self._client)
         _acp_session_id.set(session_id)
         _acp_capabilities.set(self._client_capabilities)
+        _acp_permissions.set(self._session_permissions.setdefault(session_id, {}))
         cwd: str | None = self._session_cwds.get(session_id)
         _acp_cwd.set(cwd)
         caps: ClientCapabilities | None = self._client_capabilities
@@ -343,6 +347,9 @@ class ACPAdapter(ACPAgent):
         new_id = str(uuid.uuid4())
         self._sessions[new_id] = list(self._sessions.get(session_id, []))
         self._session_agents[new_id] = self._session_agents.get(session_id, self._agent)
+        self._session_permissions[new_id] = dict(
+            self._session_permissions.get(session_id, {})
+        )
         return ForkSessionResponse(session_id=new_id)
 
     async def resume_session(
@@ -359,6 +366,7 @@ class ACPAdapter(ACPAgent):
         self._sessions.pop(session_id, None)
         self._session_agents.pop(session_id, None)
         self._session_cwds.pop(session_id, None)
+        self._session_permissions.pop(session_id, None)
         self._session_commands_sent.discard(session_id)
 
     async def close_session(

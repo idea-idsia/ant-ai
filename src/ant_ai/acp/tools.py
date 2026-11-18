@@ -2,20 +2,30 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from contextvars import ContextVar
 from typing import Any, Literal, cast
 
 from acp.interfaces import Client
 from acp.schema import (
     AgentPlanUpdate,
+    AllowedOutcome,
     ClientCapabilities,
+    PermissionOption,
+    PermissionOptionKind,
     PlanEntry,
+    ToolCallUpdate,
+    ToolKind,
 )
 from loguru import logger
 
-from ant_ai.tools.tool import tool
+from ant_ai.tools.tool import current_tool_call, tool
 
 _acp_client: ContextVar[Client | None] = ContextVar("_acp_client", default=None)
+# The session's `*_always` permission answers, by key; kept by the adapter.
+_acp_permissions: ContextVar[dict[str, PermissionOptionKind] | None] = ContextVar(
+    "_acp_permissions", default=None
+)
 _acp_session_id: ContextVar[str | None] = ContextVar("_acp_session_id", default=None)
 _acp_capabilities: ContextVar[ClientCapabilities | None] = ContextVar(
     "_acp_capabilities", default=None
@@ -65,6 +75,82 @@ def _require_terminal() -> tuple[Client, str]:
             "Check clientCapabilities.terminal during initialize()."
         )
     return client, session_id
+
+
+_PERMISSION_KINDS: tuple[PermissionOptionKind, ...] = (
+    "allow_once",
+    "allow_always",
+    "reject_once",
+    "reject_always",
+)
+
+
+def _permission_options(scope: str) -> list[PermissionOption]:
+    """The four options; the `*_always` ones name what they cover, as ACP asks."""
+    names = {
+        "allow_once": "Allow",
+        "allow_always": f"Always allow {scope}",
+        "reject_once": "Reject",
+        "reject_always": f"Always reject {scope}",
+    }
+    return [
+        PermissionOption(option_id=k, name=names[k], kind=k) for k in _PERMISSION_KINDS
+    ]
+
+
+async def request_permission(
+    title: str, *, kind: ToolKind = "other", key: str | None = None
+) -> PermissionOptionKind | Literal["cancelled"]:
+    """Ask the user, through the client, to allow an action described by `title`.
+
+    Meant for tools that act on the user's machine: they call it before
+    acting and go on only on an `allow_*` answer. The request is shown on the
+    tool call that asks. An `allow_always` or `reject_always` answer is kept
+    for the session under `key`, and later requests with that key return it
+    without asking.
+
+    Args:
+        title: The action, as the user sees it.
+        kind: The kind of action, for the client's icon.
+        key: What an `*_always` answer covers. Defaults to `title`, so it
+            covers only that exact action; pass a wider key (e.g.
+            `f"run:{program}"`, or the tool's name) to cover more.
+
+    Returns:
+        The kind of the option chosen (an unknown one counts as `reject_once`),
+        or `"cancelled"` when the request was cancelled.
+
+    Raises:
+        RuntimeError: If called outside an ACP prompt turn.
+    """
+    client, session_id = _require_context()
+    call = current_tool_call.get()
+    key = key or title
+    remembered = _acp_permissions.get()
+    if remembered is not None and key in remembered:
+        return remembered[key]
+
+    response = await client.request_permission(
+        session_id=session_id,
+        tool_call=ToolCallUpdate(tool_call_id=call.id, title=title, kind=kind)
+        if call
+        else ToolCallUpdate(
+            tool_call_id=f"permission-{uuid.uuid4()}",
+            title=title,
+            kind=kind,
+            status="pending",
+        ),
+        options=_permission_options(key),
+    )
+    outcome = response.outcome
+    if not isinstance(outcome, AllowedOutcome):
+        return "cancelled"
+    choice: PermissionOptionKind = next(
+        (k for k in _PERMISSION_KINDS if k == outcome.option_id), "reject_once"
+    )
+    if remembered is not None and choice in ("allow_always", "reject_always"):
+        remembered[key] = choice
+    return choice
 
 
 @tool
