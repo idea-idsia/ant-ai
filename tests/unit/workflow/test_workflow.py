@@ -696,3 +696,34 @@ async def test_node_returning_something_else_is_rejected(agent):
 
     with pytest.raises(RuntimeError, match="Invalid return from node 'n'"):
         await wf.ainvoke(agent, state=State(messages=[_msg()]))
+
+
+@pytest.mark.unit
+async def test_stream_puts_the_session_id_of_the_ctx_on_every_event(
+    agent, seeded_state
+):
+    w = Workflow()
+
+    async def node_a(a, state, ctx):
+        async def gen():
+            yield AgentEvent(content="local")
+            yield AgentEvent(content="remote", session_id="remote-session")
+
+        return gen()
+
+    w.add_node("A", node_a)
+    w.add_edge(START, "A")
+    w.add_edge("A", END)
+
+    ctx = InvocationContext(session_id="s1")
+    events = [e async for e in w.stream(agent, ctx=ctx, state=seeded_state("s0"))]
+    without_ctx = [e async for e in w.stream(agent, state=seeded_state("s0"))]
+
+    assert {
+        e.content: e.session_id for e in events if e.origin.layer != "workflow"
+    } == {
+        "local": "s1",
+        "remote": "remote-session",
+    }
+    assert all(e.session_id == "s1" for e in events if e.origin.layer == "workflow")
+    assert all(e.session_id in (None, "remote-session") for e in without_ctx)

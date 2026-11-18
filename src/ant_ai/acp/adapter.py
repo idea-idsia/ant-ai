@@ -61,7 +61,7 @@ from ant_ai.acp.tools import (
 )
 from ant_ai.acp.translator import HVEventToACP
 from ant_ai.agent.agent import Agent
-from ant_ai.core.events import FinalAnswerEvent
+from ant_ai.core.events import event_to_message
 from ant_ai.core.message import BaseMessage, Message
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.tools.tool import Tool, mcp_tools_from_url
@@ -263,19 +263,18 @@ class ACPAdapter(ACPAgent):
         agent: Agent = self._session_agents.get(session_id, self._agent)
         state: State = self._workflow.create_state(messages=history)
 
-        final_content = ""
+        # The turn is kept as the model saw it (tool calls and their results
+        # included), so a turn that stopped on a clarification still holds the
+        # question when the user's reply arrives as the next prompt.
+        turn: list[BaseMessage] = [Message(role="user", content=text)]
         async for event in self._workflow.stream(agent=agent, ctx=ctx, state=state):
             if self._client:
                 await self._translator.apply(event, self._client, session_id)
-            if isinstance(event, FinalAnswerEvent):
-                final_content = event.content
+            if (message := event_to_message(event)) is not None:
+                turn.append(message)
 
         if session_id in self._sessions:
-            self._sessions[session_id].append(Message(role="user", content=text))
-            if final_content:
-                self._sessions[session_id].append(
-                    Message(role="assistant", content=final_content)
-                )
+            self._sessions[session_id].extend(turn)
 
         return PromptResponse(stop_reason="end_turn")
 

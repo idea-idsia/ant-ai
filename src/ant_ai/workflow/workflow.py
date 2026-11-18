@@ -298,6 +298,7 @@ class Workflow[StateT: State = State](BaseModel):
         current: str = start_at
 
         trace: dict[str, Any] = ctx.trace_attributes() if ctx else {"session_id": None}
+        session_id = ctx.session_id if ctx else None
         with obs.bind(
             **trace,
             agent_name=agent.name,
@@ -317,6 +318,7 @@ class Workflow[StateT: State = State](BaseModel):
             yield StartEvent(
                 origin=EventOrigin(layer="workflow", node=current, run_step=run.step),
                 content="Workflow started",
+                session_id=session_id,
             )
 
             while True:
@@ -333,6 +335,7 @@ class Workflow[StateT: State = State](BaseModel):
                             layer="workflow", node=current, run_step=run.step
                         ),
                         content=final_content or "Workflow completed",
+                        session_id=session_id,
                     )
                     return
 
@@ -349,6 +352,8 @@ class Workflow[StateT: State = State](BaseModel):
                 if current != START:
                     run.step += 1
                     async for ev in self._run_node(agent, run, ctx, current):
+                        if ev.session_id is None:
+                            ev.session_id = session_id
                         yield ev
 
                 current = await self._next(agent, run.state, ctx, current, run.step)
