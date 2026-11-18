@@ -63,7 +63,7 @@ class BaseEvent(BaseModel):
     )
     session_id: str | None = Field(
         default=None,
-        description="A2A context/session ID populated from the raw transport event.",
+        description="Session ID of the conversation: from the raw transport event over A2A, from the `ctx` of a direct run.",
     )
 
 
