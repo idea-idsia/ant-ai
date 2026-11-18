@@ -30,13 +30,9 @@ from ant_ai.core.events import (
     ToolCallingEvent,
     ToolResultEvent,
     UpdateEvent,
+    event_to_message,
 )
-from ant_ai.core.message import (
-    AnyMessage,
-    Message,
-    ToolCallMessage,
-    ToolCallResultMessage,
-)
+from ant_ai.core.message import AnyMessage, Message
 
 type Handler = Callable[[BaseEvent, TaskUpdater], Awaitable[None]]
 type UnboundHandler = Callable[[HVEventToA2A, BaseEvent, TaskUpdater], Awaitable[None]]
@@ -288,15 +284,4 @@ class A2AToHVEvent:
             if raw.role != Role.ROLE_AGENT:
                 return Message(role="user", content=text)
             return Message(role="assistant", content=text) if text else None
-        if isinstance(event, ToolCallingEvent):
-            return ToolCallMessage(tool_calls=list(event.tool_calls))
-        if isinstance(event, ToolResultEvent):
-            return ToolCallResultMessage(
-                name=event.name,
-                tool_call_id=event.tool_call_id,
-                content=event.content,
-                is_error=event.is_error,
-            )
-        if isinstance(event, FinalAnswerEvent):
-            return Message(role="assistant", content=event.content)
-        return None
+        return event_to_message(event)

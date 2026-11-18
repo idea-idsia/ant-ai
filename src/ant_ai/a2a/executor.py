@@ -18,7 +18,12 @@ from ant_ai.a2a.compression import (
 from ant_ai.a2a.session import current_session_id
 from ant_ai.a2a.translator import A2AToHVEvent, HVEventToA2A
 from ant_ai.agent.agent import Agent
-from ant_ai.core.events import BaseEvent, CompletedEvent, ContentDeltaEvent
+from ant_ai.core.events import (
+    BaseEvent,
+    ClarificationNeededEvent,
+    CompletedEvent,
+    ContentDeltaEvent,
+)
 from ant_ai.core.message import (
     BaseMessage,
     Message,
@@ -142,8 +147,16 @@ class A2AExecutor(AgentExecutor):
             session_id=task.context_id, metadata=context.metadata
         )
 
+        related_tasks: list[Task] = list(context.related_tasks)
+        if context.current_task is not None and context.message is not None:
+            # The message continues a task that waited on input: its own
+            # messages (the request and the question) come right before it.
+            related_tasks.append(
+                _without_message(context.current_task, context.message.message_id)
+            )
+
         history: list[BaseMessage] = self._build_history(
-            context.related_tasks, context.get_user_input()
+            related_tasks, context.get_user_input()
         )
 
         await obs.event("a2a.history", history_messages=len(history))
@@ -152,6 +165,7 @@ class A2AExecutor(AgentExecutor):
         token: Token[str] = current_session_id.set(ctx.session_id)
 
         await obs.event("a2a.workflow.start")
+        asked: bool = False
         try:
             async for event in self.workflow.stream(
                 agent=self.agent, ctx=ctx, state=state
@@ -163,8 +177,13 @@ class A2AExecutor(AgentExecutor):
                         node=getattr(event.origin, "node", "-"),
                         step=getattr(event.origin, "run_step", "-"),
                     )
+                if isinstance(event, ClarificationNeededEvent):
+                    asked = True
                 if isinstance(event, CompletedEvent):
                     await persist_compression_checkpoint(state, updater)
+                    if asked:
+                        # The task stays `input-required`: the answer continues it.
+                        continue
                 await self.process_event(event, updater)
         finally:
             current_session_id.reset(token)
@@ -241,3 +260,16 @@ class A2AExecutor(AgentExecutor):
             repaired.append(m)
         flush()
         return repaired
+
+
+def _without_message(task: Task, message_id: str) -> Task:
+    """A copy of `task` whose history leaves out the message `message_id`.
+
+    The SDK adds the incoming message to the history of the task it continues;
+    `_build_history` adds it again as the user input, so it is left out here.
+    """
+    copy = Task()
+    copy.CopyFrom(task)
+    del copy.history[:]
+    copy.history.extend(m for m in task.history if m.message_id != message_id)
+    return copy
