@@ -4,9 +4,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from acp.schema import (
+    AllowedOutcome,
     ClientCapabilities,
+    DeniedOutcome,
     FileSystemCapabilities,
     ReadTextFileResponse,
+    RequestPermissionResponse,
     TerminalOutputResponse,
     WaitForTerminalExitResponse,
 )
@@ -23,6 +26,7 @@ from ant_ai.acp.tools import (
     acp_list_directory,
     acp_send_plan,
     acp_terminal_run,
+    request_permission,
 )
 
 
@@ -538,3 +542,59 @@ async def test_fs_write_file_propagates_client_error():
             await acp_fs_write_file("/tmp/locked.txt", "content")
     finally:
         _reset(*tokens)
+
+
+# ---------------------------------------------------------------------------
+# Permission
+# ---------------------------------------------------------------------------
+
+
+def _permission_client(outcome) -> MagicMock:
+    client = MagicMock()
+    client.request_permission = AsyncMock(
+        return_value=RequestPermissionResponse(outcome=outcome)
+    )
+    return client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "option_id", ["allow_once", "allow_always", "reject_once", "reject_always"]
+)
+async def test_request_permission_returns_the_chosen_option(option_id):
+    client = _permission_client(AllowedOutcome(outcome="selected", option_id=option_id))
+    tokens = _inject(client)
+    try:
+        choice = await request_permission("run `pytest`", kind="execute")
+    finally:
+        _reset(*tokens)
+
+    assert choice == option_id
+    kwargs = client.request_permission.call_args.kwargs
+    assert kwargs["session_id"] == "sess-1"
+    assert kwargs["tool_call"].title == "run `pytest`"
+    assert kwargs["tool_call"].kind == "execute"
+    assert {o.kind for o in kwargs["options"]} == {
+        "allow_once",
+        "allow_always",
+        "reject_once",
+        "reject_always",
+    }
+
+
+@pytest.mark.asyncio
+async def test_request_permission_cancelled_is_a_refusal():
+    client = _permission_client(DeniedOutcome(outcome="cancelled"))
+    tokens = _inject(client)
+    try:
+        choice = await request_permission("edit a.py")
+    finally:
+        _reset(*tokens)
+
+    assert choice == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_request_permission_outside_a_turn_raises():
+    with pytest.raises(RuntimeError, match="Not running inside an ACP prompt turn"):
+        await request_permission("edit a.py")

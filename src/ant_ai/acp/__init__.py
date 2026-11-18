@@ -23,6 +23,7 @@ from ant_ai.acp.tools import (
     acp_terminal_release,
     acp_terminal_run,
     acp_terminal_wait_for_exit,
+    request_permission,
 )
 
 __all__ = [
@@ -48,4 +49,5 @@ __all__ = [
     "acp_terminal_release",
     "acp_terminal_run",
     "acp_terminal_wait_for_exit",
+    "request_permission",
 ]
