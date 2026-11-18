@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any, Literal
 
@@ -117,6 +118,7 @@ class ACPAdapter(ACPAgent):
         self._session_cwds: dict[str, str] = {}
         self._session_permissions: dict[str, dict[str, PermissionOptionKind]] = {}
         self._session_commands_sent: set[str] = set()
+        self._running: dict[str, asyncio.Task[None]] = {}
         self._translator = HVEventToACP()
 
     def on_connect(self, conn: Client) -> None:
@@ -271,11 +273,30 @@ class ACPAdapter(ACPAgent):
         # included), so a turn that stopped on a clarification still holds the
         # question when the user's reply arrives as the next prompt.
         turn: list[BaseMessage] = [Message(role="user", content=text)]
-        async for event in self._workflow.stream(agent=agent, ctx=ctx, state=state):
-            if self._client:
-                await self._translator.apply(event, self._client, session_id)
-            if (message := event_to_message(event)) is not None:
-                turn.append(message)
+
+        async def run() -> None:
+            async for event in self._workflow.stream(agent=agent, ctx=ctx, state=state):
+                if self._client:
+                    await self._translator.apply(event, self._client, session_id)
+                if (message := event_to_message(event)) is not None:
+                    turn.append(message)
+
+        # A task of its own, so that `cancel` can stop it without stopping the
+        # connection that is waiting for the prompt's response.
+        task = asyncio.ensure_future(run())
+        self._running[session_id] = task
+        try:
+            await task
+        except asyncio.CancelledError:
+            # Only a `cancel` from the client ends the turn normally; a
+            # cancellation of the prompt itself goes on up.
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+            return PromptResponse(stop_reason="cancelled")
+        finally:
+            if self._running.get(session_id) is task:
+                del self._running[session_id]
 
         if session_id in self._sessions:
             self._sessions[session_id].extend(turn)
@@ -496,7 +517,9 @@ class ACPAdapter(ACPAgent):
         return None
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
-        pass
+        task = self._running.get(session_id)
+        if task is not None:
+            task.cancel()
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         return {}
