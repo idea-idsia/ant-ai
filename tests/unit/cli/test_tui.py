@@ -246,3 +246,71 @@ async def test_a_call_with_only_a_message_shows_as_a_sub_agent(tmp_path):
         root = app.query_one("#agents", Tree).root.children[0]
         assert [n.data for n in root.children] == ["reviewer"]
         assert "A2A" not in str(root.children[0].label)
+
+
+@pytest.mark.unit
+async def test_the_plan_the_step_limit_and_a_question_are_shown(tmp_path):
+    from ant_ai.cli.render import PLAN_TOOL
+    from ant_ai.core.events import (
+        ClarificationNeededEvent,
+        MaxStepsReachedEvent,
+        ToolCallingEvent,
+        ToolResultEvent,
+    )
+    from ant_ai.core.message import ToolCall, ToolFunction
+
+    app = AntApp(["true"], tmp_path, label="scripted", context_size=200_000)
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.view.reset_agents("ant")
+        todos = [
+            {"content": "read the code", "status": "completed"},
+            {"content": "fix the bug", "status": "in_progress"},
+        ]
+        call = ToolCall(
+            id="p1",
+            function=ToolFunction(
+                name=PLAN_TOOL, arguments=json.dumps({"todos": todos})
+            ),
+        )
+        app.view.event(ToolCallingEvent(content="", tool_calls=(call,)))
+        app.view.event(ToolResultEvent(tool_call_id="p1", name=PLAN_TOOL, content="ok"))
+        app.view.event(MaxStepsReachedEvent())
+        app.view.event(ClarificationNeededEvent(content="Which file?"))
+        await pilot.pause()
+
+        plan = str(app.query_one("#plan", Static).render())
+        assert "read the code" in plan and "fix the bug" in plan
+        assert "plan updated" in str(app.query_one(Collapsible).title)
+        notes = [str(n.render()) for n in app.query(".note")]
+        assert "stopped: step limit reached" in notes
+        table = app.query_one("#messages", DataTable)
+        last = table.get_row_at(table.row_count - 1)
+        assert last[3] == "question: Which file?"
+        assert "200k tokens" in str(app.query_one("#context", Static).render())
+
+
+@pytest.mark.unit
+async def test_keys_open_the_tools_and_start_a_new_conversation(tmp_path):
+    app = AntApp(
+        [sys.executable, str(AGENT), str(tmp_path)], tmp_path, label="scripted"
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        await _run_turn(app, pilot, "y")
+
+        await pilot.press("ctrl+o")
+        assert not app.query_one(Collapsible).collapsed
+        await pilot.press("ctrl+o")
+        assert app.query_one(Collapsible).collapsed
+
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+        assert not app.query(Collapsible)
+        assert [str(n.render()) for n in app.query(".note")] == ["new conversation"]
+
+
+@pytest.mark.unit
+def test_the_context_size_is_unknown_without_a_known_model():
+    from ant_ai.cli.tui import context_size
+
+    assert context_size(None) is None
+    assert context_size("no-such-provider/no-such-model") is None

@@ -279,3 +279,28 @@ async def test_stopping_a_turn_stops_the_agent_and_the_session_goes_on(tmp_path)
     out = session.renderer.console.export_text()
     assert "interrupted" in out
     assert "done" in out
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "method",
+    [
+        "write_text_file",
+        "read_text_file",
+        "create_terminal",
+        "terminal_output",
+        "release_terminal",
+        "wait_for_terminal_exit",
+        "kill_terminal",
+        "create_elicitation",
+        "connect_mcp",
+        "disconnect_mcp",
+        "mcp_message",
+    ],
+)
+async def test_the_client_offers_no_files_terminals_or_mcp(method):
+    from acp import RequestError
+
+    client = _Client(Renderer(Console(record=True)), read_answer=lambda q: None)
+    with pytest.raises(RequestError):
+        await getattr(client, method)()

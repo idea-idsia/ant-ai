@@ -311,3 +311,94 @@ def test_the_banner_names_the_model_readably(tmp_path):
     renderer = Renderer(Console(record=True, width=100))
     renderer.banner("anthropic/claude-sonnet-5-5", "~/proj")
     assert "model claude-sonnet-5-5 · anthropic" in renderer.console.export_text()
+
+
+@pytest.mark.unit
+async def test_the_conversation_loop_runs_commands_and_messages(tmp_path, monkeypatch):
+    from ant_ai.cli import prompt
+    from ant_ai.cli.app import _repl
+
+    lines = iter(
+        ["", "/help", "/model", "/details", "hello", "/clear", "/resume", "/exit"]
+    )
+
+    async def typed(hint):
+        return next(lines)
+
+    monkeypatch.setattr(prompt, "read_message", typed)
+    session = recording_session(ScriptedLLM(answer("hi there")), tmp_path)
+
+    await _repl(session, "hint", session.renderer)
+
+    out = session.renderer.console.export_text()
+    assert "/resume   continue the last conversation" in out
+    assert "model scripted" in out
+    assert "details on" in out
+    assert "hi there" in out
+    assert "new conversation" in out
+    assert "resumed: 2 messages" in out
+
+
+@pytest.mark.unit
+async def test_the_conversation_loop_ends_on_ctrl_d(tmp_path, monkeypatch):
+    from ant_ai.cli import prompt
+    from ant_ai.cli.app import _repl
+
+    async def ctrl_d(hint):
+        return None
+
+    monkeypatch.setattr(prompt, "read_message", ctrl_d)
+    session = recording_session(ScriptedLLM(), tmp_path)
+    await _repl(session, "hint", session.renderer)
+
+
+@pytest.mark.unit
+def test_main_opens_the_full_screen_view(tmp_path, monkeypatch):
+    from ant_ai.cli import tui
+
+    runs: list[tuple[list[str], dict]] = []
+    monkeypatch.setattr(
+        tui, "run", lambda command, workspace, **kw: runs.append((command, kw))
+    )
+
+    assert main(["--agent", "python my_agent.py", "-C", str(tmp_path)]) == 0
+    assert main(["--tui", "-m", "openai/x", "-C", str(tmp_path), "--yes"]) == 0
+
+    (agent_command, agent_kw), (serve_command, serve_kw) = runs
+    assert agent_command == ["python", "my_agent.py"]
+    assert agent_kw["max_steps"] is None
+    assert serve_command[1:] == [
+        "-m",
+        "ant_ai.cli",
+        "--serve",
+        "-m",
+        "openai/x",
+        "-C",
+        str(tmp_path),
+        "--max-steps",
+        "25",
+        "--yes",
+    ]
+    assert serve_kw["max_steps"] == 25
+
+
+@pytest.mark.unit
+def test_main_runs_one_task_or_serves_the_agent(tmp_path, monkeypatch, capsys):
+    from ant_ai.cli import serve
+    from ant_ai.llm import integrations
+
+    monkeypatch.setattr(
+        integrations, "LiteLLMChat", lambda **kw: ScriptedLLM(answer("all done"))
+    )
+    assert main(["-m", "openai/x", "-C", str(tmp_path), "say", "hi"]) == 0
+    assert "all done" in capsys.readouterr().out
+
+    served: list[dict] = []
+    monkeypatch.setattr(serve, "serve", lambda llm, workspace, **kw: served.append(kw))
+    assert main(["-m", "openai/x", "-C", str(tmp_path), "--serve"]) == 0
+    assert served == [{"max_steps": 25, "auto_approve": False}]
+
+
+@pytest.mark.unit
+def test_main_refuses_a_folder_that_does_not_exist(tmp_path):
+    assert main(["-m", "openai/x", "-C", str(tmp_path / "nope")]) == 2
