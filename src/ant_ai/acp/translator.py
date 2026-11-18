@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from acp.interfaces import Client
 from acp.schema import (
@@ -43,6 +45,14 @@ def handler(*event_types: type[BaseEvent]):
 
 def _text_block(text: str) -> TextContentBlock:
     return TextContentBlock(type="text", text=text)
+
+
+def _arguments(raw: str) -> Any:
+    """Tool call arguments as JSON when they parse, the raw string otherwise."""
+    try:
+        return json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return raw
 
 
 class HVEventToACP:
@@ -138,12 +148,13 @@ class HVEventToACP:
         self, event: BaseEvent, client: Client, session_id: str
     ) -> None:
         assert isinstance(event, ToolCallingEvent)
-        # acp-ui only attaches tool_call updates to an existing assistant message; if none exists yet the update is silently dropped. Send an empty chunk to create the message container before sending ToolCallStart events.
+        # acp-ui only attaches tool_call updates to an existing assistant message; if none exists yet the update is silently dropped. The chunk creates it, and carries the text the model wrote before the calls unless it was already streamed.
+        reason = "" if event.stream_id else event.content
         await client.session_update(
             session_id=session_id,
             update=AgentMessageChunk(
                 session_update="agent_message_chunk",
-                content=_text_block(""),
+                content=_text_block(reason),
             ),
         )
         for tool_call in event.tool_calls:
@@ -154,6 +165,7 @@ class HVEventToACP:
                     tool_call_id=tool_call.id,
                     title=tool_call.function.name,
                     status="in_progress",
+                    raw_input=_arguments(tool_call.function.arguments),
                 ),
             )
 
@@ -167,7 +179,7 @@ class HVEventToACP:
             update=ToolCallProgress(
                 session_update="tool_call_update",
                 tool_call_id=event.tool_call_id,
-                status="completed",
+                status="failed" if event.is_error else "completed",
                 raw_output=event.content or None,
             ),
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -774,3 +775,112 @@ async def test_optional_protocol_methods_are_noops():
     assert await adapter.cancel(session_id="s") is None
     assert await adapter.ext_method("custom/method", {}) == {}
     assert await adapter.ext_notification("custom/notify", {}) is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_the_running_prompt():
+    adapter = _make_adapter()
+    session = await adapter.new_session(cwd="/tmp")
+    _connected_client(adapter)
+    started = asyncio.Event()
+
+    async def _endless_stream(**_):
+        yield StartEvent()
+        started.set()
+        await asyncio.Event().wait()
+        yield FinalAnswerEvent(content="never")
+
+    adapter._workflow.create_state.return_value = MagicMock()
+    adapter._workflow.stream = MagicMock(return_value=_endless_stream())
+
+    turn = asyncio.create_task(
+        adapter.prompt(
+            prompt=[TextContentBlock(type="text", text="Hi")],
+            session_id=session.session_id,
+        )
+    )
+    await asyncio.wait_for(started.wait(), 1)
+    await adapter.cancel(session_id=session.session_id)
+    result = await asyncio.wait_for(turn, 1)
+
+    assert result.stop_reason == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_without_a_running_prompt_does_nothing():
+    adapter = _make_adapter()
+    session = await adapter.new_session(cwd="/tmp")
+
+    await adapter.cancel(session_id=session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_prompt_itself_is_not_swallowed():
+    adapter = _make_adapter()
+    session = await adapter.new_session(cwd="/tmp")
+    _connected_client(adapter)
+    started = asyncio.Event()
+
+    async def _endless_stream(**_):
+        yield StartEvent()
+        started.set()
+        await asyncio.Event().wait()
+        yield FinalAnswerEvent(content="never")
+
+    adapter._workflow.create_state.return_value = MagicMock()
+    adapter._workflow.stream = MagicMock(return_value=_endless_stream())
+
+    turn = asyncio.create_task(
+        adapter.prompt(
+            prompt=[TextContentBlock(type="text", text="Hi")],
+            session_id=session.session_id,
+        )
+    )
+    await asyncio.wait_for(started.wait(), 1)
+    turn.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await turn
+
+
+@pytest.mark.asyncio
+async def test_a_finished_prompt_does_not_unregister_a_later_one():
+    adapter = _make_adapter()
+    session = await adapter.new_session(cwd="/tmp")
+    _connected_client(adapter)
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+
+    async def _first(**_):
+        yield StartEvent()
+        await release_first.wait()
+        yield FinalAnswerEvent(content="first")
+
+    async def _second(**_):
+        yield StartEvent()
+        second_started.set()
+        await asyncio.Event().wait()
+        yield FinalAnswerEvent(content="never")
+
+    adapter._workflow.create_state.return_value = MagicMock()
+    adapter._workflow.stream = MagicMock(side_effect=[_first(), _second()])
+
+    def prompt():
+        return asyncio.create_task(
+            adapter.prompt(
+                prompt=[TextContentBlock(type="text", text="Hi")],
+                session_id=session.session_id,
+            )
+        )
+
+    first = prompt()
+    await asyncio.sleep(0)
+    second = prompt()
+    await asyncio.wait_for(second_started.wait(), 1)
+    release_first.set()
+    await asyncio.wait_for(first, 1)
+
+    await adapter.cancel(session_id=session.session_id)
+    result = await asyncio.wait_for(second, 1)
+
+    assert result.stop_reason == "cancelled"

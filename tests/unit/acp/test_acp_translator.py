@@ -198,3 +198,59 @@ async def test_empty_content_delta_is_skipped(translator):
     client = _make_client()
     await translator.apply(ContentDeltaEvent(delta="", stream_id="s1"), client, SESSION)
     client.session_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_calling_sends_the_reason_and_the_arguments(translator):
+    client = _make_client()
+    call = ToolCall(
+        id="tc1", function=ToolFunction(name="read_file", arguments='{"path": "a.py"}')
+    )
+    await translator.apply(
+        ToolCallingEvent(content="Reading a.py first.", tool_calls=(call,)),
+        client,
+        SESSION,
+    )
+
+    updates = [c.kwargs["update"] for c in client.session_update.call_args_list]
+    assert updates[0].content.text == "Reading a.py first."
+    assert updates[1].raw_input == {"path": "a.py"}
+
+
+@pytest.mark.asyncio
+async def test_streamed_tool_calling_reason_is_not_resent(translator):
+    client = _make_client()
+    call = ToolCall(id="tc1", function=ToolFunction(name="search", arguments="{}"))
+    await translator.apply(
+        ToolCallingEvent(content="Searching.", tool_calls=(call,), stream_id="s1"),
+        client,
+        SESSION,
+    )
+
+    first = client.session_update.call_args_list[0].kwargs["update"]
+    assert first.content.text == ""
+
+
+@pytest.mark.asyncio
+async def test_tool_calling_keeps_arguments_that_are_not_json(translator):
+    client = _make_client()
+    call = ToolCall(id="tc1", function=ToolFunction(name="search", arguments="{oops"))
+    await translator.apply(ToolCallingEvent(tool_calls=(call,)), client, SESSION)
+
+    start = client.session_update.call_args_list[1].kwargs["update"]
+    assert start.raw_input == "{oops"
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_result_is_reported_as_failed(translator):
+    client = _make_client()
+    await translator.apply(
+        ToolResultEvent(
+            tool_call_id="tc1", name="search", content="ERROR: boom", is_error=True
+        ),
+        client,
+        SESSION,
+    )
+
+    update = client.session_update.call_args.kwargs["update"]
+    assert update.status == "failed"
