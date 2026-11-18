@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
-from a2a.server.tasks import DatabaseTaskStore, InMemoryTaskStore, TaskStore
+from a2a.server.tasks import InMemoryTaskStore, TaskStore
+from a2a.server.tasks.database_task_store import DatabaseTaskStore
 from a2a.types import AgentCard
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
@@ -54,7 +55,7 @@ class Colony(BaseModel):
         if self.db_url and self._db_engine:
             return DatabaseTaskStore(
                 engine=self._db_engine, create_table=True, table_name=table
-            )  # ty: ignore[invalid-return-type]
+            )
         else:
             return InMemoryTaskStore()
 
