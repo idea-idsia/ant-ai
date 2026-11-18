@@ -63,7 +63,7 @@ agent = Agent(..., tools=[*ACP_FILESYSTEM_TOOLS, *ACP_TERMINAL_TOOLS])
 | `ACP_TERMINAL_TOOLS`   | Run a command in the IDE terminal, or drive a long-running one by id.      |
 | `ACP_PLAN_TOOLS`       | Push a checklist of steps into the editor's UI, and update it as it works. |
 
-`ACP_ALL_TOOLS` is all four. Relative paths are resolved against the session's working directory, so the model can pass a bare filename. Clients declare what they support when they connect; a tool whose capability is missing raises, and the model sees the error as a tool result and can route around it.
+`ACP_ALL_TOOLS` is all four. A tool of your own can ask the user before it acts with `await request_permission("run pytest", kind="execute")`, which returns the option chosen in the editor (`allow_once`, `allow_always`, `reject_once`, `reject_always`) or `"cancelled"`. The request is shown on the tool call that asks, and an `*_always` answer holds for the rest of the session: by default for that exact action, or for a wider `key=` the tool passes (e.g. `key=f"run:{program}"`). Relative paths are resolved against the session's working directory, so the model can pass a bare filename. Clients declare what they support when they connect; a tool whose capability is missing raises, and the model sees the error as a tool result and can route around it.
 
 !!! warning
     Terminal commands run on the user's machine with the user's permissions. Constrain what the agent may run through its system prompt.

@@ -24,7 +24,7 @@ from ant_ai.core.result import (
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.observer import obs
 from ant_ai.tools.registry import ToolRegistry
-from ant_ai.tools.tool import Tool
+from ant_ai.tools.tool import Tool, current_tool_call
 
 
 def _serialize_result(res: Any) -> str:
@@ -183,6 +183,7 @@ class ToolStep(BaseModel):
         call_kwargs: dict[str, Any] = dict(parsed_args)
         if tool.wants_context:
             call_kwargs["ctx"] = ctx
+        token = current_tool_call.set(tool_call)
         try:
             async with obs.span(
                 tool_name,
@@ -211,6 +212,8 @@ class ToolStep(BaseModel):
                 content=f"ERROR: {exc}",
                 is_error=True,
             )
+        finally:
+            current_tool_call.reset(token)
 
     @staticmethod
     def _parse_args(args_str: str, tool_name: str) -> dict[str, Any]:

@@ -18,6 +18,7 @@ from ant_ai.acp.tools import (
     _acp_capabilities,
     _acp_client,
     _acp_cwd,
+    _acp_permissions,
     _acp_session_id,
     _resolve_path,
     acp_fs_read_file,
@@ -28,6 +29,11 @@ from ant_ai.acp.tools import (
     acp_terminal_run,
     request_permission,
 )
+from ant_ai.core.message import ToolCall, ToolCallMessage, ToolFunction
+from ant_ai.core.types import State
+from ant_ai.steps.tool_step import ToolStep
+from ant_ai.tools.registry import ToolRegistry
+from ant_ai.tools.tool import current_tool_call, tool
 
 
 def _make_caps(*, read=True, write=True, terminal=True) -> ClientCapabilities:
@@ -598,3 +604,149 @@ async def test_request_permission_cancelled_is_a_refusal():
 async def test_request_permission_outside_a_turn_raises():
     with pytest.raises(RuntimeError, match="Not running inside an ACP prompt turn"):
         await request_permission("edit a.py")
+
+
+@pytest.mark.asyncio
+async def test_request_permission_unknown_option_is_a_rejection():
+    client = _permission_client(AllowedOutcome(outcome="selected", option_id="maybe"))
+    tokens = _inject(client)
+    try:
+        choice = await request_permission("edit a.py")
+    finally:
+        _reset(*tokens)
+
+    assert choice == "reject_once"
+
+
+def _calling(name: str = "run_shell", call_id: str = "tc-7"):
+    return current_tool_call.set(
+        ToolCall(id=call_id, function=ToolFunction(name=name, arguments="{}"))
+    )
+
+
+@pytest.mark.asyncio
+async def test_request_permission_is_shown_on_the_tool_call_that_asks():
+    client = _permission_client(
+        AllowedOutcome(outcome="selected", option_id="allow_once")
+    )
+    tokens = (*_inject(client), _calling())
+    try:
+        await request_permission("run `pytest`", kind="execute")
+    finally:
+        _reset(*tokens)
+
+    sent = client.request_permission.call_args.kwargs["tool_call"]
+    assert sent.tool_call_id == "tc-7"
+    assert sent.status is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", ["allow_always", "reject_always"])
+async def test_an_always_answer_holds_for_that_exact_action(answer):
+    client = _permission_client(AllowedOutcome(outcome="selected", option_id=answer))
+    tokens = (*_inject(client), _acp_permissions.set({}), _calling())
+    try:
+        first = await request_permission("run `pytest`")
+        again = await request_permission("run `pytest`")
+        other = await request_permission("run `rm -rf /`")
+    finally:
+        _reset(*tokens)
+
+    assert first == again == other == answer
+    assert client.request_permission.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_wider_key_covers_every_action_under_it():
+    client = _permission_client(
+        AllowedOutcome(outcome="selected", option_id="allow_always")
+    )
+    tokens = (*_inject(client), _acp_permissions.set({}), _calling())
+    try:
+        await request_permission("run `pytest -x`", key="run:pytest")
+        await request_permission("run `pytest -k foo`", key="run:pytest")
+    finally:
+        _reset(*tokens)
+
+    assert client.request_permission.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_once_answer_is_not_kept():
+    client = _permission_client(
+        AllowedOutcome(outcome="selected", option_id="allow_once")
+    )
+    tokens = (*_inject(client), _acp_permissions.set({}), _calling())
+    try:
+        await request_permission("run `pytest`")
+        await request_permission("run `pytest`")
+    finally:
+        _reset(*tokens)
+
+    assert client.request_permission.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_tool_step_tells_the_tool_its_own_call():
+    seen: list[str | None] = []
+
+    @tool
+    async def act() -> str:
+        """Act."""
+        call = current_tool_call.get()
+        seen.append(call.id if call else None)
+        return "ok"
+
+    step = ToolStep(registry=ToolRegistry(tools=[act]))
+    state = State(
+        messages=[
+            ToolCallMessage(
+                tool_calls=[
+                    ToolCall(id=i, function=ToolFunction(name="act", arguments="{}"))
+                    for i in ("c1", "c2")
+                ]
+            )
+        ]
+    )
+    async for _ in step.run(state, None):
+        pass
+
+    assert sorted(seen) == ["c1", "c2"]
+    assert current_tool_call.get() is None
+
+
+@pytest.mark.asyncio
+async def test_tool_step_resets_the_call_when_the_tool_returns():
+    @tool
+    async def act() -> str:
+        """Act."""
+        return "ok"
+
+    step = ToolStep(registry=ToolRegistry(tools=[act]))
+    call = ToolCall(id="c1", function=ToolFunction(name="act", arguments="{}"))
+
+    await step._run_one(call, None)
+
+    assert current_tool_call.get() is None
+
+
+@pytest.mark.asyncio
+async def test_the_always_options_name_what_they_cover():
+    client = _permission_client(
+        AllowedOutcome(outcome="selected", option_id="allow_once")
+    )
+    tokens = _inject(client)
+    try:
+        await request_permission("run `pytest -x`")
+        await request_permission("run `pytest -x`", key="every pytest run")
+    finally:
+        _reset(*tokens)
+
+    exact, wider = (
+        {o.kind: o.name for o in c.kwargs["options"]}
+        for c in client.request_permission.call_args_list
+    )
+    assert exact["allow_always"] == "Always allow run `pytest -x`"
+    assert exact["reject_always"] == "Always reject run `pytest -x`"
+    assert wider["allow_always"] == "Always allow every pytest run"
+    assert exact["allow_once"] == "Allow"

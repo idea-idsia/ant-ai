@@ -22,6 +22,7 @@ from acp.schema import (
 
 from ant_ai.acp.adapter import ACPAdapter
 from ant_ai.acp.commands import ACPCommand, ACPCommandContext
+from ant_ai.acp.tools import _acp_permissions
 from ant_ai.core.events import FinalAnswerEvent, StartEvent
 from ant_ai.core.message import Message
 
@@ -287,6 +288,7 @@ async def test_close_session_cleans_up_state():
     assert sid not in adapter._sessions
     assert sid not in adapter._session_agents
     assert sid not in adapter._session_cwds
+    assert sid not in adapter._session_permissions
     assert sid not in adapter._session_commands_sent
 
 
@@ -679,3 +681,30 @@ async def test_optional_protocol_methods_are_noops():
     assert await adapter.cancel(session_id="s") is None
     assert await adapter.ext_method("custom/method", {}) == {}
     assert await adapter.ext_notification("custom/notify", {}) is None
+
+
+@pytest.mark.asyncio
+async def test_permission_answers_are_kept_per_session_and_copied_on_fork():
+    adapter = _make_adapter()
+    parent = (await adapter.new_session(cwd="/tmp")).session_id
+    _connected_client(adapter)
+
+    async def _remembering_stream(**_):
+        remembered = _acp_permissions.get()
+        assert remembered is not None
+        remembered["run"] = "allow_always"
+        yield FinalAnswerEvent(content="done")
+
+    adapter._workflow.create_state.return_value = MagicMock()
+    adapter._workflow.stream = MagicMock(side_effect=lambda **_: _remembering_stream())
+    await adapter.prompt(
+        prompt=[TextContentBlock(type="text", text="Hi")], session_id=parent
+    )
+    other = (await adapter.new_session(cwd="/tmp")).session_id
+    forked = (await adapter.fork_session(session_id=parent, cwd="/tmp")).session_id
+
+    assert adapter._session_permissions[parent] == {"run": "allow_always"}
+    assert adapter._session_permissions.get(other, {}) == {}
+    assert adapter._session_permissions[forked] == {"run": "allow_always"}
+    adapter._session_permissions[forked]["edit"] = "reject_always"
+    assert "edit" not in adapter._session_permissions[parent]
