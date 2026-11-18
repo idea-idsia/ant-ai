@@ -26,7 +26,9 @@ class Agent(BaseAgent):
             max_retries=self.max_retries,
         )
 
-    def add_tool(self, tool: Tool) -> None:
+    def add_tool(self, tool: Tool | BaseAgent) -> None:
         """Register a tool at runtime and hot-reload the loop's step."""
+        if isinstance(tool, BaseAgent):
+            tool = tool.as_tool()
         self._registry.register(tool)
         self._loop.register_tool(self._registry)

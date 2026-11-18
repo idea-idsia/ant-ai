@@ -93,4 +93,4 @@ A `kind="prompt"` command expands its template (`{args}` is the text after the c
 
 ## Sessions
 
-Each session keeps its own history, working directory, and agent instance, in memory for the life of the process; clients can create, load, list, fork, and close them. MCP servers passed when a session opens are loaded and attached to a copy of the agent, so tools stay scoped to that session and never leak into another.
+Each session keeps its own history, working directory, and agent instance, in memory for the life of the process; clients can create, load, list, fork, and close them. The history holds each turn as the model saw it, tool calls and their results included, so a turn that stopped to ask the user a question still holds that question when the reply arrives as the next prompt. MCP servers passed when a session opens are loaded and attached to a copy of the agent, so tools stay scoped to that session and never leak into another.
