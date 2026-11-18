@@ -168,3 +168,25 @@ async def test_the_subagent_run_is_closed_before_the_error_reaches_the_caller():
     with pytest.raises(ToolError):
         await sub.ainvoke(message="loop")
     assert closed == ["after_agent"]
+
+
+@pytest.mark.unit
+def test_a_name_providers_reject_is_refused():
+    sub = agent(ScriptedLLM(), name="Code Explorer")
+
+    with pytest.raises(ValueError, match="not valid"):
+        sub.as_tool()
+    assert sub.as_tool(name="code_explorer").name == "code_explorer"
+
+
+@pytest.mark.unit
+def test_add_tool_accepts_an_agent():
+    sub = agent(ScriptedLLM(), name="writer", description="Writes text.")
+    lead = agent(ScriptedLLM(), name="lead")
+
+    lead.add_tool(sub)
+
+    added = lead.registry["writer"]
+    assert isinstance(added, Tool)
+    assert added.parameters == sub.as_tool().parameters
+    assert lead._loop.act_step is not None

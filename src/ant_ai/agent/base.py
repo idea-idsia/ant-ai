@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
@@ -38,6 +39,8 @@ from ant_ai.skills.protocol import AgentSkill
 from ant_ai.tools.builtins.planning_tool import PlanningTool, PlanStore
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import Tool, ToolError, tool
+
+_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 class SubagentTask(BaseModel):
@@ -334,11 +337,18 @@ class BaseAgent(BaseModel):
 
         Raises:
             ValueError: The agent was built with `planning=True`; only the
-                agent that talks to the user keeps a plan.
+                agent that talks to the user keeps a plan. Or the tool name is
+                not one providers accept.
         """
         if self.planning:
             raise ValueError(
                 f"Agent '{self.name}' has planning=True: a subagent does not keep a plan."
+            )
+        tool_name = name or self.name
+        if not _TOOL_NAME.fullmatch(tool_name):
+            raise ValueError(
+                f"Tool name {tool_name!r} is not valid: use 1-64 letters, digits, "
+                "`_` or `-`, e.g. `as_tool(name=...)`."
             )
 
         async def run(message: str, ctx: InvocationContext | None = None) -> str:
@@ -361,14 +371,14 @@ class BaseAgent(BaseModel):
             raise ToolError(f"{self.name} ended without an answer")
 
         return tool(
-            name=name or self.name,
+            name=tool_name,
             description=description or self.description,
             args_model=SubagentTask,
         )(run)
 
     @abstractmethod
-    def add_tool(self, tool: Tool) -> None:
-        """Register a tool with the agent."""
+    def add_tool(self, tool: Tool | BaseAgent) -> None:
+        """Register a tool with the agent; an agent is added as its `as_tool()`."""
         ...
 
     @property
