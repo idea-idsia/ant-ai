@@ -237,7 +237,7 @@ def _parser() -> argparse.ArgumentParser:
 def _serve_command(args: argparse.Namespace) -> list[str]:
     """The command that starts this same agent as an ACP server."""
     command = [sys.executable, "-m", "ant_ai.cli", "--serve", "-m", args.model]
-    command += ["-C", str(args.workspace), "--max-steps", str(args.max_steps)]
+    command += ["-C", str(args.workspace.resolve()), "--max-steps", str(args.max_steps)]
     if args.api_base:
         command += ["--api-base", args.api_base]
     if args.yes:

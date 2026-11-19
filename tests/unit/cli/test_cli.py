@@ -402,3 +402,21 @@ def test_main_runs_one_task_or_serves_the_agent(tmp_path, monkeypatch, capsys):
 @pytest.mark.unit
 def test_main_refuses_a_folder_that_does_not_exist(tmp_path):
     assert main(["-m", "openai/x", "-C", str(tmp_path / "nope")]) == 2
+
+
+@pytest.mark.unit
+def test_a_relative_folder_reaches_the_agent_as_an_absolute_path(tmp_path, monkeypatch):
+    from ant_ai.cli import tui
+
+    # The agent process starts inside the folder, where a relative path no longer holds.
+    (tmp_path / "project").mkdir()
+    monkeypatch.chdir(tmp_path)
+    runs: list[list[str]] = []
+    monkeypatch.setattr(
+        tui, "run", lambda command, workspace, **kw: runs.append(command)
+    )
+
+    assert main(["--tui", "-m", "openai/x", "-C", "project"]) == 0
+
+    (command,) = runs
+    assert command[command.index("-C") + 1] == str(tmp_path / "project")
