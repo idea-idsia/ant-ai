@@ -291,6 +291,47 @@ async def test_run_ctx_excluded_from_observability_span_input(monkeypatch):
 
 
 @pytest.mark.unit
+async def test_the_trace_keeps_the_full_result_of_a_cut_tool(monkeypatch):
+    traced: list[Any] = []
+
+    from ant_ai.observer import obs as obs_module
+
+    original_span = obs_module.span
+
+    class _Span:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def update(self, **kwargs: Any) -> None:
+            traced.append(kwargs.get("output"))
+            self._inner.update(**kwargs)
+
+    class _CapturingSpanCtx:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self._inner = original_span(*args, **kwargs)
+
+        async def __aenter__(self):
+            return _Span(await self._inner.__aenter__())
+
+        async def __aexit__(self, *exc):
+            return await self._inner.__aexit__(*exc)
+
+    monkeypatch.setattr(obs_module, "span", _CapturingSpanCtx)
+
+    @tool_decorator
+    def long() -> str:
+        return "x" * 30
+
+    long.max_output_chars = 10
+    step = ToolStep(registry=ToolRegistry(tools=[long]))
+    items = await _collect(step.run(_make_state(_make_tool_call("long")), None))
+
+    event = next(i for i in items if isinstance(i, ToolResultEvent))
+    assert event.content.startswith("x" * 10 + "\n[20 more characters cut; ")
+    assert traced == ["x" * 30]
+
+
+@pytest.mark.unit
 async def test_cancelling_the_step_cancels_in_flight_tools():
     """Cancelling the run (what `tasks/cancel` does over A2A) must stop the
     tools it started, not wait for them to finish on their own."""
@@ -456,3 +497,66 @@ async def test_every_call_in_a_clarifying_step_gets_a_result():
     answered = {r["tool_call_id"]: r for r in result.output.results}
     assert set(answered) == {"c1", "c2", "c3"}
     assert answered["c2"]["content"] == "fine"
+
+
+@pytest.mark.unit
+async def test_result_goes_through_limit_output_of_the_namespace():
+    from ant_ai.tools import Tool
+
+    class Big(Tool):
+        def dump(self) -> list[str]:
+            """Return many lines."""
+            return [f"line {i}" for i in range(100)]
+
+        def limit_output(self, output):
+            return output[:2]
+
+    step = ToolStep(registry=ToolRegistry(tools=[Big()]))
+    items = await _collect(step.run(_make_state(_make_tool_call("Big_dump")), None))
+
+    event = next(i for i in items if isinstance(i, ToolResultEvent))
+    assert event.content == '["line 0", "line 1"]'
+
+
+@pytest.mark.unit
+async def test_any_tool_result_is_cut_at_100k_characters_by_default():
+    @tool_decorator
+    def long() -> str:
+        return "x" * 500_000
+
+    step = ToolStep(registry=ToolRegistry(tools=[long]))
+    items = await _collect(step.run(_make_state(_make_tool_call("long")), None))
+
+    event = next(i for i in items if isinstance(i, ToolResultEvent))
+    assert event.content.startswith("x" * 100_000 + "\n[400000 more characters cut; ")
+
+
+@pytest.mark.unit
+async def test_a_tool_without_limit_returns_its_result_in_full():
+    @tool_decorator
+    def long() -> str:
+        return "x" * 500_000
+
+    long.max_output_chars = None
+    step = ToolStep(registry=ToolRegistry(tools=[long]))
+    items = await _collect(step.run(_make_state(_make_tool_call("long")), None))
+
+    event = next(i for i in items if isinstance(i, ToolResultEvent))
+    assert event.content == "x" * 500_000
+
+
+@pytest.mark.unit
+async def test_a_long_dict_result_is_cut_as_its_json_text():
+    @tool_decorator
+    def rows() -> dict:
+        return {"rows": ["r"] * 10}
+
+    rows.max_output_chars = 20
+    step = ToolStep(registry=ToolRegistry(tools=[rows]))
+    items = await _collect(step.run(_make_state(_make_tool_call("rows")), None))
+
+    event = next(i for i in items if isinstance(i, ToolResultEvent))
+    assert event.content == (
+        '{"rows": ["r", "r", \n[40 more characters cut; call the tool again '
+        "with narrower arguments for a shorter result]"
+    )

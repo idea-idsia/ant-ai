@@ -150,3 +150,23 @@ def test_allowed_pattern_must_match_from_the_command_start(tmp_path: Path) -> No
     assert result["returncode"] == -1
     assert "allowed" in result["stderr"].lower()
     assert not (tmp_path / "pwned").exists()
+
+
+def test_limit_output_keeps_the_end_of_a_long_output(tmp_path: Path) -> None:
+    tool = ShellTool(cwd=str(tmp_path), max_output_chars=10)
+    limited = tool.limit_output(tool.run("seq 1 100"))
+    assert limited["stdout"] == (
+        "[282 earlier characters cut; filter the output, e.g. with grep, head "
+        "or tail, to see the rest]\n98\n99\n100\n"
+    )
+    assert limited["returncode"] == 0
+
+
+def test_limit_output_keeps_the_last_100k_characters_by_default(
+    bash_tool: ShellTool,
+) -> None:
+    output = {"stdout": "a" * 150_000 + "end", "stderr": "", "returncode": 0}
+    limited = bash_tool.limit_output(output)
+    assert limited["stdout"].endswith("a" * 99_997 + "end")
+    assert limited["stdout"].startswith("[50003 earlier characters cut; ")
+    assert limited["stderr"] == ""

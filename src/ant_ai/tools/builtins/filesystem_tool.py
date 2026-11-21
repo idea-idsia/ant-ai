@@ -5,11 +5,17 @@ import re
 import threading
 from pathlib import Path
 from re import Pattern
+from typing import Any
 
 import pathspec
 from pydantic import PrivateAttr
 
-from ant_ai.tools.tool import Tool, ToolError
+from ant_ai.tools.tool import Tool, ToolError, keep_start
+
+_TEXT_HINT: str = (
+    "read_file with offset and limit, or a narrower search, shows the rest"
+)
+_LIST_HINT: str = "list a subfolder or pass a lower depth to see the rest"
 
 # The tool calls of one step run in parallel: edits and writes take turns, so an
 # edit never writes back a file that another call changed after it was read.
@@ -44,9 +50,13 @@ class FilesystemTool(Tool):
         workspace (e.g. "../etc/passwd", "/absolute/path") -- raise `ToolError`,
         which `ToolStep` turns into a recoverable `ERROR: ...` message for the
         agent and marks as an error.
+        A result longer than `max_output_chars` characters reaches the model cut,
+        with a note: the start of a file or of the search matches, the first
+        entries of a listing.
     """
 
     workspace_root: Path = Path()
+    max_output_chars: int | None = 100_000
     _ignore_spec: pathspec.PathSpec | None = PrivateAttr(default=None)
 
     def __init__(self, workspace_root: str = "/workspace", **data):
@@ -66,6 +76,24 @@ class FilesystemTool(Tool):
             return False
         rel: str = entry.relative_to(self.workspace_root).as_posix()
         return self._ignore_spec.match_file(f"{rel}/" if is_dir else rel)
+
+    def limit_output(self, output: Any) -> Any:
+        """Keep the start of a long text and the first entries of a long listing."""
+        if self.max_output_chars is None:
+            return output
+        if isinstance(output, str):
+            return keep_start(output, self.max_output_chars, _TEXT_HINT)
+        if not isinstance(output, list):
+            return output
+        size: int = 0
+        for count, entry in enumerate(output):
+            size += len(entry)
+            if size > self.max_output_chars:
+                return [
+                    *output[:count],
+                    f"[{len(output) - count} more entries cut; {_LIST_HINT}]",
+                ]
+        return output
 
     def read_file(self, path: str, offset: int = 1, limit: int | None = None) -> str:
         """Read a file. Path is relative to /workspace. Without `offset` and `limit` the whole file is returned; for a long file, pass `offset` (first line, counting from 1 as `search` does) and `limit` (number of lines) to read only that part."""
