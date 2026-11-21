@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TypedDict, cast
 
 from ant_ai.tools.builtins.filesystem_tool import FilesystemTool
 from ant_ai.tools.builtins.shell_tool import ShellTool
@@ -12,17 +13,33 @@ type Confirm = Callable[[str], Awaitable[bool]]
 """Asks the user to allow an action described in one line; True to go ahead."""
 
 
-async def _allow_all(_: str) -> bool:
-    return True
+class CommandResult(TypedDict):
+    """What `run_command` returns."""
+
+    stdout: str
+    stderr: str
+    returncode: int
 
 
 def coding_tools(
-    workspace: Path, *, confirm: Confirm = _allow_all, timeout: int = 120
+    workspace: Path, *, confirm: Confirm, timeout: int = 120
 ) -> list[Tool]:
-    """The tools of the terminal agent, confined to `workspace`.
+    """The tools of the terminal agent.
 
     Reading is free; editing or writing a file and running a command go
-    through `confirm` first, and a refusal reaches the model as a tool error it can react to.
+    through `confirm` first, and a refusal reaches the model as a tool error
+    it can react to.
+
+    Args:
+        workspace: The folder of the file tools, which cannot reach outside
+            it. A command starts there but runs with the user's own rights:
+            it can reach any file the user can, hence the question first.
+        confirm: Asked before each write, edit or command; pass one that
+            returns True to allow everything.
+        timeout: Seconds a command may run.
+
+    Returns:
+        `read_file`, `list_dir`, `search`, `edit_file`, `write_file`, `run_command`.
     """
     fs = FilesystemTool(workspace_root=str(workspace))
     shell = ShellTool(cwd=str(workspace), timeout=timeout)
@@ -64,9 +81,9 @@ def coding_tools(
         return fs.write_file(path, content)
 
     @tool
-    async def run_command(command: str) -> dict:
+    async def run_command(command: str) -> CommandResult:
         """Run a shell command in the workspace and return stdout, stderr and returncode."""
         await ask(f"run `{command}`")
-        return await asyncio.to_thread(shell.run, command)
+        return cast(CommandResult, await asyncio.to_thread(shell.run, command))
 
     return [read_file, list_dir, search, edit_file, write_file, run_command]

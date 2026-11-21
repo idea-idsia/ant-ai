@@ -38,7 +38,16 @@ from textual.widgets.tree import TreeNode
 from textual.worker import Worker
 
 from ant_ai.cli.acp_client import RemoteSession
-from ant_ai.cli.render import PLAN_MARKS, PLAN_TOOL, main_argument, result_summary
+from ant_ai.cli.render import (
+    PLAN_MARKS,
+    PLAN_TOOL,
+    arguments,
+    error_line,
+    main_argument,
+    result_summary,
+    shell_output,
+    todos,
+)
 from ant_ai.core.events import (
     BaseEvent,
     ClarificationNeededEvent,
@@ -103,33 +112,33 @@ def _now() -> str:
     return datetime.now().strftime("%H:%M")
 
 
-def _arguments(call: ToolCall) -> dict[str, Any]:
-    try:
-        args = json.loads(call.function.arguments or "{}")
-    except json.JSONDecodeError:
-        return {}
-    return args if isinstance(args, dict) else {}
-
-
 def _is_agent(call: ToolCall) -> bool:
     """Whether a tool call goes to another agent.
 
     An agent used as a tool, local (`as_tool()`) or remote (`A2AAgentTool`),
     takes a single `message`: a guess until the events say who an agent is.
     """
-    return set(_arguments(call)) == {"message"}
+    return set(arguments(call)) == {"message"}
+
+
+def _call_title(call: ToolCall) -> str:
+    """The tool and what the call is about; the plan by its number of items."""
+    if call.function.name == PLAN_TOOL:
+        items = len(todos(call))
+        return f"plan  {items} item{'' if items == 1 else 's'}"
+    return f"{call.function.name}  {main_argument(call)}"
 
 
 def _readable(content: str) -> str:
     """A command result as the terminal would show it, other results as they are."""
     try:
         data = json.loads(content)
-    except json.JSONDecodeError:
+    except ValueError:
         return content
-    if isinstance(data, dict) and "returncode" in data:
-        out = (data.get("stdout") or "") + (data.get("stderr") or "")
-        return f"{out.rstrip()}\n(exit {data['returncode']})"
-    return content
+    if (shell := shell_output(data)) is None:
+        return content
+    stdout, stderr, code = shell
+    return f"{(stdout + stderr).rstrip()}\n(exit {code})"
 
 
 def _shown(content: str) -> str:
@@ -138,7 +147,7 @@ def _shown(content: str) -> str:
     text = _readable(content)
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
+    except ValueError:
         data = None
     if isinstance(data, list):
         text = "\n".join(str(item) for item in data)
@@ -260,6 +269,7 @@ class AntApp(App[None]):
         label: str,
         context_size: int | None = None,
         max_steps: int | None = None,
+        task: str | None = None,
     ) -> None:
         super().__init__()
         self.view = TuiView(self, context_size=context_size, max_steps=max_steps)
@@ -273,7 +283,8 @@ class AntApp(App[None]):
         shown = str(self.session.workspace).replace(str(Path.home()), "~", 1)
         self.sub_title = f"{label} · {shown} · ACP"
         self._running_turn: Worker[None] | None = None
-        self._queued: list[str] = []
+        # Messages that wait for the agent: to start, or to end its turn.
+        self._queued: list[str] = [task] if task else []
         self._connected = asyncio.Event()
         # Set once the agent process is gone: nothing more can be sent.
         self._stopped = False
@@ -336,6 +347,8 @@ class AntApp(App[None]):
                 self.view.stats()
                 self._connected.set()
                 self.query_one("#ask", Input).focus()
+                if self._queued:
+                    self._start(self._queued.pop(0))
                 await asyncio.Event().wait()
         except (ConnectionError, OSError) as e:
             self._agent_stopped(e)
@@ -346,15 +359,31 @@ class AntApp(App[None]):
         self.view.note(f"the agent stopped: {error}\n{lines}".rstrip())
 
     async def ask_permission(self, question: str) -> str:
+        """Show the question in a dialog and wait for the user's choice.
+
+        Args:
+            question: The action to allow, e.g. "allow run `pytest`?".
+
+        Returns:
+            `y`, `n` or `a`; Esc counts as `n`.
+        """
         answer: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        self.push_screen(
-            PermissionScreen(question),
-            callback=lambda choice: answer.set_result(choice or "n"),
-        )
+
+        def chosen(choice: str | None) -> None:
+            if not answer.done():
+                answer.set_result(choice or "n")
+
+        screen = PermissionScreen(question)
+        self.push_screen(screen, callback=chosen)
         before = self.view.current
         self.view.doing("waiting for you")
         try:
             return await answer
+        except asyncio.CancelledError:
+            # The agent withdrew the request: the question goes away with it.
+            if screen.is_current:
+                screen.dismiss(None)
+            raise
         finally:
             self.view.doing(before)
 
@@ -369,12 +398,14 @@ class AntApp(App[None]):
         if self._stopped:
             self.view.note("the agent is not running: restart ant")
             return
-        if self._busy():
-            # Sent when the turn ends.
+        if self._busy() or not self._connected.is_set():
+            # Sent when the turn ends, or once the agent has started.
             self._queued.append(text)
             self.view.note(f"queued: {text}")
             return
-        await self._connected.wait()
+        self._start(text)
+
+    def _start(self, text: str) -> None:
         self._running_turn = self.run_worker(self._turns(text), group="turn")
 
     async def _turns(self, text: str) -> None:
@@ -392,11 +423,14 @@ class AntApp(App[None]):
 
     def action_stop(self) -> None:
         turn = self._running_turn
-        if turn is not None and turn.is_running:
+        # A second Esc while the turn stops would cut the stop short.
+        if turn is not None and turn.is_running and not turn.is_cancelled:
             turn.cancel()
-            # The queued messages go back to the input, to send or change.
+            # The queued messages go back to the input, to send or change,
+            # before what the user is typing.
             if self._queued:
-                self.query_one("#ask", Input).value = " ".join(self._queued)
+                box = self.query_one("#ask", Input)
+                box.value = " ".join([*self._queued, box.value]).strip()
                 self._queued.clear()
 
     async def action_clear(self) -> None:
@@ -597,7 +631,7 @@ class TuiView:
     def _close_open_calls(self) -> None:
         """Mark the calls that never got a result, once the turn is over."""
         for call_id, (call, box, _, _) in self._calls.items():
-            box.title = f"{call.function.name}  {main_argument(call)}  ·  stopped"
+            box.title = f"{_call_title(call)}  ·  stopped"
             self._set_state(self._agent_nodes.pop(call_id, None), "stopped")
         self._calls.clear()
 
@@ -694,7 +728,7 @@ class TuiView:
             self._by_tool.setdefault(name, ToolStats()).calls += 1
             if name == PLAN_TOOL:
                 self._plan(call)
-            title = f"{name}  {main_argument(call)}  …"
+            title = f"{_call_title(call)}  …"
             # Kept by reference: the result can arrive before the box is mounted.
             result = Static("", classes="result")
             box = Collapsible(result, title=title, collapsed=True)
@@ -707,7 +741,7 @@ class TuiView:
                 node.data = name
                 self._agent_nodes[call.id] = node
                 self._set_state(node, "working")
-                task = next(iter(_arguments(call).values()), "")
+                task = next(iter(arguments(call).values()), "")
                 self._message(self._agent, name, "task", str(task))
 
     def _result(self, event: ToolResultEvent) -> None:
@@ -722,13 +756,13 @@ class TuiView:
         tool = self._by_tool.setdefault(name, ToolStats())
         if event.is_error:
             tool.failed += 1
-            summary = "✗ " + event.content.removeprefix("ERROR: ").splitlines()[0]
+            summary = "✗ " + error_line(event.content)
             box.add_class("error")
         elif name == PLAN_TOOL:
             summary = "plan updated"
         else:
             summary, _ = result_summary(name, event.content)
-        box.title = f"{name}  {main_argument(call)}  ·  {summary}  ·  {took:.1f}s"
+        box.title = f"{_call_title(call)}  ·  {summary}  ·  {took:.1f}s"
         self._seen(event.content)
         shown = _shown(event.content)
         result.update(Text(shown))
@@ -745,12 +779,10 @@ class TuiView:
         self._thought.update(Text(self._thought_text))
 
     def _plan(self, call: ToolCall) -> None:
-        todos = _arguments(call).get("todos", [])
         text = Text()
-        for todo in todos if isinstance(todos, list) else []:
-            status = todo.get("status", "pending")
+        for status, content in todos(call):
             mark, style = PLAN_MARKS.get(status, PLAN_MARKS["pending"])
-            text.append(f"{mark} {todo.get('content', '')}\n", style=style or "#d4d4d8")
+            text.append(f"{mark} {content}\n", style=style or "#d4d4d8")
         self.app.query_one("#plan", Static).update(text or Text("no plan yet"))
 
     def _message(self, sender: str, to: str, what: str, content: str) -> None:
@@ -803,11 +835,23 @@ def run(
     label: str,
     model: str | None = None,
     max_steps: int | None = None,
+    task: str | None = None,
 ) -> None:
+    """Open the full-screen view on the ACP agent that `command` starts.
+
+    Args:
+        command: The agent's command line; it runs in `workspace`.
+        workspace: The folder of the conversation.
+        label: The name shown in the header, e.g. the model.
+        model: The model, to estimate how full its context window is.
+        max_steps: The agent's step limit, shown in the activity panel.
+        task: A first message, sent once the agent has started.
+    """
     AntApp(
         command,
         workspace,
         label=label,
         context_size=context_size(model),
         max_steps=max_steps,
+        task=task,
     ).run()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -12,8 +13,16 @@ from ant_ai.cli.tui import ANT, AntApp, PermissionScreen
 AGENT = Path(__file__).with_name("scripted_acp_agent.py")
 
 
+async def _ready(app: AntApp) -> None:
+    """Wait for the agent to start, failing with its stderr if it does not."""
+    try:
+        await asyncio.wait_for(app._connected.wait(), 10)
+    except TimeoutError:
+        pytest.fail("the agent did not start:\n" + "\n".join(app.session.stderr))
+
+
 async def _run_turn(app: AntApp, pilot, answer: str) -> None:
-    await app._connected.wait()
+    await _ready(app)
     await pilot.click("#ask")
     await pilot.press(*"create a.txt", "enter")
     for _ in range(100):
@@ -166,7 +175,7 @@ async def test_a_message_sent_during_a_turn_waits_and_runs_after_it(tmp_path):
         [sys.executable, str(AGENT), str(tmp_path), "slow"], tmp_path, label="scripted"
     )
     async with app.run_test(size=(140, 40)) as pilot:
-        await app._connected.wait()
+        await _ready(app)
         await pilot.click("#ask")
         await pilot.press(*"one", "enter")
         await _wait_for((tmp_path / "started").exists, pilot)
@@ -189,7 +198,7 @@ async def test_stopping_a_turn_gives_the_queued_message_back(tmp_path):
         [sys.executable, str(AGENT), str(tmp_path), "stuck"], tmp_path, label="scripted"
     )
     async with app.run_test(size=(140, 40)) as pilot:
-        await app._connected.wait()
+        await _ready(app)
         await pilot.click("#ask")
         await pilot.press(*"one", "enter")
         await _wait_for((tmp_path / "started").exists, pilot)
@@ -280,7 +289,8 @@ async def test_the_plan_the_step_limit_and_a_question_are_shown(tmp_path):
 
         plan = str(app.query_one("#plan", Static).render())
         assert "read the code" in plan and "fix the bug" in plan
-        assert "plan updated" in str(app.query_one(Collapsible).title)
+        title = str(app.query_one(Collapsible).title)
+        assert title.startswith("plan  2 items") and "plan updated" in title
         notes = [str(n.render()) for n in app.query(".note")]
         assert "stopped: step limit reached" in notes
         table = app.query_one("#messages", DataTable)
@@ -370,7 +380,7 @@ async def test_an_agent_that_exits_mid_turn_is_reported(tmp_path):
         [sys.executable, str(AGENT), str(tmp_path), "crash"], tmp_path, label="s"
     )
     async with app.run_test(size=(140, 40)) as pilot:
-        await app._connected.wait()
+        await _ready(app)
         await pilot.click("#ask")
         await pilot.press(*"one", "enter")
         await _wait_for(lambda: app._running_turn.is_finished, pilot)
@@ -453,3 +463,61 @@ async def test_the_reasoning_of_the_model_is_kept_folded(tmp_path):
         assert thought.collapsed and "thinking" in str(thought.title)
         body = str(thought.query_one(".result", Static).render())
         assert body == "The test expects 2, so the + 1 is wrong."
+
+
+@pytest.mark.unit
+async def test_a_task_given_on_the_command_line_is_sent_once_the_agent_starts(
+    tmp_path,
+):
+    app = AntApp(
+        [sys.executable, str(AGENT), str(tmp_path)],
+        tmp_path,
+        label="scripted",
+        task="create a.txt",
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        await _wait_for(lambda: isinstance(app.screen, PermissionScreen), pilot)
+        await pilot.press("y")
+        await _wait_for(lambda: len(app.query(Markdown)) == 1, pilot)
+        assert _said(app) == ["› create a.txt"]
+    assert (tmp_path / "a.txt").read_text() == "x"
+
+
+@pytest.mark.unit
+async def test_a_message_sent_before_the_agent_starts_waits_for_it(tmp_path):
+    app = AntApp(["sleep", "5"], tmp_path, label="scripted")
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.press(*"hello", "enter")
+        await pilot.pause()
+        assert app._queued == ["hello"] and app._running_turn is None
+        assert any("queued: hello" in str(n.render()) for n in app.query(".note"))
+
+
+@pytest.mark.unit
+async def test_a_withdrawn_question_closes_its_dialog(tmp_path):
+    app = AntApp(["sleep", "5"], tmp_path, label="scripted")
+    async with app.run_test(size=(140, 40)) as pilot:
+        question = asyncio.ensure_future(app.ask_permission("allow run `ls`?"))
+        await _wait_for(lambda: isinstance(app.screen, PermissionScreen), pilot)
+        question.cancel()
+        await _wait_for(lambda: not isinstance(app.screen, PermissionScreen), pilot)
+        with pytest.raises(asyncio.CancelledError):
+            await question
+
+
+@pytest.mark.unit
+async def test_stopping_puts_the_queued_message_before_the_draft(tmp_path):
+    app = AntApp(
+        [sys.executable, str(AGENT), str(tmp_path), "stuck"], tmp_path, label="scripted"
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        await _ready(app)
+        await pilot.click("#ask")
+        await pilot.press(*"one", "enter")
+        await _wait_for((tmp_path / "started").exists, pilot)
+        await pilot.press(*"two", "enter", *"three")
+
+        await pilot.press("escape")
+        await _wait_for(lambda: app._running_turn.is_finished, pilot)
+        await pilot.pause()
+        assert app.query_one("#ask").value == "two three"

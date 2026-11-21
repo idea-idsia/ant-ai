@@ -8,6 +8,7 @@ import pytest
 from acp.schema import (
     AgentMessageChunk,
     AgentThoughtChunk,
+    ContentToolCallContent,
     PermissionOption,
     TextContentBlock,
     ToolCallProgress,
@@ -304,3 +305,71 @@ async def test_the_client_offers_no_files_terminals_or_mcp(method):
     client = _Client(Renderer(Console(record=True)), read_answer=lambda q: None)
     with pytest.raises(RequestError):
         await getattr(client, method)()
+
+
+@pytest.mark.unit
+def test_a_result_sent_as_content_is_kept_and_a_falsy_one_too():
+    events = ACPEvents()
+    events.update(start("c1", "lookup"))
+    as_content = ToolCallProgress(
+        session_update="tool_call_update",
+        tool_call_id="c1",
+        status="completed",
+        content=[
+            ContentToolCallContent(
+                type="content", content=TextContentBlock(type="text", text="found it")
+            )
+        ],
+    )
+    (result,) = events.update(as_content)[-1:]
+    assert result.content == "found it"
+
+    events.update(start("c2", "count"))
+    zero = ToolCallProgress(
+        session_update="tool_call_update",
+        tool_call_id="c2",
+        status="completed",
+        raw_output=0,
+    )
+    assert events.update(zero)[-1].content == "0"
+
+
+@pytest.mark.unit
+async def test_two_questions_at_once_each_get_their_own_answer():
+    async def answer(question: str) -> str:
+        await asyncio.sleep(0.01)
+        return "y" if "a.txt" in question else "n"
+
+    client = _Client(
+        Renderer(Console(record=True, width=100, force_terminal=False)), answer
+    )
+    options = [
+        PermissionOption(option_id="ok", name="Allow", kind="allow_once"),
+        PermissionOption(option_id="no", name="Reject", kind="reject_once"),
+    ]
+
+    def ask(path: str):
+        call = ToolCallUpdate(tool_call_id=path, title=f"write {path}")
+        return client.request_permission("s", call, options)
+
+    first, second = await asyncio.gather(ask("a.txt"), ask("b.txt"))
+    assert first.outcome.option_id == "ok"
+    assert second.outcome.option_id == "no"
+
+
+@pytest.mark.unit
+async def test_a_huge_log_line_does_not_stop_reading_the_agents_stderr(tmp_path):
+    script = "import sys; sys.stderr.write('x' * 200_000 + '\\nlast line\\n')"
+    session = RemoteSession(
+        [sys.executable, "-c", script],
+        tmp_path,
+        label="t",
+        renderer=Renderer(Console(record=True, force_terminal=False)),
+        read_answer=lambda _: asyncio.sleep(0, ""),
+    )
+    process = await asyncio.create_subprocess_exec(
+        *session.command, stderr=asyncio.subprocess.PIPE
+    )
+    await asyncio.wait_for(session._drain(process), 5)
+    await process.wait()
+    assert session.stderr[-1] == "last line"

@@ -6,9 +6,10 @@ import os
 import pytest
 from rich.console import Console
 
-from ant_ai.cli import Session, main
-from ant_ai.cli.render import PLAN_TOOL, Renderer
+from ant_ai.cli import Session, config, history, main
+from ant_ai.cli.render import PLAN_TOOL, Renderer, main_argument, result_summary
 from ant_ai.cli.tools import coding_tools
+from ant_ai.core.events import ToolCallingEvent, ToolResultEvent
 from ant_ai.core.message import Message, ToolCall, ToolCallMessage, ToolFunction
 from ant_ai.core.response import ChatLLMResponse
 from ant_ai.llm.protocol import ChatLLM
@@ -44,14 +45,6 @@ def call(why: str, name: str, call_id: str = "c1", **args) -> ChatLLMResponse:
             )
         ],
     )
-
-
-@pytest.fixture(autouse=True)
-def ant_home(tmp_path_factory, monkeypatch):
-    """Keep saved conversations out of the real home and out of the workspace."""
-    home = tmp_path_factory.mktemp("ant-home")
-    monkeypatch.setenv("ANT_HOME", str(home))
-    return home
 
 
 def recording_session(llm: ChatLLM, workspace, **kwargs) -> Session:
@@ -172,7 +165,10 @@ async def test_always_for_writes_still_asks_before_a_command(tmp_path):
 
 @pytest.mark.unit
 async def test_tools_stay_inside_the_workspace(tmp_path):
-    tools = {t.name: t for t in coding_tools(tmp_path)}
+    async def allow(_: str) -> bool:
+        return True
+
+    tools = {t.name: t for t in coding_tools(tmp_path, confirm=allow)}
     with pytest.raises(ToolError):
         await tools["read_file"].ainvoke(path="../outside.txt")
 
@@ -255,16 +251,21 @@ async def test_clear_starts_a_new_file_and_resume_without_history_is_false(tmp_p
 
 
 @pytest.mark.unit
-async def test_the_plan_is_saved_for_the_conversation(tmp_path, monkeypatch):
+async def test_the_plan_is_saved_with_the_conversation_not_in_the_workspace(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    project.mkdir()
     monkeypatch.chdir(tmp_path)
     todos = [{"content": "fix the bug", "status": "in_progress"}]
     llm = ScriptedLLM(call("I plan.", PLAN_TOOL, todos=todos), answer("ok"))
-    session = recording_session(llm, tmp_path)
+    session = recording_session(llm, project)
 
     await session.ask("fix it")
 
-    plan = tmp_path / ".plans" / "ant" / f"{session.ctx.session_id}.md"
+    plan = session.file.parent / "plans" / "ant" / f"{session.ctx.session_id}.md"
     assert "fix the bug" in plan.read_text()
+    assert not (tmp_path / ".plans").exists() and not (project / ".plans").exists()
 
 
 @pytest.mark.unit
@@ -439,3 +440,103 @@ def test_a_relative_folder_reaches_the_agent_as_an_absolute_path(tmp_path, monke
 
     (command,) = runs
     assert command[command.index("-C") + 1] == str(tmp_path / "project")
+
+
+@pytest.mark.unit
+def test_a_result_that_only_looks_like_a_command_gets_the_plain_summary():
+    summary, ok = result_summary("query", '{"returncode": 0, "stdout": ["line"]}')
+    assert ok and not summary.startswith("exit")
+
+
+@pytest.mark.unit
+def test_odd_arguments_an_empty_error_and_a_broken_plan_still_render():
+    odd = ToolCall(id="c1", function=ToolFunction(name="t", arguments="[1, 2]"))
+    assert main_argument(odd) == "[1, 2]"
+    renderer = Renderer(Console(record=True, width=100, force_terminal=False))
+    with renderer.turn():
+        renderer.event(ToolCallingEvent(content="", tool_calls=(odd,)))
+        renderer.event(
+            ToolResultEvent(
+                tool_call_id="c1", name="t", content="ERROR: ", is_error=True
+            )
+        )
+        plan = ToolCall(
+            id="p1",
+            function=ToolFunction(
+                name=PLAN_TOOL,
+                arguments=json.dumps({"todos": [None, {"content": "fix it"}]}),
+            ),
+        )
+        renderer.event(ToolCallingEvent(content="", tool_calls=(plan,)))
+        renderer.event(ToolResultEvent(tool_call_id="p1", name=PLAN_TOOL, content="ok"))
+    out = renderer.console.export_text()
+    assert "✗ tool failed" in out and "fix it" in out
+
+
+@pytest.mark.unit
+def test_folders_whose_names_read_the_same_keep_their_own_conversations(tmp_path):
+    (tmp_path / "a_b").mkdir()
+    (tmp_path / "a-b").mkdir()
+    assert history.folder(tmp_path / "a_b") != history.folder(tmp_path / "a-b")
+    assert history.folder(tmp_path / "a_b") == history.folder(tmp_path / "x/../a_b")
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(os.name != "posix", reason="file modes are POSIX")
+def test_a_saved_conversation_can_be_read_only_by_its_owner(tmp_path):
+    path = tmp_path / "s" / "c.json"
+    history.save(path, [Message(role="user", content="secret")])
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert history.load(path)[0].content == "secret"
+    assert [p.name for p in path.parent.iterdir()] == ["c.json"]
+
+
+@pytest.mark.unit
+def test_a_line_without_a_name_is_skipped_and_the_rest_is_read(tmp_path, monkeypatch):
+    env = tmp_path / "env"
+    env.write_text("=typo\nANT_TEST_AFTER=yes\n")
+    env.chmod(0o600)
+    monkeypatch.delenv("ANT_TEST_AFTER", raising=False)
+    warnings = config.load_env(env)
+    assert os.environ["ANT_TEST_AFTER"] == "yes"
+    assert len(warnings) == 1 and ":1:" in warnings[0]
+
+
+@pytest.mark.unit
+async def test_always_holds_until_a_new_conversation(tmp_path):
+    asked: list[str] = []
+
+    async def always(question: str) -> str:
+        asked.append(question)
+        return "a"
+
+    session = recording_session(ScriptedLLM(), tmp_path, read_answer=always)
+    assert await session._confirm("write a.txt (1 lines)")
+    assert await session._confirm("write b.txt (1 lines)")
+    assert await session._confirm("run `ls`")
+    session.clear()
+    assert await session._confirm("write c.txt (1 lines)")
+    assert len(asked) == 3
+
+
+@pytest.mark.unit
+async def test_a_conversation_that_cannot_be_saved_keeps_the_session_open(
+    tmp_path, monkeypatch
+):
+    def full_disk(*_):
+        raise OSError("no space left")
+
+    monkeypatch.setattr(history, "save", full_disk)
+    session = recording_session(ScriptedLLM(answer("one"), answer("two")), tmp_path)
+    await session.ask("first")
+    await session.ask("second")
+    out = session.renderer.console.export_text()
+    assert "could not save the conversation: no space left" in out
+    assert "two" in out and len(session.state.messages) == 4
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("command", ["  ", "'unclosed"])
+def test_an_empty_or_broken_agent_command_is_a_usage_error(command, capsys):
+    assert main(["--agent", command]) == 2
+    assert "--agent" in capsys.readouterr().out

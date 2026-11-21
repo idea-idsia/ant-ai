@@ -24,8 +24,15 @@ STYLE = Style.from_dict(
 async def read_message(hint: str) -> str | None:
     """Show the input box at the bottom and return what the user typed.
 
-    Enter sends; Ctrl-C or Ctrl-D on an empty box returns None. The box is
-    erased afterwards, so the caller prints the message in the transcript.
+    Enter sends; Ctrl-C clears the box, or on an empty box quits like Ctrl-D.
+    The box is erased afterwards, so the caller prints the message in the
+    transcript.
+
+    Args:
+        hint: The line under the box (model, folder, `/help`).
+
+    Returns:
+        The text typed, or None when the user quits.
     """
     area = TextArea(
         prompt="› ",
@@ -39,13 +46,18 @@ async def read_message(hint: str) -> str | None:
         ],
     )
     keys = KeyBindings()
+    empty = Condition(lambda: not area.text)
 
     @keys.add("c-c")
-    @keys.add("c-d")
-    def _quit(event: KeyPressEvent) -> None:
-        if area.text and event.key_sequence[0].key == "c-c":
+    def _cancel(event: KeyPressEvent) -> None:
+        if area.text:
             area.text = ""
             return
+        event.app.exit(result=None)
+
+    # With text in the box, Ctrl-D keeps its usual meaning: delete a character.
+    @keys.add("c-d", filter=empty)
+    def _quit(event: KeyPressEvent) -> None:
         event.app.exit(result=None)
 
     def _send(buffer) -> bool:
@@ -73,7 +85,14 @@ async def read_message(hint: str) -> str | None:
 
 
 async def read_answer(question: str) -> str:
-    """Ask a one-line question (e.g. a confirmation) and return the answer."""
+    """Ask a one-line question, e.g. a confirmation.
+
+    Args:
+        question: Shown before the cursor.
+
+    Returns:
+        The answer, or "" on Ctrl-C or Ctrl-D.
+    """
     try:
         return await PromptSession().prompt_async(
             [("#777777", "  ⎿ "), (f"{ACCENT} bold", f"{question} ")], style=STYLE

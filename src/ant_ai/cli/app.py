@@ -19,7 +19,9 @@ from ant_ai.cli.render import Renderer, model_label
 from ant_ai.cli.tools import Confirm, coding_tools
 from ant_ai.core.message import Message, sanitize_messages
 from ant_ai.core.types import InvocationContext, State
+from ant_ai.hooks.builtins.planning import PlanningHook
 from ant_ai.llm.protocol import ChatLLM
+from ant_ai.tools.builtins.planning_tool import PlanningTool, PlanStore
 
 SYSTEM_PROMPT = """\
 You are ant, a minimal coding agent working in the directory {workspace}.
@@ -39,14 +41,33 @@ HELP = """\
 Ctrl-C stops the current turn."""
 
 
-def build_agent(llm: ChatLLM, workspace: Path, *, confirm: Confirm) -> Agent:
-    """The coding agent of `ant`."""
+def build_agent(
+    llm: ChatLLM, workspace: Path, *, confirm: Confirm, history_dir: Path | None = None
+) -> Agent:
+    """The coding agent of `ant`.
+
+    Args:
+        llm: The model the agent calls.
+        workspace: The folder its tools work in.
+        confirm: Asked before a write, an edit or a command.
+        history_dir: Where conversations are saved (default: `history.root()`).
+            The plans go next to them, not into the workspace.
+
+    Returns:
+        The agent, with the six tools of `coding_tools` and a plan per conversation.
+    """
+    # The plan is the agent's own note: kept with the conversations, so it
+    # needs no approval and does not end up in the user's project.
+    store = PlanStore(root=history.folder(workspace, history_dir) / "plans")
     return Agent(
         name="ant",
         system_prompt=SYSTEM_PROMPT.format(workspace=workspace),
         llm=llm,
-        tools=coding_tools(workspace, confirm=confirm),
-        planning=True,
+        tools=[
+            *coding_tools(workspace, confirm=confirm),
+            PlanningTool(agent="ant", store=store),
+        ],
+        hooks=[PlanningHook(agent="ant", store=store)],
     )
 
 
@@ -63,7 +84,17 @@ class Session:
         max_steps: int = 25,
         read_answer: Callable[[str], Awaitable[str]] | None = None,
         history_dir: Path | None = None,
-    ):
+    ) -> None:
+        """
+        Args:
+            llm: The model of the agent.
+            workspace: The folder the agent works in.
+            renderer: Where the run is printed (default: the terminal).
+            auto_approve: Allow every write and command without asking.
+            max_steps: The step limit of one turn.
+            read_answer: Asks the user a question (default: a prompt line).
+            history_dir: Where conversations are saved (default: `history.root()`).
+        """
         self.renderer = renderer or Renderer()
         self._history_dir = history_dir
         self._read_answer = read_answer or prompt.read_answer
@@ -71,13 +102,16 @@ class Session:
         self.max_steps = max_steps
         self.auto_approve = auto_approve
         self._always: set[str] = set()
-        self.agent = build_agent(llm, self.workspace, confirm=self._confirm)
+        self.agent = build_agent(
+            llm, self.workspace, confirm=self._confirm, history_dir=history_dir
+        )
         self.state = State()
         self.file = history.new_file(self.workspace, self._history_dir)
         self.ctx = InvocationContext(session_id=self.file.stem)
 
     @property
     def label(self) -> str:
+        """The model, as shown to the user."""
         return model_label(self.agent.llm.model)
 
     async def _confirm(self, action: str) -> bool:
@@ -93,7 +127,14 @@ class Session:
         return answer in ("y", "yes", "a")
 
     async def ask(self, text: str) -> None:
-        """Send one user message and print the run until the answer."""
+        """Send one user message and print the run until the answer.
+
+        Cancelling the task stops the turn: it is printed as interrupted, and
+        the conversation is saved either way.
+
+        Raises:
+            Exception: What the model call raised; the conversation is saved.
+        """
         self.state.add_message(Message(role="user", content=text))
         with self.renderer.turn():
             try:
@@ -107,16 +148,31 @@ class Session:
                 # A turn cut short can leave a tool call without its result,
                 # which the next request to the model would be refused for.
                 self.state.messages = sanitize_messages(self.state.messages)
-                history.save(self.file, self.state.messages)
+                self._save()
+
+    def _save(self) -> None:
+        # The conversation stays in memory: the next turn saves it again.
+        try:
+            history.save(self.file, self.state.messages)
+        except OSError as e:
+            self.renderer.note(f"could not save the conversation: {e}")
 
     def clear(self) -> None:
-        """Start a new conversation; the current one stays saved."""
+        """Start a new conversation; the current one stays saved.
+
+        An "a" answer covered the old conversation only: the new one asks again.
+        """
+        self._always.clear()
         self.state = State()
         self.file = history.new_file(self.workspace, self._history_dir)
         self.ctx = InvocationContext(session_id=self.file.stem)
 
     def resume(self) -> bool:
-        """Continue the latest conversation saved for this workspace."""
+        """Continue the latest conversation saved for this workspace.
+
+        Returns:
+            False if there is none, and the current conversation goes on.
+        """
         last = history.latest(self.workspace, self._history_dir)
         if last is None:
             return False
@@ -168,6 +224,10 @@ async def _repl(session: Session, hint: str, renderer: Renderer) -> None:
             loop.add_signal_handler(signal.SIGINT, turn.cancel)
         try:
             await turn
+        except Exception as e:
+            # A failed model request: the conversation is saved and the user
+            # can go on. The turn is not retried, its tools may have run.
+            renderer.note(f"error: {e}")
         finally:
             with contextlib.suppress(NotImplementedError):
                 loop.remove_signal_handler(signal.SIGINT)
@@ -249,6 +309,14 @@ def _serve_command(args: argparse.Namespace) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """The `ant` command.
+
+    Args:
+        argv: The arguments, without the program name (default: `sys.argv`).
+
+    Returns:
+        The exit status: 0, 1 if a one-shot task failed, 2 for a usage error.
+    """
     warnings = config.load_env()
     args = _parser().parse_args(argv)
     console = Console(highlight=False, stderr=args.serve)
@@ -269,7 +337,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.tui or args.agent:
         from ant_ai.cli.tui import run
 
-        command = shlex.split(args.agent) if args.agent else _serve_command(args)
+        try:
+            command = shlex.split(args.agent) if args.agent else _serve_command(args)
+        except ValueError as e:
+            command, error = [], str(e)
+        else:
+            error = "empty command"
+        if not command:
+            console.print(Text(f"ant: --agent: {error}", style="red"))
+            return 2
         label = model_label(args.model) if args.model else command[0]
         max_steps = None if args.agent else args.max_steps
         run(
@@ -278,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             label=label,
             model=args.model,
             max_steps=max_steps,
+            task=" ".join(args.prompt) or None,
         )
         return 0
 
@@ -315,6 +392,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.prompt:
             asyncio.run(session.ask(" ".join(args.prompt)))
+            return 0
         else:
             workspace = str(session.workspace).replace(str(Path.home()), "~", 1)
             session.renderer.banner(args.model, workspace)
@@ -327,4 +405,8 @@ def main(argv: list[str] | None = None) -> int:
             )
     except KeyboardInterrupt:
         pass
+    except Exception as e:
+        # A failed model request in a one-shot run; the conversation is saved.
+        console.print(Text(f"ant: {e}", style="red"))
+        return 1
     return 0

@@ -34,14 +34,14 @@ Without `ANT_API_KEY`, LiteLLM reads the provider's own variable (`OPENAI_API_KE
 | ------------------------------- | ----------------------------------------------------------------------------------- |
 | `ant`                           | Conversation in the terminal, the agent in the same process.                        |
 | `ant "fix the failing test"`    | Runs one task and exits.                                                            |
-| `ant --tui`                     | Full-screen view; the agent runs in its own process (`ant --serve`) and talks ACP.  |
+| `ant --tui`                     | Full-screen view; the agent runs in its own process (`ant --serve`) and talks ACP. `ant --tui "task"` sends the task once the agent has started. |
 | `ant --agent "python a.py"` | The same view over any ACP agent, e.g. one served with [`ACPServer`][ant_ai.acp.server.ACPServer]. |
 
-`-C <dir>` sets the folder the agent works in (the current one by default), `--max-steps` the step limit of one turn, and `-c` continues the last conversation in that folder. `ant --serve` alone serves the agent over ACP on stdin/stdout, so an editor can use it like any other ACP agent.
+`-C <dir>` sets the folder the agent works in (the current one by default), `--max-steps` the step limit of one turn, and `-c` continues the last conversation in that folder. `ant --serve` alone serves the agent over ACP on stdin/stdout, so an editor can use it like any other ACP agent; its tools work in the `-C` folder, whatever folder the editor sends.
 
 ## The agent
 
-The agent is a plain [`Agent`][ant_ai.agent.agent.Agent] with `planning=True` and six tools, all confined to the working folder:
+The agent is a plain [`Agent`][ant_ai.agent.agent.Agent] with a planning tool and six tools that work in the working folder:
 
 | Tool          | What it does                                               | Asks first |
 | ------------- | ---------------------------------------------------------- | :--------: |
@@ -50,11 +50,13 @@ The agent is a plain [`Agent`][ant_ai.agent.agent.Agent] with `planning=True` an
 | `search`      | Searches the files for a pattern.                          |            |
 | `write_file`  | Writes a whole file.                                       |    yes     |
 | `edit_file`   | Replaces one exact piece of text in a file.                |    yes     |
-| `run_command` | Runs a shell command in the folder.                        |    yes     |
+| `run_command` | Runs a shell command, starting in the folder.              |    yes     |
+
+The file tools cannot reach outside the folder. A command only starts there: it runs with your own rights and can read or change any file you can, which is why `ant` asks first.
 
 Before a write or a command, `ant` asks: **y** allows it once, **n** refuses it (the model receives the refusal as a tool error and continues from there), **a** allows every action of the same kind, writes or commands, for the rest of the session. `--yes` skips the questions.
 
-Conversations are saved per folder under `~/.ant/sessions` (or `$ANT_HOME/sessions`); `/resume` or `-c` picks the last one up again.
+Conversations are saved per folder under `~/.ant/sessions` (or `$ANT_HOME/sessions`), readable only by you, and the plan of each conversation next to them, not in the project; `/resume` or `-c` picks the last one up again. In the full-screen view the conversation lives in the agent process and is not saved.
 
 ## The full-screen view
 
@@ -76,9 +78,9 @@ Conversations are saved per folder under `~/.ant/sessions` (or `$ANT_HOME/sessio
 | `Ctrl+P` | Command palette.             |
 | `Ctrl+Q` | Quit.                        |
 
-A message sent while the agent works waits and is sent when the turn ends.
+A message sent while the agent starts or works waits and is sent when it is ready.
 
-The view only speaks ACP, so it works the same with an agent written by someone else. Some parts depend on what that agent sends: the plan appears only if it uses a planning tool, and the step limit is shown only for `ant`'s own agent.
+The view only speaks ACP, so it also works with an agent written by someone else, as long as that agent runs its own tools: the view offers it no file system and no terminal of the client. Some parts depend on what the agent sends: the plan appears only if it uses a planning tool, and the step limit is shown only for `ant`'s own agent.
 
 ## Limits of the prototype
 

@@ -21,7 +21,14 @@ def acp_confirm(*, auto_approve: bool = False) -> Confirm:
     """Asks the client before an action.
 
     An "always" answer covers every action of the same kind, writes or
-    commands, for the rest of the session.
+    commands, for the rest of that ACP session only: the library keeps it per
+    session (see `request_permission`).
+
+    Args:
+        auto_approve: Allow every action without asking (`--yes`).
+
+    Returns:
+        The `confirm` callback of `coding_tools`.
     """
 
     async def confirm(action: str) -> bool:
@@ -35,7 +42,14 @@ def acp_confirm(*, auto_approve: bool = False) -> Confirm:
 
 
 def workflow(max_steps: int) -> Workflow:
-    """One node that runs the agent for a turn."""
+    """One node that runs the agent for a turn.
+
+    Args:
+        max_steps: The step limit of one turn.
+
+    Returns:
+        The workflow `ACPServer` runs for each prompt.
+    """
 
     async def run(
         agent, state: State, ctx: InvocationContext | None
@@ -52,6 +66,15 @@ def workflow(max_steps: int) -> Workflow:
 
 
 def serve(llm: ChatLLM, workspace: Path, *, max_steps: int, auto_approve: bool) -> None:
+    """Serve the coding agent of `ant` over ACP on stdin/stdout, until the client leaves.
+
+    Args:
+        llm: The model of the agent.
+        workspace: The folder its tools work in, for every session: the
+            folder a client sends with a new session is not used.
+        max_steps: The step limit of one turn.
+        auto_approve: Allow every action without asking the client.
+    """
     from ant_ai.cli.app import build_agent
 
     agent = build_agent(llm, workspace, confirm=acp_confirm(auto_approve=auto_approve))

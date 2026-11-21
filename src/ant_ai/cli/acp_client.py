@@ -23,6 +23,7 @@ from acp.schema import (
     AgentThoughtChunk,
     AllowedOutcome,
     ClientCapabilities,
+    ContentToolCallContent,
     DeniedOutcome,
     Implementation,
     PermissionOption,
@@ -53,15 +54,25 @@ ANSWERS = {"y": "allow_once", "yes": "allow_once", "a": "allow_always"}
 class View(Protocol):
     """What a session draws on: the Textual app, or the terminal `Renderer` in tests."""
 
-    def event(self, event: BaseEvent) -> None: ...
+    def event(self, event: BaseEvent) -> None:
+        """Draw one event of the run."""
+        ...
 
-    def note(self, text: str) -> None: ...
+    def note(self, text: str) -> None:
+        """Show a line that is not part of the run, e.g. "interrupted"."""
+        ...
 
-    def partial(self, text: str) -> None: ...
+    def partial(self, text: str) -> None:
+        """Show a chunk of text while the agent writes it."""
+        ...
 
-    def turn(self) -> AbstractContextManager[None]: ...
+    def turn(self) -> AbstractContextManager[None]:
+        """Wraps one turn, from the user's message to the answer."""
+        ...
 
-    def paused(self) -> AbstractContextManager[None]: ...
+    def paused(self) -> AbstractContextManager[None]:
+        """Wraps a question to the user, with the live output stopped."""
+        ...
 
 
 def _text(update: AgentMessageChunk | AgentThoughtChunk) -> str:
@@ -72,6 +83,20 @@ def _arguments(raw_input: Any) -> str:
     if raw_input is None:
         return "{}"
     return raw_input if isinstance(raw_input, str) else json.dumps(raw_input)
+
+
+def _result(update: ToolCallProgress) -> str:
+    """The result of a finished call: its raw output, else the text it carries."""
+    output = update.raw_output
+    if output is None:
+        # An agent can send the result only as content blocks.
+        return "\n".join(
+            text
+            for item in update.content or []
+            if isinstance(item, ContentToolCallContent)
+            and (text := getattr(item.content, "text", None))
+        )
+    return output if isinstance(output, str) else json.dumps(output)
 
 
 class ACPEvents:
@@ -90,6 +115,7 @@ class ACPEvents:
         self._names: dict[str, str] = {}
 
     def update(self, update: Any) -> list[BaseEvent]:
+        """The events that one session update completes, often none yet."""
         if isinstance(update, ToolCallStart):
             if not self._step:
                 self._reason = "".join(self._text).strip()
@@ -111,16 +137,13 @@ class ACPEvents:
             case AgentThoughtChunk() if _text(update):
                 events.append(ReasoningEvent(content=_text(update)))
             case ToolCallProgress() if update.status in ("completed", "failed"):
-                output = update.raw_output
                 events.append(
                     ToolResultEvent(
                         tool_call_id=update.tool_call_id,
                         name=self._names.pop(
                             update.tool_call_id, update.title or "tool"
                         ),
-                        content=output
-                        if isinstance(output, str)
-                        else json.dumps(output or ""),
+                        content=_result(update),
                         is_error=update.status == "failed",
                     )
                 )
@@ -153,7 +176,9 @@ class _Client(Client):
     machine and only reports what it does.
     """
 
-    def __init__(self, renderer: View, read_answer: Callable[[str], Awaitable[str]]):
+    def __init__(
+        self, renderer: View, read_answer: Callable[[str], Awaitable[str]]
+    ) -> None:
         self.renderer = renderer
         self.events = ACPEvents()
         self._read_answer = read_answer
@@ -161,6 +186,9 @@ class _Client(Client):
         # they do not land in the middle of the question.
         self._held: list[BaseEvent] | None = None
         self._pending_step: asyncio.TimerHandle | None = None
+        # The agent can ask twice at once (two tools of one step): one
+        # question at a time, each with the held events to itself.
+        self._asking = asyncio.Lock()
 
     def _show(self, events: list[BaseEvent]) -> None:
         if self._held is not None:
@@ -172,9 +200,11 @@ class _Client(Client):
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
         if self._pending_step is not None:
             self._pending_step.cancel()
+        # The pending step first: drawing it closes the text before it, not
+        # this chunk.
+        self._show(self.events.update(update))
         if isinstance(update, AgentMessageChunk) and _text(update):
             self.renderer.partial(_text(update))
-        self._show(self.events.update(update))
         if isinstance(update, ToolCallStart):
             # The other calls of the step come right after; if none does, the
             # step is printed so a long tool does not leave the screen empty.
@@ -189,15 +219,16 @@ class _Client(Client):
         options: list[PermissionOption],
         **kwargs: Any,
     ) -> RequestPermissionResponse:
-        # A tool can ask before any update closes its step: print the step first.
-        self._show(self.events.flush())
-        self._held = []
-        try:
-            with self.renderer.paused():
-                answer = await self._read_answer(f"allow {tool_call.title}? y/n/a")
-        finally:
-            held, self._held = self._held, None
-            self._show(held)
+        async with self._asking:
+            # A tool can ask before any update closes its step: print it first.
+            self._show(self.events.flush())
+            self._held = []
+            try:
+                with self.renderer.paused():
+                    answer = await self._read_answer(f"allow {tool_call.title}? y/n/a")
+            finally:
+                held, self._held = self._held, None
+                self._show(held)
         wanted = ANSWERS.get(answer.strip().lower(), "reject_once")
         chosen = next((o for o in options if o.kind == wanted), None)
         if chosen is None:
@@ -268,7 +299,15 @@ class RemoteSession:
         label: str,
         renderer: View,
         read_answer: Callable[[str], Awaitable[str]],
-    ):
+    ) -> None:
+        """
+        Args:
+            command: The command that starts the agent; it runs in `workspace`.
+            workspace: The folder of the conversation, sent with each session.
+            label: The name shown for the agent.
+            renderer: Where the run is drawn.
+            read_answer: Asks the user to allow an action: `y`, `n` or `a`.
+        """
         self.command = command
         self.workspace = workspace.resolve()
         self.label = label
@@ -306,25 +345,36 @@ class RemoteSession:
             await self.clear()
             yield self
         finally:
-            await conn.close()
-            process.stdin.close()
             try:
-                await asyncio.wait_for(process.wait(), 2)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-            drain.cancel()
+                # An agent that stopped reading can block the close: bounded.
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(conn.close(), 2)
+            finally:
+                process.stdin.close()
+                try:
+                    await asyncio.wait_for(process.wait(), 2)
+                except TimeoutError:
+                    process.kill()
+                    await process.wait()
+                drain.cancel()
 
     async def _drain(self, process: asyncio.subprocess.Process) -> None:
         # The agent logs to stderr; a full pipe would block it. The last lines
-        # are kept to explain a crash.
+        # are kept to explain a crash. Read in chunks: a line can be longer
+        # than the stream's line limit.
         if process.stderr is None:
             return
-        async for line in process.stderr:
-            self.stderr.append(line.decode(errors="replace").rstrip())
+        rest = b""
+        while chunk := await process.stderr.read(65536):
+            *lines, rest = (rest + chunk).split(b"\n")
+            rest = rest[-65536:]
+            for line in lines:
+                self.stderr.append(line.decode(errors="replace").rstrip()[:2000])
+        if rest:
+            self.stderr.append(rest.decode(errors="replace").rstrip()[:2000])
 
     async def clear(self) -> None:
-        """Start a new conversation."""
+        """Start a new conversation: a new ACP session with the same agent."""
         session = await self._conn.new_session(cwd=str(self.workspace))
         self.session_id = session.session_id
 

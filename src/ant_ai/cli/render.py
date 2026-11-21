@@ -56,36 +56,73 @@ def _count(n: int, word: str, plural: str | None = None) -> str:
     return f"{n} {word if n == 1 else plural or word + 's'}"
 
 
+def arguments(call: ToolCall) -> dict[str, Any]:
+    """The arguments of a call as an object; {} when they are not one."""
+    try:
+        args = json.loads(call.function.arguments or "{}")
+    except ValueError:
+        return {}
+    return args if isinstance(args, dict) else {}
+
+
 def main_argument(call: ToolCall) -> str:
     """The argument that says what a call is about: a path, a command, a pattern."""
-    try:
-        args: dict[str, Any] = json.loads(call.function.arguments or "{}")
-    except json.JSONDecodeError:
-        return call.function.arguments or ""
-    for key in ("path", "command", "pattern", "task"):
-        if isinstance(args.get(key), str):
-            value: str = args[key]
-            break
+    args = arguments(call)
+    if not args:
+        value = call.function.arguments or ""
+        value = "" if value.strip() == "{}" else value
     else:
-        value = ", ".join(f"{k}={json.dumps(v)}" for k, v in args.items())
+        for key in ("path", "command", "pattern", "task"):
+            if isinstance(args.get(key), str):
+                value = args[key]
+                break
+        else:
+            value = ", ".join(f"{k}={json.dumps(v)}" for k, v in args.items())
     value = value.splitlines()[0] if value else ""
     return value if len(value) <= ARG_CHARS else value[: ARG_CHARS - 1] + "…"
+
+
+def shell_output(data: Any) -> tuple[str, str, int] | None:
+    """`stdout`, `stderr` and `returncode` of a command result, or None if
+    `data` is not one (another tool can return a `returncode` too)."""
+    if not isinstance(data, dict) or type(data.get("returncode")) is not int:
+        return None
+    out, err = data.get("stdout") or "", data.get("stderr") or ""
+    if not isinstance(out, str) or not isinstance(err, str):
+        return None
+    return out, err, data["returncode"]
+
+
+def error_line(content: str) -> str:
+    """The first line of a failed tool's result: what went wrong."""
+    lines = content.removeprefix("ERROR:").strip().splitlines()
+    return lines[0] if lines else "tool failed"
+
+
+def todos(call: ToolCall) -> list[tuple[str, str]]:
+    """The `(status, content)` of each item of a plan call; malformed items are skipped."""
+    items = arguments(call).get("todos", [])
+    return [
+        (str(item.get("status", "pending")), str(item.get("content", "")))
+        for item in (items if isinstance(items, list) else [])
+        if isinstance(item, dict)
+    ]
 
 
 def result_summary(name: str, content: str) -> tuple[str, bool]:
     """A few words on a tool result, and whether it went well."""
     try:
         data: Any = json.loads(content)
-    except json.JSONDecodeError:
+    except ValueError:
         data = None
-    if isinstance(data, dict) and "returncode" in data:
+    if (shell := shell_output(data)) is not None:
         # The last line of the output, where tests and builds sum up; stderr
         # only when there is no output, since it often holds warnings.
-        out = (data.get("stdout") or "").strip() or (data.get("stderr") or "")
+        stdout, stderr, code = shell
+        out = stdout.strip() or stderr
         last = next(
             (line.strip() for line in reversed(out.splitlines()) if line.strip()), ""
         )
-        code = data["returncode"]
         return f"exit {code}" + (f" · {last[:60]}" if last else ""), code == 0
     if isinstance(data, list):
         return _count(len(data), "entry", "entries"), True
@@ -111,7 +148,7 @@ class Renderer:
         *,
         spinner: bool = True,
         verbose: bool = False,
-    ):
+    ) -> None:
         self.console = console or Console(highlight=False)
         self.spinner = spinner
         self.verbose = verbose
@@ -229,8 +266,7 @@ class Renderer:
         if call is not None and event.name != PLAN_TOOL:
             line.append(f"  {main_argument(call)}")
         if event.is_error:
-            message = event.content.removeprefix("ERROR: ").splitlines()[0]
-            line.append(f"  ✗ {message}", style="red")
+            line.append(f"  ✗ {error_line(event.content)}", style="red")
         elif event.name != PLAN_TOOL:
             summary, ok = result_summary(event.name, event.content)
             line.append(f"  {summary}", style="dim" if ok else "yellow")
@@ -247,13 +283,6 @@ class Renderer:
 
     def _plan(self, call: ToolCall) -> None:
         """Print the plan written by the planning tool as a checklist."""
-        try:
-            todos = json.loads(call.function.arguments or "{}").get("todos", [])
-        except json.JSONDecodeError:
-            return
-        for todo in todos:
-            status = todo.get("status", "pending")
+        for status, content in todos(call):
             mark, style = PLAN_MARKS.get(status, PLAN_MARKS["pending"])
-            self.console.print(
-                Text(f"      {mark} {todo.get('content', '')}", style=style)
-            )
+            self.console.print(Text(f"      {mark} {content}", style=style))
