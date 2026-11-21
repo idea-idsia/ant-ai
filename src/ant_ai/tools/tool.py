@@ -6,6 +6,7 @@ import inspect
 import typing
 from asyncio import AbstractEventLoop
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from functools import partial
 from typing import Any, Literal, cast, overload
 
@@ -22,6 +23,13 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+
+from ant_ai.core.message import ToolCall
+
+current_tool_call: ContextVar[ToolCall | None] = ContextVar(
+    "current_tool_call", default=None
+)
+"""The tool call being executed, set by `ToolStep` while its tool runs."""
 
 
 def _is_public_callable(name: str, value: Any) -> bool:

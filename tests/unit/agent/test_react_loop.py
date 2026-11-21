@@ -369,7 +369,7 @@ async def test_observe_step_reraises_step_exception():
 
     async def failing_gen():
         raise RuntimeError("step exploded")
-        yield  # make it an async generator  # noqa: unreachable
+        yield  # make it an async generator
 
     fake_step = FakeStep("boom", [])
     loop: ReActLoop = make_loop(reason_step=fake_step)

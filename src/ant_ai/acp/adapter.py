@@ -33,6 +33,7 @@ from acp.schema import (
     NesRepository,
     NesSuggestContext,
     NewSessionResponse,
+    PermissionOptionKind,
     Position,
     PromptResponse,
     Range,
@@ -58,11 +59,12 @@ from ant_ai.acp.tools import (
     _acp_capabilities,
     _acp_client,
     _acp_cwd,
+    _acp_permissions,
     _acp_session_id,
 )
 from ant_ai.acp.translator import HVEventToACP
 from ant_ai.agent.agent import Agent
-from ant_ai.core.events import FinalAnswerEvent
+from ant_ai.core.events import event_to_message
 from ant_ai.core.message import BaseMessage, Message
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.tools.tool import Tool, mcp_tools_from_url
@@ -114,6 +116,7 @@ class ACPAdapter(ACPAgent):
         self._sessions: dict[str, list[BaseMessage]] = {}
         self._session_agents: dict[str, Agent] = {}
         self._session_cwds: dict[str, str] = {}
+        self._session_permissions: dict[str, dict[str, PermissionOptionKind]] = {}
         self._session_commands_sent: set[str] = set()
         self._running: dict[str, asyncio.Task[None]] = {}
         self._translator = HVEventToACP()
@@ -221,6 +224,7 @@ class ACPAdapter(ACPAgent):
         _acp_client.set(self._client)
         _acp_session_id.set(session_id)
         _acp_capabilities.set(self._client_capabilities)
+        _acp_permissions.set(self._session_permissions.setdefault(session_id, {}))
         cwd: str | None = self._session_cwds.get(session_id)
         _acp_cwd.set(cwd)
         caps: ClientCapabilities | None = self._client_capabilities
@@ -265,15 +269,17 @@ class ACPAdapter(ACPAgent):
         agent: Agent = self._session_agents.get(session_id, self._agent)
         state: State = self._workflow.create_state(messages=history)
 
-        final_content = ""
+        # The turn is kept as the model saw it (tool calls and their results
+        # included), so a turn that stopped on a clarification still holds the
+        # question when the user's reply arrives as the next prompt.
+        turn: list[BaseMessage] = [Message(role="user", content=text)]
 
         async def run() -> None:
-            nonlocal final_content
             async for event in self._workflow.stream(agent=agent, ctx=ctx, state=state):
                 if self._client:
                     await self._translator.apply(event, self._client, session_id)
-                if isinstance(event, FinalAnswerEvent):
-                    final_content = event.content
+                if (message := event_to_message(event)) is not None:
+                    turn.append(message)
 
         # A task of its own, so that `cancel` can stop it without stopping the
         # connection that is waiting for the prompt's response.
@@ -289,14 +295,11 @@ class ACPAdapter(ACPAgent):
                 raise
             return PromptResponse(stop_reason="cancelled")
         finally:
-            self._running.pop(session_id, None)
+            if self._running.get(session_id) is task:
+                del self._running[session_id]
 
         if session_id in self._sessions:
-            self._sessions[session_id].append(Message(role="user", content=text))
-            if final_content:
-                self._sessions[session_id].append(
-                    Message(role="assistant", content=final_content)
-                )
+            self._sessions[session_id].extend(turn)
 
         return PromptResponse(stop_reason="end_turn")
 
@@ -344,6 +347,9 @@ class ACPAdapter(ACPAgent):
         new_id = str(uuid.uuid4())
         self._sessions[new_id] = list(self._sessions.get(session_id, []))
         self._session_agents[new_id] = self._session_agents.get(session_id, self._agent)
+        self._session_permissions[new_id] = dict(
+            self._session_permissions.get(session_id, {})
+        )
         return ForkSessionResponse(session_id=new_id)
 
     async def resume_session(
@@ -360,6 +366,7 @@ class ACPAdapter(ACPAgent):
         self._sessions.pop(session_id, None)
         self._session_agents.pop(session_id, None)
         self._session_cwds.pop(session_id, None)
+        self._session_permissions.pop(session_id, None)
         self._session_commands_sent.discard(session_id)
 
     async def close_session(
