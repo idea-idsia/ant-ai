@@ -44,6 +44,7 @@ from ant_ai.core.events import (
     ClarificationNeededEvent,
     FinalAnswerEvent,
     MaxStepsReachedEvent,
+    ReasoningEvent,
     ToolCallingEvent,
     ToolResultEvent,
 )
@@ -92,6 +93,9 @@ PermissionScreen { align: center middle; background: #17181ccc; }
 #permission Label { width: 100%; margin: 0 0 1 0; }
 #permission Horizontal { height: auto; }
 #permission Button { margin: 0 1 0 0; }
+MessageScreen { align: center middle; background: #17181ccc; }
+#message { width: 90; max-height: 80%; height: auto; border: round #3a3d45; border-title-color: #a99bc9; background: #22242a; padding: 1 2; }
+#message VerticalScroll { height: auto; max-height: 100%; }
 """
 
 
@@ -194,7 +198,8 @@ class PermissionScreen(ModalScreen[str]):
 
     def __init__(self, question: str) -> None:
         super().__init__()
-        self.question = question
+        # The keys are on the buttons: the ` y/n/a` of the terminal is dropped.
+        self.question = question.removesuffix(" y/n/a")
 
     def compose(self) -> ComposeResult:
         with Vertical(id="permission"):
@@ -202,13 +207,37 @@ class PermissionScreen(ModalScreen[str]):
             with Horizontal():
                 yield Button("Allow (y)", id="y", variant="primary")
                 yield Button("Reject (n)", id="n")
-                yield Button("Always (a)", id="a")
+                yield Button(
+                    "Always (a)",
+                    id="a",
+                    tooltip="every action of this kind, for this session",
+                )
 
     def action_choose(self, answer: str) -> None:
         self.dismiss(answer)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id or "n")
+
+
+class MessageScreen(ModalScreen[None]):
+    """One message between the agents, in full."""
+
+    BINDINGS = [Binding("escape,enter,q", "dismiss", "close")]
+
+    def __init__(self, title: str, text: str) -> None:
+        super().__init__()
+        self.title_ = title
+        self.text = text
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="message") as box:
+            box.border_title = self.title_
+            with VerticalScroll():
+                yield Static(Text(self.text), id="message-text")
+
+    async def action_dismiss(self, result: None = None) -> None:
+        self.dismiss(result)
 
 
 class AntApp(App[None]):
@@ -246,6 +275,8 @@ class AntApp(App[None]):
         self._running_turn: Worker[None] | None = None
         self._queued: list[str] = []
         self._connected = asyncio.Event()
+        # Set once the agent process is gone: nothing more can be sent.
+        self._stopped = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -292,6 +323,8 @@ class AntApp(App[None]):
         table.add_column("what", width=40)
         self.query_one("#stats", Static).update(Text("connecting...", style="#8a8f99"))
         self.view.show_status()
+        # Keys typed while the agent starts are kept: the message waits for it.
+        self.query_one("#ask", Input).focus()
         self.set_interval(0.12, self.view.tick)
         self.run_worker(self._connect(), group="connection")
 
@@ -305,8 +338,12 @@ class AntApp(App[None]):
                 self.query_one("#ask", Input).focus()
                 await asyncio.Event().wait()
         except (ConnectionError, OSError) as e:
-            lines = "\n".join(self.session.stderr)
-            self.view.note(f"the agent stopped: {e}\n{lines}")
+            self._agent_stopped(e)
+
+    def _agent_stopped(self, error: BaseException) -> None:
+        self._stopped = True
+        lines = "\n".join(self.session.stderr)
+        self.view.note(f"the agent stopped: {error}\n{lines}".rstrip())
 
     async def ask_permission(self, question: str) -> str:
         answer: asyncio.Future[str] = asyncio.get_running_loop().create_future()
@@ -329,6 +366,9 @@ class AntApp(App[None]):
         if not text:
             return
         event.input.clear()
+        if self._stopped:
+            self.view.note("the agent is not running: restart ant")
+            return
         if self._busy():
             # Sent when the turn ends.
             self._queued.append(text)
@@ -340,7 +380,12 @@ class AntApp(App[None]):
     async def _turns(self, text: str) -> None:
         while True:
             self.view.user(text)
-            await self.session.ask(text)
+            try:
+                await self.session.ask(text)
+            except Exception as e:
+                # The agent process exited or broke the protocol mid-turn.
+                self._agent_stopped(e)
+                return
             if not self._queued:
                 return
             text = self._queued.pop(0)
@@ -355,13 +400,16 @@ class AntApp(App[None]):
                 self._queued.clear()
 
     async def action_clear(self) -> None:
-        if self._busy():
+        if self._busy() or self._stopped or not self._connected.is_set():
             return
         await self.session.clear()
         await self.query_one("#conversation").remove_children()
-        self.view.reset_agents(self.session.agent_name or "agent")
-        self.view.reset_context()
+        self.view.reset(self.session.agent_name or "agent")
         self.view.note("new conversation")
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        title, text = self.view.messages[event.row_key.value or ""]
+        self.push_screen(MessageScreen(title, text))
 
     def action_toggle_all(self) -> None:
         tools = list(self.query(Collapsible))
@@ -394,8 +442,13 @@ class TuiView:
         self.steps = 0
         self.tool_calls = 0
         self._by_tool: dict[str, ToolStats] = {}
+        # Each row of the messages panel: its title and the full message.
+        self.messages: dict[str, tuple[str, str]] = {}
         self._live: Static | None = None
         self._live_text = ""
+        # The reasoning of the model arrives in chunks, shown in one folded box.
+        self._thought: Static | None = None
+        self._thought_text = ""
         self._doing = ""
         self._frame = 0
 
@@ -412,6 +465,7 @@ class TuiView:
             yield
         finally:
             self._end_live()
+            self._close_open_calls()
             self._set_state(self._root, "waiting")
             self.doing("")
             self.stats()
@@ -490,7 +544,11 @@ class TuiView:
             | MaxStepsReachedEvent,
         ):
             self._end_live()
+        if not isinstance(event, ReasoningEvent):
+            self._thought, self._thought_text = None, ""
         match event:
+            case ReasoningEvent():
+                self._reasoning(event.content)
             case ToolCallingEvent():
                 self._step(event)
             case ToolResultEvent():
@@ -522,6 +580,26 @@ class TuiView:
         self._root = tree.root.add(name, expand=True)
         self._root.data = name
         self._set_state(self._root, "waiting")
+
+    def reset(self, name: str) -> None:
+        """Empty every panel, for a new conversation."""
+        self.reset_agents(name)
+        self.reset_context()
+        self._calls.clear()
+        self.steps = self.tool_calls = 0
+        self._by_tool = {}
+        self._started = 0.0
+        self.messages.clear()
+        self.app.query_one("#messages", DataTable).clear()
+        self.app.query_one("#plan", Static).update(Text("no plan yet", style="#8a8f99"))
+        self.stats()
+
+    def _close_open_calls(self) -> None:
+        """Mark the calls that never got a result, once the turn is over."""
+        for call_id, (call, box, _, _) in self._calls.items():
+            box.title = f"{call.function.name}  {main_argument(call)}  ·  stopped"
+            self._set_state(self._agent_nodes.pop(call_id, None), "stopped")
+        self._calls.clear()
 
     def reset_context(self) -> None:
         self._context_chars = 0
@@ -659,6 +737,13 @@ class TuiView:
             self._set_state(node, "failed" if event.is_error else "done")
             self._message(name, self._agent, "answer", event.content)
 
+    def _reasoning(self, text: str) -> None:
+        self._thought_text += text
+        if self._thought is None:
+            self._thought = Static(classes="result")
+            self._mount(Collapsible(self._thought, title="thinking", collapsed=True))
+        self._thought.update(Text(self._thought_text))
+
     def _plan(self, call: ToolCall) -> None:
         todos = _arguments(call).get("todos", [])
         text = Text()
@@ -673,7 +758,9 @@ class TuiView:
         first = (
             (content or "").strip().splitlines()[0] if (content or "").strip() else ""
         )
-        table.add_row(_now(), sender[:8], to[:8], f"{what}: {first}"[:40])
+        key = str(len(self.messages))
+        self.messages[key] = (f"{sender} → {to} · {what}", content or "")
+        table.add_row(_now(), sender[:8], to[:8], f"{what}: {first}"[:40], key=key)
         table.move_cursor(row=table.row_count - 1)
 
     def _set_state(self, node: TreeNode[str] | None, state: str) -> None:
@@ -684,6 +771,7 @@ class TuiView:
             "waiting": ("○", "#8a8f99"),
             "done": ("✓", "#7fbf95"),
             "failed": ("✗", "#e07a6f"),
+            "stopped": ("■", "#e0b36f"),
         }
         mark, style = marks[state]
         # The mark first: in a narrow panel only the state word gets cut.

@@ -152,6 +152,25 @@ async def test_always_allows_the_rest_of_the_session(tmp_path):
 
 
 @pytest.mark.unit
+async def test_always_for_writes_still_asks_before_a_command(tmp_path):
+    llm = ScriptedLLM(
+        call("First file.", "write_file", "c1", path="a.txt", content="x"),
+        call("I list.", "run_command", "c2", command="ls"),
+        answer("done"),
+    )
+    asked: list[str] = []
+
+    async def always_then_no(prompt) -> str:
+        asked.append(prompt)
+        return "a" if len(asked) == 1 else "n"
+
+    session = recording_session(llm, tmp_path, read_answer=always_then_no)
+    await session.ask("create a file and list")
+
+    assert asked == ["allow write a.txt (1 lines)? y/n/a", "allow run `ls`? y/n/a"]
+
+
+@pytest.mark.unit
 async def test_tools_stay_inside_the_workspace(tmp_path):
     tools = {t.name: t for t in coding_tools(tmp_path)}
     with pytest.raises(ToolError):

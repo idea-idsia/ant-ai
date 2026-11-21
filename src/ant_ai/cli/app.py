@@ -70,6 +70,7 @@ class Session:
         self.workspace = workspace.resolve()
         self.max_steps = max_steps
         self.auto_approve = auto_approve
+        self._always: set[str] = set()
         self.agent = build_agent(llm, self.workspace, confirm=self._confirm)
         self.state = State()
         self.file = history.new_file(self.workspace, self._history_dir)
@@ -80,13 +81,15 @@ class Session:
         return model_label(self.agent.llm.model)
 
     async def _confirm(self, action: str) -> bool:
-        if self.auto_approve:
+        # "a" allows every action of the same kind, writes or commands.
+        kind = "run" if action.startswith("run ") else "write"
+        if self.auto_approve or kind in self._always:
             return True
         with self.renderer.paused():
             answer = await self._read_answer(f"allow {action}? y/n/a")
         answer = answer.strip().lower()
         if answer == "a":
-            self.auto_approve = True
+            self._always.add(kind)
         return answer in ("y", "yes", "a")
 
     async def ask(self, text: str) -> None:

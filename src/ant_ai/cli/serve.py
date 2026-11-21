@@ -18,17 +18,17 @@ from ant_ai.workflow.workflow import END, START, Workflow
 
 
 def acp_confirm(*, auto_approve: bool = False) -> Confirm:
-    """Asks the client before an action; "always allow" holds for the session."""
-    allowed = auto_approve
+    """Asks the client before an action.
+
+    An "always" answer covers every action of the same kind, writes or
+    commands, for the rest of the session.
+    """
 
     async def confirm(action: str) -> bool:
-        nonlocal allowed
-        if allowed:
+        if auto_approve:
             return True
         kind = "execute" if action.startswith("run ") else "edit"
-        choice = await request_permission(action, kind=kind)
-        if choice == "allow_always":
-            allowed = True
+        choice = await request_permission(action, kind=kind, key=kind)
         return choice in ("allow_once", "allow_always")
 
     return confirm

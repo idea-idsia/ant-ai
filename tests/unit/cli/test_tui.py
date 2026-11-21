@@ -314,3 +314,142 @@ def test_the_context_size_is_unknown_without_a_known_model():
 
     assert context_size(None) is None
     assert context_size("no-such-provider/no-such-model") is None
+
+
+@pytest.mark.unit
+async def test_a_new_conversation_clears_every_panel(tmp_path):
+    app = AntApp(
+        [sys.executable, str(AGENT), str(tmp_path)],
+        tmp_path,
+        label="scripted",
+        max_steps=5,
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        await _run_turn(app, pilot, "y")
+        assert app.query_one("#messages", DataTable).row_count == 2
+
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+
+        assert app.query_one("#messages", DataTable).row_count == 0
+        assert str(app.query_one("#plan", Static).render()) == "no plan yet"
+        tools = str(app.query_one("#tools", Static).render())
+        assert "write_file" not in tools and "0/5" in tools
+        assert str(app.query_one("#stats", Static).render()).startswith("0 tools")
+
+
+@pytest.mark.unit
+async def test_a_stopped_turn_closes_the_calls_still_running(tmp_path):
+    from ant_ai.core.events import ToolCallingEvent
+    from ant_ai.core.message import ToolCall, ToolFunction
+
+    app = AntApp(["true"], tmp_path, label="scripted")
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.view.reset_agents("ant")
+        calls = (
+            ToolCall(id="c1", function=ToolFunction(name="run", arguments="{}")),
+            ToolCall(
+                id="c2",
+                function=ToolFunction(name="reviewer", arguments='{"message": "x"}'),
+            ),
+        )
+        with app.view.turn():
+            app.view.event(ToolCallingEvent(content="", tool_calls=calls))
+        await pilot.pause()
+
+        titles = [str(c.title) for c in app.query(Collapsible)]
+        assert all(t.endswith("stopped") for t in titles), titles
+        sub = app.query_one("#agents", Tree).root.children[0].children[0]
+        assert "stopped" in str(sub.label)
+        assert app.view._calls == {}
+
+
+@pytest.mark.unit
+async def test_an_agent_that_exits_mid_turn_is_reported(tmp_path):
+    app = AntApp(
+        [sys.executable, str(AGENT), str(tmp_path), "crash"], tmp_path, label="s"
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        await app._connected.wait()
+        await pilot.click("#ask")
+        await pilot.press(*"one", "enter")
+        await _wait_for(lambda: app._running_turn.is_finished, pilot)
+        await pilot.pause()
+
+        notes = [str(n.render()) for n in app.query(".note")]
+        assert any(n.startswith("the agent stopped") for n in notes), notes
+        assert app.is_running
+
+        await pilot.press(*"two", "enter")
+        await pilot.pause()
+        notes = [str(n.render()) for n in app.query(".note")]
+        assert notes[-1] == "the agent is not running: restart ant"
+
+
+@pytest.mark.unit
+async def test_a_message_can_be_read_in_full(tmp_path):
+    from ant_ai.cli.tui import MessageScreen
+
+    app = AntApp(["true"], tmp_path, label="scripted")
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.view.reset_agents("ant")
+        long = "Read src/app.py and tell me " + "why it fails " * 20
+        app.view.user(long)
+        await pilot.pause()
+
+        table = app.query_one("#messages", DataTable)
+        table.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, MessageScreen)
+        assert long in str(app.screen.query_one("#message-text", Static).render())
+        await pilot.press("escape")
+        assert not isinstance(app.screen, MessageScreen)
+
+
+@pytest.mark.unit
+async def test_the_input_takes_keys_before_the_agent_is_connected(tmp_path):
+    app = AntApp(["sleep", "5"], tmp_path, label="scripted")
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        assert not app._connected.is_set()
+        assert app.focused is app.query_one("#ask")
+
+
+@pytest.mark.unit
+async def test_the_permission_question_reads_without_the_terminal_keys(tmp_path):
+    app = AntApp(["true"], tmp_path, label="scripted")
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.push_screen(PermissionScreen("allow run `pytest`? y/n/a"))
+        await pilot.pause()
+        label = str(app.screen.query_one("Label").render())
+        assert label == "allow run `pytest`?"
+
+
+def test_a_command_summary_shows_the_last_line_of_its_output():
+    from ant_ai.cli.render import result_summary
+
+    out = json.dumps(
+        {"stdout": "..F\n6 failed, 3 passed\n", "stderr": "warn\n", "returncode": 1}
+    )
+    assert result_summary("run_command", out) == ("exit 1 · 6 failed, 3 passed", False)
+    only_err = json.dumps({"stdout": "", "stderr": "not found\n", "returncode": 2})
+    assert result_summary("run_command", only_err) == ("exit 2 · not found", False)
+
+
+@pytest.mark.unit
+async def test_the_reasoning_of_the_model_is_kept_folded(tmp_path):
+    from ant_ai.core.events import ReasoningEvent
+
+    app = AntApp(["true"], tmp_path, label="scripted")
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.view.reset_agents("ant")
+        app.view.event(ReasoningEvent(content="The test expects 2, "))
+        app.view.event(ReasoningEvent(content="so the + 1 is wrong."))
+        await pilot.pause()
+
+        (thought,) = app.query(Collapsible)
+        assert thought.collapsed and "thinking" in str(thought.title)
+        body = str(thought.query_one(".result", Static).render())
+        assert body == "The test expects 2, so the + 1 is wrong."

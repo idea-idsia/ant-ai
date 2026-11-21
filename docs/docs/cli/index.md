@@ -52,19 +52,19 @@ The agent is a plain [`Agent`][ant_ai.agent.agent.Agent] with `planning=True` an
 | `edit_file`   | Replaces one exact piece of text in a file.                |    yes     |
 | `run_command` | Runs a shell command in the folder.                        |    yes     |
 
-Before a write or a command, `ant` asks: **y** allows it once, **n** refuses it (the model receives the refusal as a tool error and continues from there), **a** allows everything for the rest of the session. `--yes` skips the questions.
+Before a write or a command, `ant` asks: **y** allows it once, **n** refuses it (the model receives the refusal as a tool error and continues from there), **a** allows every action of the same kind, writes or commands, for the rest of the session. `--yes` skips the questions.
 
 Conversations are saved per folder under `~/.ant/sessions` (or `$ANT_HOME/sessions`); `/resume` or `-c` picks the last one up again.
 
 ## The full-screen view
 
-`ant --tui` shows the conversation on the left, with each tool call folded on one line (its main argument, a short result and how long it took), and a panel on the right that follows the run:
+`ant --tui` shows the conversation on the left, with each tool call folded on one line (its main argument, a short result and how long it took) and the model's reasoning, when it sends one, folded too. A panel on the right follows the run:
 
 | Panel        | What it shows                                                                     |
 | ------------ | --------------------------------------------------------------------------------- |
 | **Agents**   | The agent and any agent it calls as a tool, with their state.                     |
 | **Plan**     | The checklist the agent writes with its planning tool.                            |
-| **Messages** | The messages between agents: the user's task, the tasks to sub-agents, their answers. |
+| **Messages** | The messages between agents: the user's task, the tasks to sub-agents, their answers. `Enter` on a row shows it in full. |
 | **Activity** | Steps used out of the limit, and calls per tool with failures.                    |
 | **Context**  | An estimate of how full the model's context window is.                            |
 
@@ -72,7 +72,7 @@ Conversations are saved per folder under `~/.ant/sessions` (or `$ANT_HOME/sessio
 | -------- | ---------------------------- |
 | `Esc`    | Stop the current turn; queued messages go back to the input. |
 | `Ctrl+O` | Open or close all tool calls. |
-| `Ctrl+L` | Start a new conversation.    |
+| `Ctrl+L` | Start a new conversation; every panel starts empty. |
 | `Ctrl+P` | Command palette.             |
 | `Ctrl+Q` | Quit.                        |
 

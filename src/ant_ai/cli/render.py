@@ -79,7 +79,9 @@ def result_summary(name: str, content: str) -> tuple[str, bool]:
     except json.JSONDecodeError:
         data = None
     if isinstance(data, dict) and "returncode" in data:
-        out = (data.get("stdout") or "") + (data.get("stderr") or "")
+        # The last line of the output, where tests and builds sum up; stderr
+        # only when there is no output, since it often holds warnings.
+        out = (data.get("stdout") or "").strip() or (data.get("stderr") or "")
         last = next(
             (line.strip() for line in reversed(out.splitlines()) if line.strip()), ""
         )

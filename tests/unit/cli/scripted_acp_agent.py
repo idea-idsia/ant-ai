@@ -8,10 +8,12 @@ Run as `python scripted_acp_agent.py <workspace> [script]`:
   once it waits), the next ones answer `done`.
 - `slow`: the first turn writes `started` and waits for a `go` file in the
   workspace before it answers `first`; the next one answers `second`.
+- `crash`: the process exits in the middle of the first turn.
 """
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -36,6 +38,8 @@ class ScriptedLLM(ChatLLM):
 
     async def ainvoke(self, messages, *, ctx=None, tools=None, response_format=None):
         response = self.responses.pop(0)
+        if response == "exit":
+            os._exit(3)
         if response is None:
             (WORKSPACE / "started").touch()
             await asyncio.Event().wait()
@@ -71,6 +75,7 @@ SCRIPTS = {
     "twice": [write("a.txt", "c1"), write("b.txt", "c2"), answer("Wrote both.")],
     "stuck": [None, answer("done")],
     "slow": ["first", answer("second")],
+    "crash": ["exit"],
 }
 
 llm = ScriptedLLM(*SCRIPTS[SCRIPT])
