@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ant_ai.agent.base import BaseAgent
 from ant_ai.agent.loop.react import ReActLoop
+from ant_ai.agent.subagent import SubagentTool
 from ant_ai.steps.llm_step import LLMStep
 from ant_ai.steps.tool_step import ToolStep
 from ant_ai.tools.tool import Tool
@@ -30,5 +31,8 @@ class Agent(BaseAgent):
         """Register a tool at runtime and hot-reload the loop's step."""
         if isinstance(tool, BaseAgent):
             tool = tool.as_tool()
-        self._registry.register(tool)
+        if isinstance(tool, SubagentTool):
+            self._register_private(tool._bind(self))
+        else:
+            self._registry.register(tool)
         self._loop.register_tool(self._registry)

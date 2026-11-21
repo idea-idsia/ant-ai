@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from ant_ai.agent.loop.loop import BaseAgentLoop
+from ant_ai.agent.subagent import SubagentTool
 from ant_ai.core.events import (
     BaseEvent,
     ClarificationNeededEvent,
@@ -106,6 +107,7 @@ class BaseAgent(BaseModel):
     _loop: BaseAgentLoop = PrivateAttr()
     _hook_layer: HookLayer = PrivateAttr()
     _skills: list[AgentSkill] = PrivateAttr(default_factory=list)
+    _private_tools: set[str] = PrivateAttr(default_factory=set)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -124,17 +126,37 @@ class BaseAgent(BaseModel):
         hooks: list[AgentHook] = list(self.hooks)
         if self.memory is not None:
             tools.append(self.memory)
+        self._registry = ToolRegistry(
+            [t for t in tools if not isinstance(t, SubagentTool)]
+        )
+        self._private_tools = set()
         if self.planning:
             store = PlanStore()
-            tools.append(PlanningTool(agent=self.name, store=store))
+            self._register_private(PlanningTool(agent=self.name, store=store))
             hooks.append(PlanningHook(agent=self.name, store=store))
-        self._registry = ToolRegistry(tools)
+        for t in tools:
+            if isinstance(t, SubagentTool):
+                self._register_private(t._bind(self))
         self._hook_layer = HookLayer(hooks=hooks)
         self._skills = (
             SkillLoader(self.skills).load() if self.skills is not None else []
         )
         self._loop: BaseAgentLoop = self._make_loop()
         return self
+
+    def _register_private(self, tool: Tool) -> None:
+        """Register a tool that subagents created at runtime do not get."""
+        before: set[str] = {t.name or "" for t in self._registry.tools}
+        self._registry.register(tool)
+        self._private_tools |= {t.name or "" for t in self._registry.tools} - before
+
+    def _delegable_tools(self) -> dict[str, Tool]:
+        """The tools a `SubagentTool` can give to a subagent, by name."""
+        return {
+            t.name: t
+            for t in self._registry.tools
+            if t.name and t.name not in self._private_tools
+        }
 
     @abstractmethod
     def _make_loop(self) -> BaseAgentLoop:

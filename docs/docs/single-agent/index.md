@@ -156,6 +156,24 @@ lead = Agent(name="lead", system_prompt="...", llm=llm, tools=[explorer])
 
 The tool takes the name and description of the agent and has one argument, `message`, as an [`A2AAgentTool`][ant_ai.a2a.agent.A2AAgentTool]: the model has to write the complete task, since the subagent sees nothing else of the conversation. Each run has 10 steps. To change these settings, pass [`as_tool()`][ant_ai.agent.base.BaseAgent.as_tool] instead of the agent: `explorer.as_tool(name="find", max_steps=20)`. The caller's `ctx` is passed on, so the run shares the session and the trace. If the subagent runs out of steps or asks for a clarification, the call fails like a raised [`ToolError`](#reporting-failures). An agent with `planning=True` is refused: only the agent that talks to the user keeps a plan. For agents in other processes, see [Multi-agent setup](../multi-agent/index.md).
 
+### Subagents created at runtime
+
+With `as_tool()`, the subagents are written in code beforehand. On an open task the agent cannot know in advance which helpers it needs: add a [`SubagentTool`][ant_ai.agent.subagent.SubagentTool] and the model creates them while it works.
+
+```python
+from ant_ai.agent import Agent, SubagentTool
+from ant_ai.tools.builtins import FilesystemTool, ShellTool
+
+lead = Agent(
+    name="lead",
+    system_prompt="...",
+    llm=llm,
+    tools=[FilesystemTool(workspace_root="."), ShellTool(cwd="."), SubagentTool()],
+)
+```
+
+The model calls the tool with a name for the subagent, the task and the names of the tools it may use, chosen among the agent's own: a subagent can never do more than the agent that creates it. The subagent runs on the same LLM and, as with `as_tool()`, gets one task and returns one answer. Every subagent has the same system prompt, a short default you can replace with `SubagentTool(system_prompt="...")`; `max_steps` is the step budget of each run (10 by default) and `name` the name of the tool (`subagent`). A subagent cannot create subagents of its own nor keep a plan, so the `SubagentTool` and the planning tools are never offered to it.
+
 ### Receiving the invocation context (`ctx`)
 
 Any tool — `@tool`-decorated function or namespace method — can declare a `ctx: InvocationContext` parameter to receive the real [`InvocationContext`][ant_ai.core.types.InvocationContext] passed to `agent.stream(...)`/`agent.ainvoke(...)`. It's injected automatically at call time and is hidden from the LLM-facing JSON schema — the model never sees or supplies it.
