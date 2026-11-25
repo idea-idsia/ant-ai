@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from ant_ai.agent.loop.loop import BaseAgentLoop
+from ant_ai.agent.subagent import SubagentTool
 from ant_ai.core.events import (
     BaseEvent,
     ClarificationNeededEvent,
@@ -106,6 +107,7 @@ class BaseAgent(BaseModel):
     _loop: BaseAgentLoop = PrivateAttr()
     _hook_layer: HookLayer = PrivateAttr()
     _skills: list[AgentSkill] = PrivateAttr(default_factory=list)
+    _private_tools: dict[int, Tool] = PrivateAttr(default_factory=dict)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -124,17 +126,41 @@ class BaseAgent(BaseModel):
         hooks: list[AgentHook] = list(self.hooks)
         if self.memory is not None:
             tools.append(self.memory)
+        self._registry = ToolRegistry()
+        self._private_tools = {}
+        for t in tools:
+            self._register_tool(t)
         if self.planning:
             store = PlanStore()
-            tools.append(PlanningTool(agent=self.name, store=store))
+            self._register_tool(PlanningTool(agent=self.name, store=store))
             hooks.append(PlanningHook(agent=self.name, store=store))
-        self._registry = ToolRegistry(tools)
         self._hook_layer = HookLayer(hooks=hooks)
         self._skills = (
             SkillLoader(self.skills).load() if self.skills is not None else []
         )
         self._loop: BaseAgentLoop = self._make_loop()
         return self
+
+    def _register_tool(self, tool: Tool) -> None:
+        """Register `tool`, keeping subagent and planning tools from subagents."""
+        if isinstance(tool, SubagentTool):
+            tool = tool._bind(self)
+        elif not isinstance(tool, PlanningTool):
+            self._registry.register(tool)
+            return
+        before: set[int] = {id(t) for t in self._registry.tools}
+        self._registry.register(tool)
+        for t in self._registry.tools:
+            if id(t) not in before:
+                self._private_tools[id(t)] = t
+
+    def _delegable_tools(self) -> dict[str, Tool]:
+        """The tools a `SubagentTool` can give to a subagent, by name."""
+        return {
+            t.name: t
+            for t in self._registry.tools
+            if t.name and id(t) not in self._private_tools
+        }
 
     @abstractmethod
     def _make_loop(self) -> BaseAgentLoop:
