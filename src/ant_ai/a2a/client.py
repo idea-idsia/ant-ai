@@ -12,6 +12,7 @@ from a2a.types import (
     Part,
     Role,
     SendMessageRequest,
+    TaskState,
 )
 from a2a.types.a2a_pb2 import Task, TaskArtifactUpdateEvent, TaskStatusUpdateEvent
 from httpx import AsyncClient, HTTPError, TimeoutException
@@ -19,7 +20,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from ant_ai.a2a.config import A2AConfig
 from ant_ai.a2a.translator import A2AToHVEvent
-from ant_ai.core.events import BaseEvent
+from ant_ai.core.events import BaseEvent, FinalAnswerEvent
 from ant_ai.observer import obs
 
 
@@ -151,19 +152,32 @@ class A2AClient(BaseModel):
             request.metadata.update(request_metadata)
 
         try:
+            # Agent messages already received, by id: a task sent later in a
+            # stream repeats them in its history.
+            seen: set[str] = set()
+            answered: bool = False
             async for chunk in client.send_message(request):
+                if chunk.HasField("task"):
+                    # A whole task (all a non-streaming call gets): its events are
+                    # its agent messages, not its metadata (the last status update).
+                    for ev in self._task_events(chunk.task, seen, answered):
+                        answered = answered or isinstance(ev, FinalAnswerEvent)
+                        yield ev
+                    continue
                 if chunk.HasField("status_update"):
                     raw: TaskStatusUpdateEvent = chunk.status_update
+                    if raw.status.HasField("message"):
+                        seen.add(raw.status.message.message_id)
                 elif chunk.HasField("message"):
                     raw: Message = chunk.message
-                elif chunk.HasField("task"):
-                    raw: Task = chunk.task
+                    seen.add(raw.message_id)
                 elif chunk.HasField("artifact_update"):
                     raw: TaskArtifactUpdateEvent = chunk.artifact_update
                 else:
                     continue
                 ev: BaseEvent | None = self._translator.translate(raw)
                 if ev is not None:
+                    answered = answered or isinstance(ev, FinalAnswerEvent)
                     yield ev
 
         except TimeoutException as e:
@@ -172,6 +186,28 @@ class A2AClient(BaseModel):
             raise AgentClientError(f"Agent HTTP error: {e}") from e
         except Exception as e:
             raise AgentClientError(f"Agent client error: {e}") from e
+
+    def _task_events(
+        self, task: Task, seen: set[str], answered: bool
+    ) -> list[BaseEvent]:
+        """A task's events not yet received, plus its answer as a final answer when
+        it completed without one (a peer that sends no ant-ai event metadata)."""
+        events: list[BaseEvent] = self._translator.task_events(task, seen=seen)
+        completed: bool = task.status.state == TaskState.TASK_STATE_COMPLETED
+        if (
+            completed
+            and not answered
+            and not any(isinstance(e, FinalAnswerEvent) for e in events)
+            and not self._translator.has_events(task)
+        ):
+            text: str = self._translator.task_text(task)
+            if text:
+                events.append(
+                    FinalAnswerEvent(
+                        content=text, task_id=task.id, session_id=task.context_id
+                    )
+                )
+        return events
 
     async def cancel_task(self, task_id: str) -> Task:
         """Ask the agent to cancel a running task and return its final state.
