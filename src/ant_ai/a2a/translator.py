@@ -4,10 +4,12 @@ from collections.abc import Awaitable, Callable
 from functools import singledispatchmethod
 from typing import Any
 
+from a2a.helpers import get_message_text
 from a2a.server.tasks import TaskUpdater
 from a2a.types import (
     Message as A2AMessage,
     Part,
+    Role,
     Task,
     TaskArtifactUpdateEvent,
     TaskState,
@@ -267,6 +269,69 @@ class A2AToHVEvent:
         event["session_id"] = raw.context_id
         return _any_event_adapter.validate_python(event)
 
+    def task_events(
+        self, task: Task, *, seen: set[str] | None = None
+    ) -> list[BaseEvent]:
+        """The events of a whole task, one per agent message, in order.
+
+        A non-streaming call answers with the finished `Task` only: its agent's
+        events (tool calls, results, the final answer, a question) are the
+        messages in its history and its status, not its own metadata, which
+        holds just the last status update (e.g. "Completed action ..."). The
+        user's messages are skipped, and so are those whose ids are in `seen`
+        (already received while streaming); the ids returned are added to it.
+
+        Args:
+            task: The task as the server returned it.
+            seen: Message ids already translated, to skip.
+
+        Returns:
+            The events, oldest first.
+        """
+        messages: list[A2AMessage] = list(task.history)
+        if task.status.HasField("message"):
+            messages.append(task.status.message)
+        events: list[BaseEvent] = []
+        for msg in messages:
+            if msg.role != Role.ROLE_AGENT:
+                continue
+            if seen is not None:
+                if msg.message_id in seen:
+                    continue
+                seen.add(msg.message_id)
+            event: BaseEvent | None = self.translate(msg)
+            if event is None:
+                continue
+            event.task_id = event.task_id or task.id
+            event.session_id = event.session_id or task.context_id
+            events.append(event)
+        return events
+
+    def has_events(self, task: Task) -> bool:
+        """Whether any of the task's messages carries ant-ai event metadata."""
+        messages: list[A2AMessage] = [*task.history]
+        if task.status.HasField("message"):
+            messages.append(task.status.message)
+        return any(self.translate(m) is not None for m in messages)
+
+    @staticmethod
+    def task_text(task: Task) -> str:
+        """The text a task answered with, for a peer that sends no event metadata:
+        its artifacts' text, else its last agent message's."""
+        text = "".join(
+            p.text
+            for artifact in task.artifacts
+            for p in artifact.parts
+            if p.WhichOneof("content") == "text"
+        )
+        if text:
+            return text
+        messages = [*task.history]
+        if task.status.HasField("message"):
+            messages.append(task.status.message)
+        agent = [m for m in messages if m.role == Role.ROLE_AGENT]
+        return get_message_text(agent[-1]) if agent else ""
+
     def to_history_message(self, raw: A2AMessage) -> AnyMessage | None:
         """Convert an A2A history message to the appropriate internal message type.
 
@@ -275,9 +340,6 @@ class A2AToHVEvent:
         text when no metadata is present. Returns None for non-conversation
         events (ReasoningEvent, UpdateEvent, etc.) that carry no LLM context.
         """
-        from a2a.helpers import get_message_text
-        from a2a.types import Role
-
         event = self.translate(raw)
         if event is None:
             text = get_message_text(raw)
