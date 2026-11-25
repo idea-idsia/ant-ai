@@ -99,6 +99,28 @@ def read_file(path: str) -> str:
 
 MCP tools follow the same contract: a server answering with `isError` raises `ToolError` on this side. The flag is carried through events, A2A history and the agent's state, but is not sent to the model.
 
+### Limiting tool results
+
+Everything a tool returns goes into the conversation, so one long result can fill the model's context. Before a result is serialized, [`ToolStep`][ant_ai.steps.tool_step.ToolStep] passes it through the tool's [`limit_output()`][ant_ai.tools.tool.Tool.limit_output]. By default, a result longer than `max_output_chars` characters (100,000) keeps its start, with a note that tells the model how much was cut. Set `max_output_chars=None` for no limit, also on a tool loaded with `mcp_tools_from_url()`. The trace keeps the full result.
+
+A tool that knows its results overrides `limit_output()`, with the helpers [`keep_start()`][ant_ai.tools.tool.keep_start] and [`keep_end()`][ant_ai.tools.tool.keep_end], which also tell the model how much was cut and, with `hint`, how to get the rest:
+
+```python
+from ant_ai import Tool
+from ant_ai.tools import keep_end
+
+
+class Logs(Tool):
+    def tail(self, service: str) -> str:
+        """Return the log of a service."""
+        ...
+
+    def limit_output(self, output):
+        return keep_end(output, 20_000, hint="ask for a shorter time range")
+```
+
+For a class-based tool, `limit_output()` applies to all its methods. [`ShellTool`][ant_ai.tools.builtins.shell_tool.ShellTool] and [`FilesystemTool`][ant_ai.tools.builtins.filesystem_tool.FilesystemTool] use the same limit but cut in their own way: the shell keeps the end of `stdout` and `stderr`, where a failing command usually says why; the filesystem keeps the start of a file or of the search matches and the first entries of a listing. Their notes point the model to a filtered command, `read_file` with `offset` and `limit`, or a subfolder.
+
 ### Class-based tools (namespaces)
 
 Group related tools under a single class. Each public method becomes a separate tool exposed to the LLM as `ClassName.method_name`.

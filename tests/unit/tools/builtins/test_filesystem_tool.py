@@ -318,3 +318,32 @@ def test_edit_file_keeps_the_line_ending_of_the_lines_it_replaces(
     (workspace / "mixed.txt").write_bytes(b"a\r\nb\r\nc\nd\n")
     fs_tool.edit_file("mixed.txt", "c\nd", "x\ny")
     assert (workspace / "mixed.txt").read_bytes() == b"a\r\nb\r\nx\ny\n"
+
+
+def test_limit_output_keeps_the_start_of_a_long_file(workspace: Path) -> None:
+    tool = FilesystemTool(workspace_root=str(workspace), max_output_chars=5)
+    (workspace / "big.txt").write_text("0123456789", encoding="utf-8")
+    assert tool.limit_output(tool.read_file("big.txt")) == (
+        "01234\n[5 more characters cut; read_file with offset and limit, "
+        "or a narrower search, shows the rest]"
+    )
+
+
+def test_limit_output_keeps_the_first_entries_of_a_long_listing(
+    workspace: Path,
+) -> None:
+    tool = FilesystemTool(workspace_root=str(workspace), max_output_chars=12)
+    for name in ("a.txt", "b.txt", "c.txt", "d.txt"):
+        (workspace / name).write_text("", encoding="utf-8")
+    assert tool.limit_output(tool.list_dir()) == [
+        "a.txt",
+        "b.txt",
+        "[2 more entries cut; list a subfolder or pass a lower depth to see the rest]",
+    ]
+
+
+def test_limit_output_leaves_a_short_result_unchanged(
+    fs_tool: FilesystemTool,
+) -> None:
+    assert fs_tool.limit_output("short") == "short"
+    assert fs_tool.limit_output(["a", "b"]) == ["a", "b"]

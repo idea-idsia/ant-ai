@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
+import json
 import typing
 from asyncio import AbstractEventLoop
 from collections.abc import Awaitable, Callable
@@ -30,6 +31,54 @@ current_tool_call: ContextVar[ToolCall | None] = ContextVar(
     "current_tool_call", default=None
 )
 """The tool call being executed, set by `ToolStep` while its tool runs."""
+
+
+def _serialize_result(res: Any) -> str:
+    """Serialize a tool result to a JSON string or plain string.
+
+    Args:
+        res: The raw value returned by a tool.
+
+    Returns:
+        A JSON string for Pydantic models, dicts, and lists; `str(res)` otherwise.
+    """
+    if isinstance(res, BaseModel):
+        return res.model_dump_json()
+    if isinstance(res, (dict, list)):
+        return json.dumps(res)
+    return str(res)
+
+
+_DEFAULT_HINT: str = "call the tool again with narrower arguments for a shorter result"
+
+
+def _cut_note(what: str, hint: str) -> str:
+    return f"[{what} cut; {hint}]" if hint else f"[{what} cut]"
+
+
+def keep_start(text: str, max_chars: int, hint: str = "") -> str:
+    """Keep the first `max_chars` characters of `text`, with a note of how many were cut.
+
+    A helper for `Tool.limit_output`: the model can tell the result was cut,
+    and `hint`, if given, tells it how to get the rest.
+    """
+    if len(text) <= max_chars:
+        return text
+    note: str = _cut_note(f"{len(text) - max_chars} more characters", hint)
+    return f"{text[:max_chars]}\n{note}"
+
+
+def keep_end(text: str, max_chars: int, hint: str = "") -> str:
+    """Keep the last `max_chars` characters of `text`, with a note of how many were cut.
+
+    A helper for `Tool.limit_output`, for outputs whose end matters most, such
+    as a command that fails after a long log. `hint`, if given, tells the
+    model how to get the rest.
+    """
+    if len(text) <= max_chars:
+        return text
+    cut: int = len(text) - max_chars
+    return f"{_cut_note(f'{cut} earlier characters', hint)}\n{text[cut:]}"
 
 
 def _is_public_callable(name: str, value: Any) -> bool:
@@ -195,11 +244,16 @@ class Tool(BaseModel):
         default=None,
         description="The parameters needed by the tool. This is a self-constructed field.",
     )
+    max_output_chars: int | None = Field(
+        default=100_000,
+        description="Longest result, in characters, that reaches the model. None for no limit.",
+    )
 
     _func: Callable[..., Any] | None = PrivateAttr(default=None)
     __namespace_methods__: list[str] = []
     _func_signature: inspect.Signature | None = PrivateAttr(default=None)
     _wants_ctx: bool = PrivateAttr(default=False)
+    _namespace: Tool | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _set_defaults(self) -> Tool:
@@ -259,6 +313,25 @@ class Tool(BaseModel):
 
         bound = self._func_signature.bind_partial(*args, **kwargs)
         return self._func(*bound.args, **bound.kwargs)
+
+    def limit_output(self, output: Any) -> Any:
+        """Limit what one call of this tool returns before it reaches the model.
+
+        `ToolStep` passes every result of the tool through this method, before
+        it is serialized. By default a result longer than `max_output_chars`
+        characters keeps its start, with a note of how much was cut. A tool
+        that knows its results overrides it, for example with `keep_end` to
+        keep the end; for a namespace tool, the method of the class applies to
+        all its methods.
+        """
+        if self._namespace is not None:
+            return self._namespace.limit_output(output)
+        if self.max_output_chars is None:
+            return output
+        text: str = _serialize_result(output)
+        if len(text) <= self.max_output_chars:
+            return output
+        return keep_start(text, self.max_output_chars, _DEFAULT_HINT)
 
     @property
     def is_namespace(self) -> bool:
@@ -382,6 +455,7 @@ class Tool(BaseModel):
                 name=f"{ns}_{method_name}",
                 description=doc.strip() or f"Method {method_name} on {ns}",
             )
+            method_tool._namespace = self
             tools.append(method_tool)
 
         return tools

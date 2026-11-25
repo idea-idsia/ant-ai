@@ -397,3 +397,42 @@ async def test_mcp_tools_from_url_builds_tools_list(monkeypatch):
     tools: list[Tool] = await mcp_tools_from_url("http://x", namespace="remote")
     assert [t.name for t in tools] == ["remote.t1", "remote.t2"]
     assert [t.description for t in tools] == ["desc:t1", "desc:t2"]
+
+
+@pytest.mark.unit
+def test_keep_start_cuts_the_end_and_says_how_much():
+    from ant_ai.tools import keep_start
+
+    assert keep_start("abcdef", 10) == "abcdef"
+    assert keep_start("abcdef", 4) == "abcd\n[2 more characters cut]"
+    assert (
+        keep_start("abcdef", 4, "ask again")
+        == "abcd\n[2 more characters cut; ask again]"
+    )
+
+
+@pytest.mark.unit
+def test_keep_end_cuts_the_start_and_says_how_much():
+    from ant_ai.tools import keep_end
+
+    assert keep_end("abcdef", 10) == "abcdef"
+    assert keep_end("abcdef", 4) == "[2 earlier characters cut]\ncdef"
+    assert (
+        keep_end("abcdef", 4, "ask again")
+        == "[2 earlier characters cut; ask again]\ncdef"
+    )
+
+
+@pytest.mark.unit
+def test_namespace_methods_use_the_limit_output_of_their_tool():
+    class Short(Tool):
+        def echo(self, text: str) -> str:
+            """Echo text."""
+            return text
+
+        def limit_output(self, output):
+            return output[:3]
+
+    (method,) = Short()._expand_namespace()
+    assert "limit_output" not in Short.__namespace_methods__
+    assert method.limit_output("abcdef") == "abc"

@@ -4,10 +4,12 @@ import re
 import subprocess
 from re import Pattern
 from subprocess import CompletedProcess
+from typing import Any
 
-from ant_ai.tools.tool import Tool
+from ant_ai.tools.tool import Tool, keep_end
 
 # `;`, `&&`, `||`, `|`, `|&`, newline and `&`, but not the `&` of redirections like `2>&1`.
+_SHELL_HINT: str = "filter the output, e.g. with grep, head or tail, to see the rest"
 _COMMAND_SEPARATOR: Pattern[str] = re.compile(r"&&|\|\||\|&?|;|\n|(?<![<>])&(?!>)")
 _COMMAND_SUBSTITUTION: Pattern[str] = re.compile(r"\$\(|`|<\(|>\(")
 
@@ -45,12 +47,28 @@ class ShellTool(Tool):
         Policy violations, timeouts, and runtime errors are returned as a dict
         with a non-zero `returncode` and the reason in `stderr`, so the agent
         receives a recoverable error rather than an exception.
+        `stdout` and `stderr` reach the model with their last `max_output_chars`
+        characters only, where a failing command usually says why.
     """
 
     cwd: str = "/workspace"
     timeout: int = 60
     allowed_commands: list[str] | None = None
     blocked_commands: list[str] | None = None
+    max_output_chars: int | None = 100_000
+
+    def limit_output(self, output: Any) -> Any:
+        """Keep the last `max_output_chars` characters of `stdout` and `stderr`."""
+        if self.max_output_chars is None:
+            return output
+        if not isinstance(output, dict):
+            return output
+        return {
+            key: keep_end(value, self.max_output_chars, _SHELL_HINT)
+            if isinstance(value, str)
+            else value
+            for key, value in output.items()
+        }
 
     def run(self, command: str) -> dict:
         """Execute a shell command in the workspace. Prefer running scripts by filename (e.g. `python3 hello.py`) over passing file contents inline.

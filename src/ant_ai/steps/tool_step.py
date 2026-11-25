@@ -24,23 +24,7 @@ from ant_ai.core.result import (
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.observer import obs
 from ant_ai.tools.registry import ToolRegistry
-from ant_ai.tools.tool import Tool, current_tool_call
-
-
-def _serialize_result(res: Any) -> str:
-    """Serialize a tool result to a JSON string or plain string.
-
-    Args:
-        res: The raw value returned by a tool.
-
-    Returns:
-        A JSON string for Pydantic models, dicts, and lists; `str(res)` otherwise.
-    """
-    if isinstance(res, BaseModel):
-        return res.model_dump_json()
-    if isinstance(res, (dict, list)):
-        return json.dumps(res)
-    return str(res)
+from ant_ai.tools.tool import Tool, _serialize_result, current_tool_call
 
 
 class ToolStep(BaseModel):
@@ -198,8 +182,9 @@ class ToolStep(BaseModel):
                         tool_call_id=tool_call_id,
                         tool_name=tool_name,
                     )
-                serialized = _serialize_result(res)
-                span.update(output=serialized)
+                # The trace keeps the full result, the model gets the limited one.
+                span.update(output=_serialize_result(res))
+                serialized = _serialize_result(tool.limit_output(res))
             return ToolCallResultMessage(
                 name=tool_name,
                 tool_call_id=tool_call_id,
