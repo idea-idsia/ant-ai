@@ -107,7 +107,7 @@ class BaseAgent(BaseModel):
     _loop: BaseAgentLoop = PrivateAttr()
     _hook_layer: HookLayer = PrivateAttr()
     _skills: list[AgentSkill] = PrivateAttr(default_factory=list)
-    _private_tools: set[str] = PrivateAttr(default_factory=set)
+    _private_tools: dict[int, Tool] = PrivateAttr(default_factory=dict)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -126,17 +126,14 @@ class BaseAgent(BaseModel):
         hooks: list[AgentHook] = list(self.hooks)
         if self.memory is not None:
             tools.append(self.memory)
-        self._registry = ToolRegistry(
-            [t for t in tools if not isinstance(t, SubagentTool)]
-        )
-        self._private_tools = set()
+        self._registry = ToolRegistry()
+        self._private_tools = {}
+        for t in tools:
+            self._register_tool(t)
         if self.planning:
             store = PlanStore()
-            self._register_private(PlanningTool(agent=self.name, store=store))
+            self._register_tool(PlanningTool(agent=self.name, store=store))
             hooks.append(PlanningHook(agent=self.name, store=store))
-        for t in tools:
-            if isinstance(t, SubagentTool):
-                self._register_private(t._bind(self))
         self._hook_layer = HookLayer(hooks=hooks)
         self._skills = (
             SkillLoader(self.skills).load() if self.skills is not None else []
@@ -144,18 +141,25 @@ class BaseAgent(BaseModel):
         self._loop: BaseAgentLoop = self._make_loop()
         return self
 
-    def _register_private(self, tool: Tool) -> None:
-        """Register a tool that subagents created at runtime do not get."""
-        before: set[str] = {t.name or "" for t in self._registry.tools}
+    def _register_tool(self, tool: Tool) -> None:
+        """Register `tool`, keeping subagent and planning tools from subagents."""
+        if isinstance(tool, SubagentTool):
+            tool = tool._bind(self)
+        elif not isinstance(tool, PlanningTool):
+            self._registry.register(tool)
+            return
+        before: set[int] = {id(t) for t in self._registry.tools}
         self._registry.register(tool)
-        self._private_tools |= {t.name or "" for t in self._registry.tools} - before
+        for t in self._registry.tools:
+            if id(t) not in before:
+                self._private_tools[id(t)] = t
 
     def _delegable_tools(self) -> dict[str, Tool]:
         """The tools a `SubagentTool` can give to a subagent, by name."""
         return {
             t.name: t
             for t in self._registry.tools
-            if t.name and t.name not in self._private_tools
+            if t.name and id(t) not in self._private_tools
         }
 
     @abstractmethod

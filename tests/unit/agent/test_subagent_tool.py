@@ -10,6 +10,7 @@ from ant_ai.core.message import Message, ToolCall, ToolFunction
 from ant_ai.core.response import ChatLLMResponse
 from ant_ai.core.types import InvocationContext, State
 from ant_ai.llm.protocol import ChatLLM
+from ant_ai.tools.builtins.planning_tool import PlanningTool, PlanStore
 from ant_ai.tools.tool import tool
 
 
@@ -183,6 +184,37 @@ async def test_a_tool_added_later_can_be_given_to_a_subagent():
 
     assert results(events) == [("subagent", "k", False)]
     assert llm.requests[1][1] == ["lookup"]
+
+
+@pytest.mark.unit
+def test_a_planning_tool_given_explicitly_is_not_delegable():
+    given = Agent(
+        name="a",
+        system_prompt="a",
+        llm=ScriptedLLM(),
+        tools=[lookup, PlanningTool(agent="a", store=PlanStore()), SubagentTool()],
+    )
+    added = Agent(name="a", system_prompt="a", llm=ScriptedLLM(), tools=[lookup])
+    added.add_tool(SubagentTool())
+    added.add_tool(PlanningTool(agent="a", store=PlanStore()))
+
+    for lead in (given, added):
+        assert "PlanningTool_write_todos" in lead.registry
+        assert list(lead._delegable_tools()) == ["lookup"]
+
+
+@pytest.mark.unit
+def test_a_name_freed_by_a_subagent_tool_can_be_delegated_again():
+    lead = Agent(
+        name="a",
+        system_prompt="a",
+        llm=ScriptedLLM(),
+        tools=[SubagentTool(), SubagentTool(name="lookup")],
+    )
+    lead.registry.remove("lookup")
+    lead.add_tool(lookup)
+
+    assert list(lead._delegable_tools()) == ["lookup"]
 
 
 @pytest.mark.unit
