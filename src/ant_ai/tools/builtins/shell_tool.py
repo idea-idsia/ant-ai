@@ -61,35 +61,23 @@ class ShellTool(Tool):
         Returns:
             A dict with keys: stdout, stderr, returncode.
         """
-        if self.allowed_commands:
-            allowed: Pattern[str] = re.compile(
-                "|".join(f"(?:{p})" for p in self.allowed_commands)
-            )
-            parts: list[str] = [
-                p.strip() for p in _COMMAND_SEPARATOR.split(command) if p.strip()
-            ]
-            if (
-                _COMMAND_SUBSTITUTION.search(command)
-                or not parts
-                or not all(allowed.match(part) for part in parts)
-            ):
-                return {
-                    "stdout": "",
-                    "stderr": "Command not allowed by policy",
-                    "returncode": -1,
-                }
+        violation: str | None = self._policy_violation(command)
+        if violation is not None:
+            return _failure(violation)
+        return self._execute(command)
 
-        if self.blocked_commands:
-            blocked: Pattern[str] = re.compile(
-                "|".join(f"(?:{p})" for p in self.blocked_commands)
-            )
-            if blocked.search(command):
-                return {
-                    "stdout": "",
-                    "stderr": "Command is blocked by policy",
-                    "returncode": -1,
-                }
+    def _policy_violation(self, command: str) -> str | None:
+        """Return why `command` is refused by the allow/block lists, or None if it may run."""
+        if self.allowed_commands and not _is_allowed(command, self.allowed_commands):
+            return "Command not allowed by policy"
+        if self.blocked_commands and _any_pattern(self.blocked_commands).search(
+            command
+        ):
+            return "Command is blocked by policy"
+        return None
 
+    def _execute(self, command: str) -> dict:
+        """Run `command` in `cwd`, turning failures into a non-zero result."""
         try:
             result: CompletedProcess[str] = subprocess.run(
                 command,
@@ -99,26 +87,35 @@ class ShellTool(Tool):
                 timeout=self.timeout,
                 shell=True,
             )
-            return {
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "returncode": result.returncode,
-            }
         except subprocess.TimeoutExpired:
-            return {
-                "stdout": "",
-                "stderr": f"Command timed out after {self.timeout} seconds",
-                "returncode": -1,
-            }
+            return _failure(f"Command timed out after {self.timeout} seconds")
         except FileNotFoundError:
-            return {
-                "stdout": "",
-                "stderr": f"Working directory not found: {self.cwd}",
-                "returncode": -1,
-            }
+            return _failure(f"Working directory not found: {self.cwd}")
         except Exception as e:
-            return {
-                "stdout": "",
-                "stderr": str(e),
-                "returncode": -1,
-            }
+            return _failure(str(e))
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode,
+        }
+
+
+def _any_pattern(patterns: list[str]) -> Pattern[str]:
+    return re.compile("|".join(f"(?:{p})" for p in patterns))
+
+
+def _is_allowed(command: str, patterns: list[str]) -> bool:
+    """Whether every command in the chain matches a pattern, with no command substitution."""
+    allowed: Pattern[str] = _any_pattern(patterns)
+    parts: list[str] = [
+        p.strip() for p in _COMMAND_SEPARATOR.split(command) if p.strip()
+    ]
+    return (
+        not _COMMAND_SUBSTITUTION.search(command)
+        and bool(parts)
+        and all(allowed.match(part) for part in parts)
+    )
+
+
+def _failure(stderr: str) -> dict:
+    return {"stdout": "", "stderr": stderr, "returncode": -1}

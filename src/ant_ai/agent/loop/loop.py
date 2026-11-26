@@ -1,27 +1,30 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ant_ai.core.events import BaseEvent
 from ant_ai.core.exceptions import HookBlockedError, HookMaxRetriesError
 from ant_ai.core.message import Message
 from ant_ai.core.result import LLMOutput, StepResult
-from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks import (
     HookLayer,
     PostModelBlock,
-    PostModelDecision,
     PostModelFallback,
     PostModelPass,
     PostModelRetry,
-    WrapCall,
 )
 from ant_ai.observer import obs
-from ant_ai.steps import Step
-from ant_ai.tools.registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from ant_ai.core.events import BaseEvent
+    from ant_ai.core.types import InvocationContext, State
+    from ant_ai.hooks import PostModelDecision, WrapCall
+    from ant_ai.steps import Step
+    from ant_ai.tools.registry import ToolRegistry
 
 
 class BaseAgentLoop(ABC, BaseModel):

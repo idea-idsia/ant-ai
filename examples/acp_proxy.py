@@ -2,7 +2,7 @@
 
 VSCode (or any ACP client) spawns this script as a subprocess and talks to it
 over stdin/stdout. The proxy forwards every JSON-RPC message over WebSocket to
-a remote :class:`~ant_ai.acp.server.ACPServer` and streams responses back.
+a remote :class:`~ant_ai.acp.server.server.ACPServer` and streams responses back.
 
 Usage
 -----

@@ -5,10 +5,10 @@ import httpx
 import pytest
 from a2a.utils.errors import TaskNotFoundError
 
-from ant_ai.a2a.agent import A2AAgentTool
 from ant_ai.a2a.client import AgentClientError
-from ant_ai.a2a.config import A2AConfig
-from ant_ai.a2a.session import current_session_id
+from ant_ai.a2a.client.config import A2AConfig
+from ant_ai.a2a.client.session import current_session_id
+from ant_ai.a2a.client.tool import A2AAgentTool
 from ant_ai.core.events import (
     ClarificationNeededEvent,
     ContentDeltaEvent,

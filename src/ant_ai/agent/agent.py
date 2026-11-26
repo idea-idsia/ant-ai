@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ant_ai.agent.base import BaseAgent
 from ant_ai.agent.loop.react import ReActLoop
 from ant_ai.steps.llm_step import LLMStep
 from ant_ai.steps.tool_step import ToolStep
-from ant_ai.tools.tool import Tool
+
+if TYPE_CHECKING:
+    from ant_ai.tools.tool import Tool
 
 
 class Agent(BaseAgent):

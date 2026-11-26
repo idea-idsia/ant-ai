@@ -131,6 +131,21 @@ class LiteLLMChat(ChatLLM):
 
         return kwargs
 
+    @contextmanager
+    def _completion(
+        self,
+        messages: list[BaseMessage],
+        tools: list | None,
+        response_format: dict | type[BaseModel] | None,
+        stream: bool = False,
+    ) -> Generator[dict]:
+        """Yield the completion kwargs, translating errors raised while they are used."""
+        kwargs = self._build_completion_kwargs(
+            messages, tools=tools, response_format=response_format, stream=stream
+        )
+        with _translate_errors(self.model):
+            yield kwargs
+
     def invoke(
         self,
         messages: list[BaseMessage],
@@ -139,12 +154,7 @@ class LiteLLMChat(ChatLLM):
         tools: list | None = None,
         response_format: dict | type[BaseModel] | None = None,
     ) -> ChatLLMResponse:
-        kwargs = self._build_completion_kwargs(
-            messages,
-            tools=tools,
-            response_format=response_format,
-        )
-        with _translate_errors(self.model):
+        with self._completion(messages, tools, response_format) as kwargs:
             return to_chatllm_response(cast(ModelResponse, completion(**kwargs)))
 
     async def ainvoke(
@@ -155,12 +165,7 @@ class LiteLLMChat(ChatLLM):
         tools: list | None = None,
         response_format: dict | type[BaseModel] | None = None,
     ) -> ChatLLMResponse:
-        kwargs = self._build_completion_kwargs(
-            messages,
-            tools=tools,
-            response_format=response_format,
-        )
-        with _translate_errors(self.model):
+        with self._completion(messages, tools, response_format) as kwargs:
             return to_chatllm_response(cast(ModelResponse, await acompletion(**kwargs)))
 
     def stream(
@@ -172,14 +177,9 @@ class LiteLLMChat(ChatLLM):
         response_format: dict | type[BaseModel] | None = None,
     ) -> AsyncIterator[ChatLLMStreamChunk]:
         async def gen() -> AsyncIterator[ChatLLMStreamChunk]:
-            kwargs = self._build_completion_kwargs(
-                messages,
-                tools=tools,
-                response_format=response_format,
-                stream=True,
-            )
-
-            with _translate_errors(self.model):
+            with self._completion(
+                messages, tools, response_format, stream=True
+            ) as kwargs:
                 stream = cast(CustomStreamWrapper, await acompletion(**kwargs))
                 async for chunk in stream:
                     choice_delta = chunk.choices[0].delta

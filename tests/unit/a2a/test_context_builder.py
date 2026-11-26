@@ -7,7 +7,7 @@ import pytest
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import Task, TaskState, TaskStatus
 
-from ant_ai.a2a.context_builder import HistoryRequestContextBuilder
+from ant_ai.a2a.server.context_builder import HistoryRequestContextBuilder
 from ant_ai.observer import obs
 
 

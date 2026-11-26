@@ -58,7 +58,7 @@ colony.collab("quality", "codegen")  # quality can call codegen
 colony.collab("codegen", "quality", mutual=True)
 ```
 
-Under the hood this creates an [`A2AAgentTool`][ant_ai.a2a.agent.A2AAgentTool] configured with the target's URL (from `AgentCard.supported_interfaces[0].url`), and attaches it to the source agent.
+Under the hood this creates an [`A2AAgentTool`][ant_ai.a2a.client.tool.A2AAgentTool] configured with the target's URL (from `AgentCard.supported_interfaces[0].url`), and attaches it to the source agent.
 
 ## Deploying agents
 

@@ -103,4 +103,4 @@ The terminal whole-message status update is always sent too, so a peer that does
 
 ### Hive-internal agents
 
-An agent called mainly by other agents, via [`A2AAgentTool`][ant_ai.a2a.agent.A2AAgentTool] in a [`Colony`](../multi-agent/index.md), gains nothing from `stream_artifacts=True`: the caller consumes the result as one string once the call completes and discards every delta. Set it `False` for agents that are purely hive-internal collaborators.
+An agent called mainly by other agents, via [`A2AAgentTool`][ant_ai.a2a.client.tool.A2AAgentTool] in a [`Colony`](../multi-agent/index.md), gains nothing from `stream_artifacts=True`: the caller consumes the result as one string once the call completes and discards every delta. Set it `False` for agents that are purely hive-internal collaborators.

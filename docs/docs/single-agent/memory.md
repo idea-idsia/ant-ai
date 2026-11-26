@@ -71,7 +71,7 @@ task_client.send_task(
 )
 ```
 
-The [`A2AExecutor`][ant_ai.a2a.executor.A2AExecutor] forwards it into `InvocationContext` automatically.
+The [`A2AExecutor`][ant_ai.a2a.server.executor.A2AExecutor] forwards it into `InvocationContext` automatically.
 
 !!! warning "The client chooses `user_id`"
     The metadata comes from the client, so a client can send another user's `user_id` and reach their memories. When users must not see each other's memories, authenticate requests and set `user_id` from the authenticated identity, for example in a [custom `from_metadata`](index.md#custom-invocation-context), rather than trusting the value the client sends.

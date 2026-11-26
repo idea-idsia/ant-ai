@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import re
 import threading
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from re import Pattern
 
@@ -14,6 +16,37 @@ from ant_ai.tools.tool import Tool, ToolError
 # The tool calls of one step run in parallel: edits and writes take turns, so an
 # edit never writes back a file that another call changed after it was read.
 _WRITE_LOCK: threading.Lock = threading.Lock()
+
+
+@contextmanager
+def _tool_errors(path: str, missing: str | None = None) -> Generator[None]:
+    """Turn a workspace escape or an OS failure on `path` into `ToolError`.
+
+    `missing` names what was not found when the failure is `FileNotFoundError`.
+    """
+    try:
+        yield
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    except OSError as e:
+        if missing is not None and isinstance(e, FileNotFoundError):
+            raise ToolError(f"{missing} not found: {path}") from e
+        raise ToolError(f"{e.strerror or e}: {path}") from e
+
+
+def _edit_pattern(old_string: str) -> Pattern[str]:
+    """Match `old_string` with each line break as either `\\n` or `\\r\\n`."""
+    old_lines: list[str] = old_string.replace("\r\n", "\n").split("\n")
+    return re.compile(r"\r?\n".join(map(re.escape, old_lines)))
+
+
+def _check_occurrences(count: int, path: str, replace_all: bool) -> None:
+    if count == 0:
+        raise ToolError(f"old_string not found in {path}")
+    if count > 1 and not replace_all:
+        raise ToolError(
+            f"old_string appears {count} times in {path}: add surrounding text to make it unique, or set replace_all"
+        )
 
 
 class FilesystemTool(Tool):
@@ -98,8 +131,7 @@ class FilesystemTool(Tool):
             text: str = self._read(path, newline="")
             # The model writes "\n" even for a file with "\r\n": match either.
             file_eol: str = "\r\n" if "\r\n" in text else "\n"
-            old_lines: list[str] = old_string.replace("\r\n", "\n").split("\n")
-            pattern: Pattern[str] = re.compile(r"\r?\n".join(map(re.escape, old_lines)))
+            pattern: Pattern[str] = _edit_pattern(old_string)
             new_lines: list[str] = new_string.replace("\r\n", "\n").split("\n")
 
             def replace(match: re.Match[str]) -> str:
@@ -110,49 +142,32 @@ class FilesystemTool(Tool):
                 return eol.join(new_lines)
 
             count: int = len(pattern.findall(text))
-            if count == 0:
-                raise ToolError(f"old_string not found in {path}")
-            if count > 1 and not replace_all:
-                raise ToolError(
-                    f"old_string appears {count} times in {path}: add surrounding text to make it unique, or set replace_all"
-                )
-            try:
+            _check_occurrences(count, path, replace_all)
+            with _tool_errors(path):
                 self._resolve(path).write_text(
                     pattern.sub(replace, text, count=0 if replace_all else 1),
                     encoding="utf-8",
                     newline="",
                 )
-            except OSError as e:
-                raise ToolError(f"{e.strerror or e}: {path}") from e
         replaced: int = count if replace_all else 1
         return f"Replaced {replaced} occurrence{'' if replaced == 1 else 's'} in {path}"
 
     def write_file(self, path: str, content: str) -> str:
         """Write content to a file, overwriting if it exists. Creates parent directories as needed. Path is relative to /workspace."""
-        try:
+        with _tool_errors(path):
             target: Path = self._resolve(path)
             target.parent.mkdir(parents=True, exist_ok=True)
             with _WRITE_LOCK:
                 target.write_text(content, encoding="utf-8")
-            return f"Written {len(content.encode('utf-8'))} bytes to {path}"
-        except ValueError as e:
-            raise ToolError(str(e)) from e
-        except OSError as e:
-            raise ToolError(f"{e.strerror or e}: {path}") from e
+        return f"Written {len(content.encode('utf-8'))} bytes to {path}"
 
     def list_dir(self, path: str = ".", depth: int = 4) -> list[str]:
         """List files and directories recursively at the given path, up to `depth` levels deep. Path is relative to /workspace. Defaults to workspace root."""
-        try:
+        results: list[str] = []
+        with _tool_errors(path, missing="directory"):
             target: Path = self._resolve(path)
-            results: list[str] = []
             self._walk(target, target, depth, results)
-            return sorted(results)
-        except ValueError as e:
-            raise ToolError(str(e)) from e
-        except FileNotFoundError as e:
-            raise ToolError(f"directory not found: {path}") from e
-        except OSError as e:
-            raise ToolError(f"{e.strerror or e}: {path}") from e
+        return sorted(results)
 
     def _walk(self, base: Path, current: Path, depth: int, results: list[str]) -> None:
         """Collect paths (relative to `base`) of entries under `current`, recursing up to `depth` levels."""
@@ -173,49 +188,49 @@ class FilesystemTool(Tool):
             root: Path = self._resolve(path)
             regex: Pattern[str] = re.compile(pattern)
             results: list[str] = []
-            for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-                dirnames.sort()
-                dirnames[:] = [
-                    d for d in dirnames if not self._is_ignored(Path(dirpath, d), True)
-                ]
-                if len(Path(dirpath).relative_to(root).parts) >= depth:
-                    dirnames.clear()
-                for filename in sorted(filenames):
-                    file: Path = Path(dirpath) / filename
-                    if (
-                        not file.is_file()
-                        or not self._is_inside(file)
-                        or self._is_ignored(file, False)
-                    ):
-                        continue
-                    try:
-                        for lineno, line in enumerate(
-                            file.read_text(
-                                encoding="utf-8", errors="replace"
-                            ).splitlines(),
-                            start=1,
-                        ):
-                            if regex.search(line):
-                                rel: Path = file.relative_to(self.workspace_root)
-                                results.append(f"{rel}:{lineno}: {line}")
-                    except Exception:
-                        continue
+            for file in self._searchable_files(root, depth):
+                self._search_file(file, regex, results)
             return "\n".join(results) if results else "No matches found"
         except ValueError as e:
             raise ToolError(str(e)) from e
         except re.error as e:
             raise ToolError(f"invalid regex pattern: {e}") from e
 
+    def _searchable_files(self, root: Path, depth: int) -> Iterator[Path]:
+        """Yield the files `search` reads under `root`, up to `depth` levels deep."""
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames.sort()
+            dirnames[:] = [
+                d for d in dirnames if not self._is_ignored(Path(dirpath, d), True)
+            ]
+            if len(Path(dirpath).relative_to(root).parts) >= depth:
+                dirnames.clear()
+            for filename in sorted(filenames):
+                file: Path = Path(dirpath) / filename
+                if (
+                    file.is_file()
+                    and self._is_inside(file)
+                    and not self._is_ignored(file, False)
+                ):
+                    yield file
+
+    def _search_file(self, file: Path, regex: Pattern[str], results: list[str]) -> None:
+        """Append the lines of `file` matching `regex`; skip a file that fails to read."""
+        try:
+            for lineno, line in enumerate(
+                file.read_text(encoding="utf-8", errors="replace").splitlines(),
+                start=1,
+            ):
+                if regex.search(line):
+                    rel: Path = file.relative_to(self.workspace_root)
+                    results.append(f"{rel}:{lineno}: {line}")
+        except Exception:
+            return
+
     def _read(self, path: str, newline: str | None = None) -> str:
         """Read a workspace file as text, turning failures into `ToolError`."""
-        try:
+        with _tool_errors(path, missing="file"):
             return self._resolve(path).read_text(encoding="utf-8", newline=newline)
-        except ValueError as e:
-            raise ToolError(str(e)) from e
-        except FileNotFoundError as e:
-            raise ToolError(f"file not found: {path}") from e
-        except OSError as e:
-            raise ToolError(f"{e.strerror or e}: {path}") from e
 
     def _resolve(self, path: str) -> Path:
         """Resolve path relative to base, ensuring it stays within base."""

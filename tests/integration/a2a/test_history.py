@@ -7,8 +7,8 @@ from uuid import uuid4
 import pytest
 
 from ant_ai.a2a.client import A2AClient
+from ant_ai.a2a.client.config import A2AConfig
 from ant_ai.a2a.colony import Colony
-from ant_ai.a2a.config import A2AConfig
 from ant_ai.agent.agent import Agent
 from ant_ai.core.events import (
     ClarificationNeededEvent,

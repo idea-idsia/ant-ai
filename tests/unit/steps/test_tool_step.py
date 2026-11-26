@@ -13,7 +13,8 @@ from ant_ai.core.result import (
     TransitionAction,
 )
 from ant_ai.core.types import InvocationContext, State
-from ant_ai.steps.tool_step import ToolStep, _serialize_result
+from ant_ai.steps.tool_call import parse_args, serialize_result
+from ant_ai.steps.tool_step import ToolStep
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import tool as tool_decorator
 
@@ -48,42 +49,39 @@ def test_serialize_result_base_model():
     class M(BaseModel):
         x: int
 
-    assert _serialize_result(M(x=1)) == '{"x":1}'
+    assert serialize_result(M(x=1)) == '{"x":1}'
 
 
 @pytest.mark.unit
 def test_serialize_result_dict():
-    assert _serialize_result({"a": 1}) == '{"a": 1}'
+    assert serialize_result({"a": 1}) == '{"a": 1}'
 
 
 @pytest.mark.unit
 def test_serialize_result_list():
-    assert _serialize_result([1, 2, 3]) == "[1, 2, 3]"
+    assert serialize_result([1, 2, 3]) == "[1, 2, 3]"
 
 
 @pytest.mark.unit
 def test_serialize_result_other():
-    assert _serialize_result(42) == "42"
-    assert _serialize_result("hello") == "hello"
+    assert serialize_result(42) == "42"
+    assert serialize_result("hello") == "hello"
 
 
 @pytest.mark.unit
 def test_parse_args_empty_returns_empty_dict():
-    step = ToolStep(registry=ToolRegistry())
-    assert step._parse_args("", "mytool") == {}
+    assert parse_args("", "mytool") == {}
 
 
 @pytest.mark.unit
 def test_parse_args_valid_json():
-    step = ToolStep(registry=ToolRegistry())
-    assert step._parse_args('{"x": 1}', "mytool") == {"x": 1}
+    assert parse_args('{"x": 1}', "mytool") == {"x": 1}
 
 
 @pytest.mark.unit
 def test_parse_args_invalid_raises_value_error():
-    step = ToolStep(registry=ToolRegistry())
     with pytest.raises(ValueError, match="Could not parse arguments"):
-        step._parse_args("not json at all!!!", "mytool")
+        parse_args("not json at all!!!", "mytool")
 
 
 @pytest.mark.unit

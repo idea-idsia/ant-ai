@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 from abc import abstractmethod
 from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
-from ant_ai.agent.agent import Agent
-from ant_ai.core.events import AgentEvent
-from ant_ai.core.types import InvocationContext, State
-from ant_ai.workflow.workflow import NodeYield
+if TYPE_CHECKING:
+    from ant_ai.agent.agent import Agent
+    from ant_ai.core.events import AgentEvent
+    from ant_ai.core.types import InvocationContext, State
+    from ant_ai.workflow.workflow import NodeYield
 
 
 class BaseAction:

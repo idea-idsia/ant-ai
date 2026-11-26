@@ -15,9 +15,10 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.applications import Starlette
 
-from ant_ai.a2a.context_builder import HistoryRequestContextBuilder
-from ant_ai.a2a.executor import A2AExecutor
+from ant_ai.a2a.server.context_builder import HistoryRequestContextBuilder
+from ant_ai.a2a.server.executor import A2AExecutor
 from ant_ai.agent.agent import Agent
+from ant_ai.core.serving import run_uvicorn
 from ant_ai.core.types import InvocationContext
 from ant_ai.workflow.workflow import Workflow
 
@@ -57,25 +58,7 @@ class A2AServer(BaseModel):
 
     @model_validator(mode="after")
     def _create_request_handler(self) -> A2AServer:
-        request_context_builder = HistoryRequestContextBuilder(
-            should_populate_referred_tasks=True,
-            task_store=self.task_store,
-        )
-
-        self._request_handler: DefaultRequestHandler = DefaultRequestHandler(
-            agent_executor=A2AExecutor(
-                agent=self.agent,
-                workflow=self.workflow,
-                stream_artifacts=self.stream_artifacts,
-                context_class=self.context_class,
-            ),
-            task_store=self.task_store,
-            agent_card=self.agent_card,
-            request_context_builder=request_context_builder,
-            queue_manager=self.queue_manager,
-            push_config_store=self.push_config_store,
-            push_sender=self.push_sender,
-        )
+        self._request_handler: DefaultRequestHandler = _request_handler(self)
         return self
 
     def _build_routes(self) -> list:
@@ -101,23 +84,30 @@ class A2AServer(BaseModel):
         Returns:
             None
         """
-        try:
-            import uvicorn
+        logger.info(
+            f"Starting A2A server for agent '{self.agent.name}' at {self.host}:{self.port}..."
+        )
+        app: Starlette = self.fastapi_app() if use_fastapi else self.starlette_app()
+        logger.info(f"Using {'FastAPI' if use_fastapi else 'Starlette'} application")
+        run_uvicorn(app, self.host, self.port)
 
-            logger.info(
-                f"Starting A2A server for agent '{self.agent.name}' at {self.host}:{self.port}..."
-            )
-            app: Starlette = self.fastapi_app() if use_fastapi else self.starlette_app()
-            logger.info(
-                f"Using {'FastAPI' if use_fastapi else 'Starlette'} application"
-            )
-            uvicorn.run(app, host=self.host, port=self.port)
-        except ImportError as e:
-            raise ImportError(
-                "Uvicorn is not installed. Please install it with 'pip install uvicorn'."
-            ) from e
-        except KeyboardInterrupt:
-            logger.info("Server stopped")
-        except Exception as e:
-            logger.error(f"Failed to start server: {e}")
-            raise RuntimeError(f"Failed to start the server: {e}") from e
+
+def _request_handler(server: A2AServer) -> DefaultRequestHandler:
+    """The SDK handler that runs `server`'s agent for each request."""
+    return DefaultRequestHandler(
+        agent_executor=A2AExecutor(
+            agent=server.agent,
+            workflow=server.workflow,
+            stream_artifacts=server.stream_artifacts,
+            context_class=server.context_class,
+        ),
+        task_store=server.task_store,
+        agent_card=server.agent_card,
+        request_context_builder=HistoryRequestContextBuilder(
+            should_populate_referred_tasks=True,
+            task_store=server.task_store,
+        ),
+        queue_manager=server.queue_manager,
+        push_config_store=server.push_config_store,
+        push_sender=server.push_sender,
+    )

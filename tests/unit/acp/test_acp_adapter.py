@@ -21,8 +21,8 @@ from acp.schema import (
     TextResourceContents,
 )
 
-from ant_ai.acp.adapter import ACPAdapter
-from ant_ai.acp.commands import ACPCommand, ACPCommandContext
+from ant_ai.acp.server import ACPAdapter
+from ant_ai.acp.server.commands import ACPCommand, ACPCommandContext
 from ant_ai.acp.tools import _acp_permissions
 from ant_ai.core.events import (
     ClarificationNeededEvent,
@@ -63,8 +63,8 @@ async def test_new_session_returns_unique_ids():
     r1 = await adapter.new_session(cwd="/tmp")
     r2 = await adapter.new_session(cwd="/tmp")
     assert r1.session_id != r2.session_id
-    assert r1.session_id in adapter._sessions
-    assert r2.session_id in adapter._sessions
+    assert r1.session_id in adapter._sessions.histories
+    assert r2.session_id in adapter._sessions.histories
 
 
 @pytest.mark.asyncio
@@ -142,7 +142,7 @@ async def test_prompt_appends_history():
         session_id=session.session_id,
     )
 
-    history = adapter._sessions[session.session_id]
+    history = adapter._sessions.histories[session.session_id]
     assert any(m.role == "user" for m in history)
     assert any(m.role == "assistant" and m.content == "Reply" for m in history)
 
@@ -179,7 +179,7 @@ async def test_prompt_keeps_tool_calls_and_results_in_history():
         ],
     )
 
-    history = adapter._sessions[sid]
+    history = adapter._sessions.histories[sid]
     assert [type(m) for m in history] == [
         Message,
         ToolCallMessage,
@@ -209,7 +209,7 @@ async def test_clarification_question_survives_into_the_next_prompt():
         ],
     )
 
-    history = adapter._sessions[sid]
+    history = adapter._sessions.histories[sid]
     assert [type(m) for m in history] == [
         Message,
         ToolCallMessage,
@@ -376,16 +376,16 @@ async def test_close_session_cleans_up_state():
     )
 
     sid = session.session_id
-    assert sid in adapter._session_commands_sent
-    assert sid in adapter._session_agents
+    assert sid in adapter._commands.sent
+    assert sid in adapter._sessions.agents
 
     await adapter.close_session(session_id=sid)
 
-    assert sid not in adapter._sessions
-    assert sid not in adapter._session_agents
-    assert sid not in adapter._session_cwds
-    assert sid not in adapter._session_permissions
-    assert sid not in adapter._session_commands_sent
+    assert sid not in adapter._sessions.histories
+    assert sid not in adapter._sessions.agents
+    assert sid not in adapter._sessions.cwds
+    assert sid not in adapter._sessions.permissions
+    assert sid not in adapter._commands.sent
 
 
 @pytest.mark.asyncio
@@ -397,9 +397,9 @@ async def test_delete_session_cleans_up_state():
     resp = await adapter.delete_session(session_id=sid)
 
     assert isinstance(resp, DeleteSessionResponse)
-    assert sid not in adapter._sessions
-    assert sid not in adapter._session_agents
-    assert sid not in adapter._session_cwds
+    assert sid not in adapter._sessions.histories
+    assert sid not in adapter._sessions.agents
+    assert sid not in adapter._sessions.cwds
 
 
 @pytest.mark.asyncio
@@ -440,7 +440,7 @@ async def test_new_session_with_http_mcp_server_extends_agent_tools():
     fake_tool.name = "mcp_tool"
 
     with MagicMock() as mock_loader:
-        import ant_ai.acp.adapter as adapter_mod
+        import ant_ai.acp.server.sessions as adapter_mod
 
         original = adapter_mod.mcp_tools_from_url
         adapter_mod.mcp_tools_from_url = AsyncMock(return_value=[fake_tool])
@@ -451,7 +451,7 @@ async def test_new_session_with_http_mcp_server_extends_agent_tools():
             )
             resp = await adapter.new_session(cwd="/tmp", mcp_servers=[srv])
             sid = resp.session_id
-            session_agent = adapter._session_agents[sid]
+            session_agent = adapter._sessions.agents[sid]
             assert session_agent is not adapter._agent
             adapter_mod.mcp_tools_from_url.assert_awaited_once_with(
                 "http://localhost:8000/mcp"
@@ -522,7 +522,7 @@ async def test_code_command_handler_can_mutate_history():
     )
     session = await adapter.new_session(cwd="/tmp")
     sid = session.session_id
-    adapter._sessions[sid].append(Message(role="user", content="old turn"))
+    adapter._sessions.histories[sid].append(Message(role="user", content="old turn"))
     _connected_client(adapter)
 
     await adapter.prompt(
@@ -530,7 +530,7 @@ async def test_code_command_handler_can_mutate_history():
         session_id=sid,
     )
 
-    assert [m.content for m in adapter._sessions[sid]] == ["compacted"]
+    assert [m.content for m in adapter._sessions.histories[sid]] == ["compacted"]
 
 
 @pytest.mark.asyncio
@@ -554,7 +554,7 @@ async def test_code_command_handler_can_replace_agent():
         session_id=session.session_id,
     )
 
-    assert adapter._session_agents[session.session_id] is replacement
+    assert adapter._sessions.agents[session.session_id] is replacement
 
 
 @pytest.mark.asyncio
@@ -633,7 +633,7 @@ async def test_unknown_slash_command_passes_through_to_workflow():
 
 @pytest.mark.asyncio
 async def test_new_session_with_sse_mcp_server_forwards_headers(monkeypatch):
-    import ant_ai.acp.adapter as adapter_mod
+    import ant_ai.acp.server.sessions as adapter_mod
     from ant_ai.tools.tool import Tool
 
     fake_tool = MagicMock(spec=Tool)
@@ -655,12 +655,12 @@ async def test_new_session_with_sse_mcp_server_forwards_headers(monkeypatch):
         headers={"Authorization": "Bearer token"},
         transport="sse",
     )
-    assert adapter._session_agents[resp.session_id] is not adapter._agent
+    assert adapter._sessions.agents[resp.session_id] is not adapter._agent
 
 
 @pytest.mark.asyncio
 async def test_new_session_mcp_tools_reach_registry_and_llm(monkeypatch):
-    import ant_ai.acp.adapter as adapter_mod
+    import ant_ai.acp.server.sessions as adapter_mod
     from ant_ai.agent.agent import Agent
     from ant_ai.tools.tool import tool
 
@@ -682,7 +682,7 @@ async def test_new_session_mcp_tools_reach_registry_and_llm(monkeypatch):
     srv = HttpMcpServer(type="http", name="m", url="http://x/mcp", headers=[])
     resp = await adapter.new_session(cwd="/tmp", mcp_servers=[srv])
 
-    session_agent = adapter._session_agents[resp.session_id]
+    session_agent = adapter._sessions.agents[resp.session_id]
     serialized = session_agent._loop.reason_step.serialized_tools
     assert [t.name for t in session_agent.registry.tools] == ["base_tool", "mcp_tool"]
     assert [s["function"]["name"] for s in serialized] == ["base_tool", "mcp_tool"]
@@ -694,7 +694,7 @@ async def test_new_session_mcp_tools_reach_registry_and_llm(monkeypatch):
 @pytest.mark.asyncio
 async def test_new_session_keeps_tools_added_to_the_base_agent(monkeypatch):
     """`add_tool` only updates the registry, so `agent.tools` does not list them."""
-    import ant_ai.acp.adapter as adapter_mod
+    import ant_ai.acp.server.sessions as adapter_mod
     from ant_ai.agent.agent import Agent
     from ant_ai.tools.tool import tool
 
@@ -717,7 +717,7 @@ async def test_new_session_keeps_tools_added_to_the_base_agent(monkeypatch):
     srv = HttpMcpServer(type="http", name="m", url="http://x/mcp", headers=[])
     resp = await adapter.new_session(cwd="/tmp", mcp_servers=[srv])
 
-    session_agent = adapter._session_agents[resp.session_id]
+    session_agent = adapter._sessions.agents[resp.session_id]
     serialized = session_agent._loop.reason_step.serialized_tools
     assert [t.name for t in session_agent.registry.tools] == [
         "mcp_tool",
@@ -729,7 +729,7 @@ async def test_new_session_keeps_tools_added_to_the_base_agent(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_new_session_ignores_stdio_mcp_servers(monkeypatch):
-    import ant_ai.acp.adapter as adapter_mod
+    import ant_ai.acp.server.sessions as adapter_mod
 
     loader = AsyncMock()
     monkeypatch.setattr(adapter_mod, "mcp_tools_from_url", loader)
@@ -739,23 +739,23 @@ async def test_new_session_ignores_stdio_mcp_servers(monkeypatch):
     resp = await adapter.new_session(cwd="/tmp", mcp_servers=[srv])
 
     loader.assert_not_awaited()
-    assert adapter._session_agents[resp.session_id] is adapter._agent
+    assert adapter._sessions.agents[resp.session_id] is adapter._agent
 
 
 @pytest.mark.asyncio
 async def test_fork_session_copies_history_without_aliasing_it():
     adapter = _make_adapter()
     parent = (await adapter.new_session(cwd="/tmp")).session_id
-    adapter._sessions[parent].append(Message(role="user", content="first"))
+    adapter._sessions.histories[parent].append(Message(role="user", content="first"))
 
     forked = (await adapter.fork_session(session_id=parent, cwd="/tmp")).session_id
 
     assert forked != parent
-    assert [m.content for m in adapter._sessions[forked]] == ["first"]
-    assert adapter._session_agents[forked] is adapter._session_agents[parent]
+    assert [m.content for m in adapter._sessions.histories[forked]] == ["first"]
+    assert adapter._sessions.agents[forked] is adapter._sessions.agents[parent]
 
-    adapter._sessions[forked].append(Message(role="user", content="second"))
-    assert len(adapter._sessions[parent]) == 1
+    adapter._sessions.histories[forked].append(Message(role="user", content="second"))
+    assert len(adapter._sessions.histories[parent]) == 1
 
 
 @pytest.mark.asyncio
@@ -799,11 +799,11 @@ async def test_permission_answers_are_kept_per_session_and_copied_on_fork():
     other = (await adapter.new_session(cwd="/tmp")).session_id
     forked = (await adapter.fork_session(session_id=parent, cwd="/tmp")).session_id
 
-    assert adapter._session_permissions[parent] == {"run": "allow_always"}
-    assert adapter._session_permissions.get(other, {}) == {}
-    assert adapter._session_permissions[forked] == {"run": "allow_always"}
-    adapter._session_permissions[forked]["edit"] = "reject_always"
-    assert "edit" not in adapter._session_permissions[parent]
+    assert adapter._sessions.permissions[parent] == {"run": "allow_always"}
+    assert adapter._sessions.permissions.get(other, {}) == {}
+    assert adapter._sessions.permissions[forked] == {"run": "allow_always"}
+    adapter._sessions.permissions[forked]["edit"] = "reject_always"
+    assert "edit" not in adapter._sessions.permissions[parent]
 
 
 async def test_cancel_stops_the_running_prompt():

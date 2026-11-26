@@ -1,24 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from typing import ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from datafog import scan as datafog_scan
 from pydantic import BaseModel
 
-from ant_ai.core.result import StepResult
-from ant_ai.core.types import InvocationContext
-from ant_ai.hooks._guardrail_text import model_output_text
-from ant_ai.hooks.protocol import (
-    AgentHook,
-    PostModelBlock,
-    PostModelDecision,
-    PostModelPass,
-    PostModelRetry,
-)
+from ant_ai.hooks._guardrail_text import TextGuardrailHook, reject
+
+if TYPE_CHECKING:
+    from ant_ai.hooks.protocol import PostModelBlock, PostModelRetry
 
 
-class PIIGuardrailHook(AgentHook, BaseModel):
+class PIIGuardrailHook(TextGuardrailHook, BaseModel):
     """
     Scans LLM output for personally identifiable information using ``datafog``.
 
@@ -64,18 +58,10 @@ class PIIGuardrailHook(AgentHook, BaseModel):
     allowlist_patterns: list[str] | None = None
     on_detect: Literal["retry", "block"] = "retry"
 
-    async def after_model(
-        self,
-        result: StepResult,
-        ctx: InvocationContext | None,
-    ) -> PostModelDecision:
-        raw = model_output_text(result)
-        if raw is None:
-            return PostModelPass(result=result)
-
+    async def check_text(self, text: str) -> PostModelBlock | PostModelRetry | None:
         def _scan() -> list[str]:
             scan_result = datafog_scan(
-                raw,
+                text,
                 engine=self.engine,
                 entity_types=self.entity_types,
                 locales=self.locales,
@@ -87,12 +73,8 @@ class PIIGuardrailHook(AgentHook, BaseModel):
         try:
             found = await asyncio.to_thread(_scan)
         except Exception as exc:  # noqa: BLE001
-            return PostModelRetry(reason=f"PII guardrail scan error: {exc}")
+            return reject(f"PII guardrail scan error: {exc}")
 
         if not found:
-            return PostModelPass(result=result)
-
-        reason = f"PII detected: {', '.join(found)}"
-        if self.on_detect == "block":
-            return PostModelBlock(reason=reason)
-        return PostModelRetry(reason=reason)
+            return None
+        return reject(f"PII detected: {', '.join(found)}", self.on_detect == "block")

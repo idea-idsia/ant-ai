@@ -17,8 +17,8 @@ from a2a.types import (
 from httpx import HTTPError
 
 from ant_ai.a2a.client import A2AClient, AgentClientError
-from ant_ai.a2a.config import A2AConfig
-from ant_ai.a2a.types import A2AMetadata
+from ant_ai.a2a.client.config import A2AConfig
+from ant_ai.a2a.server.types import A2AMetadata
 from ant_ai.core.events import FinalAnswerEvent, ToolResultEvent, UpdateEvent
 
 
