@@ -1,9 +1,13 @@
-from collections.abc import AsyncIterator
-from typing import Protocol
+from __future__ import annotations
 
-from ant_ai.core.events import BaseEvent
-from ant_ai.core.result import StepResult
-from ant_ai.core.types import InvocationContext, State
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from ant_ai.core.events import BaseEvent
+    from ant_ai.core.result import StepResult
+    from ant_ai.core.types import InvocationContext, State
 
 
 class Step(Protocol):

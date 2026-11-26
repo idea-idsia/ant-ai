@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from abc import abstractmethod
-from collections.abc import AsyncGenerator
 from contextlib import aclosing
-from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from pydantic import (
-    BaseModel,
     ConfigDict,
     Field,
     PrivateAttr,
@@ -18,40 +14,28 @@ from pydantic import (
     model_validator,
 )
 
-from ant_ai.agent.loop.loop import BaseAgentLoop
+from ant_ai.agent.agent_tool import agent_as_tool
+from ant_ai.agent.extensions import AgentExtensions
+from ant_ai.agent.skill_support import AgentSkills
 from ant_ai.agent.subagent import SubagentTool
-from ant_ai.core.events import (
-    BaseEvent,
-    ClarificationNeededEvent,
-    FinalAnswerEvent,
-    MaxStepsReachedEvent,
-)
-from ant_ai.core.message import Message
-from ant_ai.core.types import InvocationContext, State
-from ant_ai.hooks.builtins.planning import PlanningHook
-from ant_ai.hooks.layer import HookLayer
-from ant_ai.hooks.protocol import AgentHook
+from ant_ai.agent.turn import final_answer, stream_turn
 from ant_ai.llm.protocol import ChatLLM
-from ant_ai.memory.protocol import Memory
-from ant_ai.observer import obs
-from ant_ai.skills.loader import SkillLoader
-from ant_ai.skills.presenter import MarkdownSkillPresenter, SkillPresenter
-from ant_ai.skills.protocol import AgentSkill
-from ant_ai.tools.builtins.planning_tool import PlanningTool, PlanStore
+from ant_ai.tools.builtins.planning_tool import PlanningTool
 from ant_ai.tools.registry import ToolRegistry
-from ant_ai.tools.tool import Tool, ToolError, tool
+from ant_ai.tools.tool import Tool
 
-_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from pydantic import BaseModel
+
+    from ant_ai.agent.loop.loop import BaseAgentLoop
+    from ant_ai.core.events import BaseEvent
+    from ant_ai.core.message import Message
+    from ant_ai.core.types import InvocationContext, State
 
 
-class SubagentTask(BaseModel):
-    message: str = Field(
-        description="The complete task. The subagent sees nothing else of the "
-        "conversation, so include every detail it needs."
-    )
-
-
-class BaseAgent(BaseModel):
+class BaseAgent(AgentSkills, AgentExtensions):
     """
     Base class for all agent implementations.
 
@@ -75,28 +59,6 @@ class BaseAgent(BaseModel):
         description="Tools available to the agent. An agent in the list becomes "
         "its `as_tool()` with the default settings.",
     )
-    hooks: list[AgentHook] = Field(
-        default_factory=list,
-        description="Lifecycle hooks for the agent.",
-    )
-    memory: Memory | None = Field(
-        default=None,
-        description="Long-term memory kept across conversations; its tools are "
-        "added to the agent's (see Memory).",
-    )
-    planning: bool = Field(
-        default=False,
-        description="Let the agent keep a plan of its task, saved in "
-        "`.plans/<agent>/<session_id>.md`.",
-    )
-    skills: Path | list[Path] | None = Field(
-        default=None,
-        description="Path (or list of paths) to skills directories (agentskills.io standard).",
-    )
-    skill_presenter: Annotated[SkillPresenter, SkipValidation] = Field(
-        default_factory=MarkdownSkillPresenter,
-        description="Controls how skills are injected into the system prompt.",
-    )
     max_retries: int = Field(
         default=3,
         ge=1,
@@ -105,8 +67,6 @@ class BaseAgent(BaseModel):
 
     _registry: ToolRegistry = PrivateAttr()
     _loop: BaseAgentLoop = PrivateAttr()
-    _hook_layer: HookLayer = PrivateAttr()
-    _skills: list[AgentSkill] = PrivateAttr(default_factory=list)
     _private_tools: dict[int, Tool] = PrivateAttr(default_factory=dict)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -122,22 +82,15 @@ class BaseAgent(BaseModel):
     def _build(self) -> BaseAgent:
         # Copies, so the agent's own fields are not changed and a rebuild adds nothing twice.
         # After `_agents_as_tools` the list holds only tools.
-        tools = list(cast("list[Tool]", self.tools))
-        hooks: list[AgentHook] = list(self.hooks)
-        if self.memory is not None:
-            tools.append(self.memory)
+        tools: list[Tool] = [
+            *cast("list[Tool]", self.tools),
+            *self._build_extensions(self.name),
+        ]
         self._registry = ToolRegistry()
         self._private_tools = {}
         for t in tools:
             self._register_tool(t)
-        if self.planning:
-            store = PlanStore()
-            self._register_tool(PlanningTool(agent=self.name, store=store))
-            hooks.append(PlanningHook(agent=self.name, store=store))
-        self._hook_layer = HookLayer(hooks=hooks)
-        self._skills = (
-            SkillLoader(self.skills).load() if self.skills is not None else []
-        )
+        self._load_skills()
         self._loop: BaseAgentLoop = self._make_loop()
         return self
 
@@ -170,11 +123,7 @@ class BaseAgent(BaseModel):
     @property
     def system_message(self) -> Message:
         """Return this agent's system message, with skill discovery appended if present."""
-        if not self._skills:
-            return Message(role="system", content=self.system_prompt)
-        skills_block: str = self.skill_presenter.system_prompt(self._skills)
-        content: str = "\n\n".join([self.system_prompt, skills_block])
-        return Message(role="system", content=content)
+        return self._system_message_with_skills(self.system_prompt)
 
     async def stream(
         self,
@@ -219,25 +168,19 @@ class BaseAgent(BaseModel):
             is set to this agent's name, and its `session_id` to the one of
             `ctx`, unless already set.
         """
-        with obs.bind(
-            session_id=ctx.session_id if ctx else "",
-            agent_name=self.name,
-        ):
-            await self._hook_layer.run_before_agent(state, ctx)
-            try:
-                async for event in self._loop.stream(
-                    state,
-                    ctx,
-                    max_steps=max_steps,
-                    response_schema=response_schema,
-                ):
-                    if event.origin.agent is None:
-                        event.origin.agent = self.name
-                    if ctx is not None and event.session_id is None:
-                        event.session_id = ctx.session_id
-                    yield event
-            finally:
-                await self._hook_layer.run_after_agent(state, ctx)
+        async with aclosing(
+            stream_turn(
+                self.name,
+                self._hook_layer,
+                self._loop,
+                state,
+                max_steps=max_steps,
+                ctx=ctx,
+                response_schema=response_schema,
+            )
+        ) as events:
+            async for event in events:
+                yield event
 
     async def ainvoke(
         self,
@@ -269,17 +212,14 @@ class BaseAgent(BaseModel):
         Returns:
             The content of the `FinalAnswerEvent`.
         """
-        final = ""
-        async for event in self.stream(
-            state,
-            max_steps=max_steps,
-            ctx=ctx,
-            response_schema=response_schema,
-        ):
-            if isinstance(event, FinalAnswerEvent):
-                final: str = event.content
-
-        return final
+        return await final_answer(
+            self.stream(
+                state,
+                max_steps=max_steps,
+                ctx=ctx,
+                response_schema=response_schema,
+            )
+        )
 
     def invoke(
         self,
@@ -369,41 +309,9 @@ class BaseAgent(BaseModel):
                 agent that talks to the user keeps a plan. Or the tool name is
                 not one providers accept.
         """
-        if self.planning:
-            raise ValueError(
-                f"Agent '{self.name}' has planning=True: a subagent does not keep a plan."
-            )
-        tool_name = name or self.name
-        if not _TOOL_NAME.fullmatch(tool_name):
-            raise ValueError(
-                f"Tool name {tool_name!r} is not valid: use 1-64 letters, digits, "
-                "`_` or `-`, e.g. `as_tool(name=...)`."
-            )
-
-        async def run(message: str, ctx: InvocationContext | None = None) -> str:
-            state = State(messages=[Message(role="user", content=message)])
-            # aclosing: an early exit closes the run now, so its after_agent hooks run.
-            async with aclosing(
-                self.stream(state, max_steps=max_steps, ctx=ctx)
-            ) as events:
-                async for event in events:
-                    if isinstance(event, FinalAnswerEvent):
-                        return event.content
-                    if isinstance(event, ClarificationNeededEvent):
-                        raise ToolError(
-                            f"{self.name} needs more information: {event.content}"
-                        )
-                    if isinstance(event, MaxStepsReachedEvent):
-                        raise ToolError(
-                            f"{self.name} stopped after {max_steps} steps without an answer"
-                        )
-            raise ToolError(f"{self.name} ended without an answer")
-
-        return tool(
-            name=tool_name,
-            description=description or self.description,
-            args_model=SubagentTask,
-        )(run)
+        return agent_as_tool(
+            self, name=name, description=description, max_steps=max_steps
+        )
 
     @abstractmethod
     def add_tool(self, tool: Tool | BaseAgent) -> None:

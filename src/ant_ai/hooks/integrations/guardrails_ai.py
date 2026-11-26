@@ -2,21 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SkipValidation
 
-from ant_ai.core.result import LLMOutput, StepResult
-from ant_ai.core.types import InvocationContext
-from ant_ai.hooks.protocol import (
-    AgentHook,
-    PostModelDecision,
-    PostModelPass,
-    PostModelRetry,
-)
+from ant_ai.hooks._guardrail_text import TextGuardrailHook, reject
+
+if TYPE_CHECKING:
+    from ant_ai.hooks.protocol import PostModelBlock, PostModelRetry
 
 
-class GuardrailsAIHook(AgentHook, BaseModel):
+class GuardrailsAIHook(TextGuardrailHook, BaseModel):
     """
     Wraps a ``guardrails.Guard`` instance as an ``AgentHook``.
 
@@ -62,56 +58,44 @@ class GuardrailsAIHook(AgentHook, BaseModel):
     api_key: str | None = None
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
-    async def after_model(
-        self,
-        result: StepResult,
-        ctx: InvocationContext | None,
-    ) -> PostModelDecision:
-        if not isinstance(result.output, LLMOutput):
-            return PostModelPass(result=result)
-
-        # Guard.validate is synchronous and mutates internal state (history,
-        # reask counter). Serialize via _lock so concurrent callers sharing
-        # this hook instance do not race on that state.
-        raw = result.output.raw
-        if not raw or not raw.strip():
-            # No text content: check tool call arguments instead (the LLM may
-            # have written content via tool calls, e.g. FilesystemTool).
-            tool_calls = result.output.tool_calls
-            if not tool_calls:
-                return PostModelPass(result=result)
-            raw = "\n".join(tc.function.arguments for tc in tool_calls)
-
-        def _validate() -> Any:
-            with self._lock:
-                kwargs: dict[str, Any] = {}
-                if self.api_key is not None:
-                    kwargs["api_key"] = self.api_key
-                return self.guard.validate(raw, num_reasks=self.num_reasks, **kwargs)
-
+    async def check_text(self, text: str) -> PostModelBlock | PostModelRetry | None:
         try:
-            outcome = await asyncio.to_thread(_validate)
+            outcome = await asyncio.to_thread(self._validate, text)
         except Exception as exc:  # noqa: BLE001
-            return PostModelRetry(reason=f"guardrails validation error: {exc}")
+            return reject(f"guardrails validation error: {exc}")
 
-        # When on_fail="reask" and num_reasks=0, guardrails quirk: it sets
-        # validation_passed=True even though validators failed (it expected to
-        # reask but couldn't). Detect real failures via validator_status.
-        failed = [
-            s
-            for s in (outcome.validation_summaries or [])
-            if getattr(s, "validator_status", None) == "fail"
-        ]
-        if outcome.validation_passed and not failed:
-            return PostModelPass(result=result)
+        if _validation_passed(outcome):
+            return None
 
         history = getattr(self.guard, "history", None)
-        return PostModelRetry(
-            reason=_failure_reason(
+        return reject(
+            _failure_reason(
                 outcome.validation_summaries,
                 history.last if history else None,
             )
         )
+
+    def _validate(self, text: str) -> Any:
+        # Guard.validate is synchronous and mutates internal state (history,
+        # reask counter). Serialize via _lock so concurrent callers sharing
+        # this hook instance do not race on that state.
+        with self._lock:
+            kwargs: dict[str, Any] = {}
+            if self.api_key is not None:
+                kwargs["api_key"] = self.api_key
+            return self.guard.validate(text, num_reasks=self.num_reasks, **kwargs)
+
+
+def _validation_passed(outcome: Any) -> bool:
+    # When on_fail="reask" and num_reasks=0, guardrails quirk: it sets
+    # validation_passed=True even though validators failed (it expected to
+    # reask but couldn't). Detect real failures via validator_status.
+    failed = [
+        s
+        for s in (outcome.validation_summaries or [])
+        if getattr(s, "validator_status", None) == "fail"
+    ]
+    return bool(outcome.validation_passed) and not failed
 
 
 _FALLBACK_REASON = "validation failed"
@@ -133,19 +117,28 @@ def _failure_reason(summaries: list | None, history_call: Any = None) -> str:
     ]
     if parts:
         return "; ".join(parts)
+    history_reason = _history_reason(history_call)
+    return _FALLBACK_REASON if history_reason is None else history_reason
 
-    if history_call is not None:
-        it = history_call.iterations.last
-        history_parts: list[str] = []
-        for log in (it.validator_logs if it else []) or []:
-            vr = log.validation_result
-            if getattr(vr, "outcome", None) is None or vr.outcome.value != "fail":
-                continue
-            msg: str = getattr(vr, "error_message", "") or ""
-            history_parts.append(
-                f"{log.validator_name}: {msg}" if msg else log.validator_name
-            )
-        if history_parts:
-            return "; ".join(history_parts)
 
-    return _FALLBACK_REASON
+def _history_reason(history_call: Any) -> str | None:
+    """Name the validators that failed in the guard's last call, or None if none did."""
+    if history_call is None:
+        return None
+    it = history_call.iterations.last
+    parts: list[str] = [
+        _describe_failed_log(log)
+        for log in (it.validator_logs if it else []) or []
+        if _log_failed(log)
+    ]
+    return "; ".join(parts) if parts else None
+
+
+def _log_failed(log: Any) -> bool:
+    vr = log.validation_result
+    return getattr(vr, "outcome", None) is not None and vr.outcome.value == "fail"
+
+
+def _describe_failed_log(log: Any) -> str:
+    msg: str = getattr(log.validation_result, "error_message", "") or ""
+    return f"{log.validator_name}: {msg}" if msg else log.validator_name

@@ -154,7 +154,7 @@ explorer = Agent(
 lead = Agent(name="lead", system_prompt="...", llm=llm, tools=[explorer])
 ```
 
-The tool takes the name and description of the agent and has one argument, `message`, as an [`A2AAgentTool`][ant_ai.a2a.agent.A2AAgentTool]: the model has to write the complete task, since the subagent sees nothing else of the conversation. Each run has 10 steps. To change these settings, pass [`as_tool()`][ant_ai.agent.base.BaseAgent.as_tool] instead of the agent: `explorer.as_tool(name="find", max_steps=20)`. The caller's `ctx` is passed on, so the run shares the session and the trace. If the subagent runs out of steps or asks for a clarification, the call fails like a raised [`ToolError`](#reporting-failures). An agent with `planning=True` is refused: only the agent that talks to the user keeps a plan. For agents in other processes, see [Multi-agent setup](../multi-agent/index.md).
+The tool takes the name and description of the agent and has one argument, `message`, as an [`A2AAgentTool`][ant_ai.a2a.client.tool.A2AAgentTool]: the model has to write the complete task, since the subagent sees nothing else of the conversation. Each run has 10 steps. To change these settings, pass [`as_tool()`][ant_ai.agent.base.BaseAgent.as_tool] instead of the agent: `explorer.as_tool(name="find", max_steps=20)`. The caller's `ctx` is passed on, so the run shares the session and the trace. If the subagent runs out of steps or asks for a clarification, the call fails like a raised [`ToolError`](#reporting-failures). An agent with `planning=True` is refused: only the agent that talks to the user keeps a plan. For agents in other processes, see [Multi-agent setup](../multi-agent/index.md).
 
 ### Subagents created at runtime
 
@@ -226,9 +226,9 @@ server = A2AServer(
 
 Two hooks control how the subclass behaves:
 
-- `from_metadata(session_id=..., metadata=...)` builds the context from the request metadata (the A2A message `metadata`, i.e. `request_metadata` on [`A2AClient.send_message`][ant_ai.a2a.client.A2AClient.send_message]). Fields are filled **by name** — a `tenant` key fills `tenant` — and unknown keys are ignored. Override it to map a different wire shape onto your fields.
+- `from_metadata(session_id=..., metadata=...)` builds the context from the request metadata (the A2A message `metadata`, i.e. `request_metadata` on [`A2AClient.send_message`][ant_ai.a2a.client.client.A2AClient.send_message]). Fields are filled **by name** — a `tenant` key fills `tenant` — and unknown keys are ignored. Override it to map a different wire shape onto your fields.
 - `trace_attributes()` returns the fields bound to the run's trace and sent with `workflow.start`. The default is `session_id` and `user_id`. Extend it to surface your own — and keep secrets out, since these reach whatever observability backend is configured.
-- `outbound_metadata()` is what the context forwards when an agent calls *another* agent through [`A2AAgentTool`][ant_ai.a2a.agent.A2AAgentTool] — every set field except `session_id` (it travels as the A2A `context_id`) and the per-callee `llm_settings`/`workflow_settings`. Whether a remote agent *receives* it is decided per agent by `A2AConfig.trusted`: a trusted agent gets the trace context and this metadata; mark third-party agents `trusted=False` and they get the message and the session id only. The callee's `from_metadata` rebuilds it.
+- `outbound_metadata()` is what the context forwards when an agent calls *another* agent through [`A2AAgentTool`][ant_ai.a2a.client.tool.A2AAgentTool] — every set field except `session_id` (it travels as the A2A `context_id`) and the per-callee `llm_settings`/`workflow_settings`. Whether a remote agent *receives* it is decided per agent by `A2AConfig.trusted`: a trusted agent gets the trace context and this metadata; mark third-party agents `trusted=False` and they get the message and the session id only. The callee's `from_metadata` rebuilds it.
 
 When calling the agent directly, construct the subclass yourself: `agent.ainvoke(..., ctx=MyContext(session_id="s1", tenant="acme"))`.
 

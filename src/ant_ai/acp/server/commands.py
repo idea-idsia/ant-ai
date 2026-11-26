@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from acp.interfaces import Client
 from acp.schema import (
@@ -13,8 +13,10 @@ from acp.schema import (
     UnstructuredCommandInput,
 )
 
-from ant_ai.agent.agent import Agent
 from ant_ai.core.message import BaseMessage
+
+if TYPE_CHECKING:
+    from ant_ai.agent.agent import Agent
 
 
 @dataclass

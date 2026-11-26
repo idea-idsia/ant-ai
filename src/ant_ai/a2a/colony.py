@@ -11,9 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from starlette.applications import Starlette
 
-from ant_ai.a2a.agent import A2AAgentTool
-from ant_ai.a2a.config import A2AConfig
-from ant_ai.a2a.server import A2AServer
+from ant_ai.a2a.client.config import A2AConfig
+from ant_ai.a2a.client.tool import A2AAgentTool
+from ant_ai.a2a.server.app import A2AServer
 from ant_ai.agent.agent import Agent
 from ant_ai.workflow.workflow import Workflow
 
@@ -37,27 +37,18 @@ class Colony(BaseModel):
 
     _specs: dict[str, AgentSpec] = PrivateAttr(default_factory=dict)
     _edges: dict[str, dict[str, A2AConfig]] = PrivateAttr(default_factory=dict)
-    _db_engine: AsyncEngine | None = PrivateAttr(default=None)
+    _task_stores: TaskStores = PrivateAttr()
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def model_post_init(self, __context):
-        if self.db_url:
-            self._db_engine: AsyncEngine = create_async_engine(
-                self.db_url, echo=False, pool_pre_ping=True
-            )
+        self._task_stores = TaskStores(self.db_url)
 
     async def aclose(self) -> None:
         """Dispose the async engine, returning all connections to the pool."""
-        if self._db_engine is not None:
-            await self._db_engine.dispose()
+        await self._task_stores.aclose()
 
     def get_task_store(self, table) -> TaskStore:
-        if self.db_url and self._db_engine:
-            return DatabaseTaskStore(
-                engine=self._db_engine, create_table=True, table_name=table
-            )
-        else:
-            return InMemoryTaskStore()
+        return self._task_stores.get(table)
 
     def agent(
         self,
@@ -200,24 +191,10 @@ class Colony(BaseModel):
 
         for target_key, cfg in outgoing.items():
             target_spec: AgentSpec = self._specs[target_key]
-            if self._agent_has_endpoint_tool(agent, target_spec.url):
-                continue
-
-            tool: A2AAgentTool = A2AAgentTool.from_config(
-                config=cfg, agent_card=target_spec.card
-            )
-            agent.add_tool(tool)
-
-    def _agent_has_endpoint_tool(self, agent: Agent, endpoint: str) -> bool:
-        endpoint = _normalize_url(endpoint)
-        for t in agent.tools:
-            if (
-                isinstance(t, A2AAgentTool)
-                and t.config.endpoint
-                and _normalize_url(t.config.endpoint) == endpoint
-            ):
-                return True
-        return False
+            if not _has_endpoint_tool(agent, target_spec.url):
+                agent.add_tool(
+                    A2AAgentTool.from_config(config=cfg, agent_card=target_spec.card)
+                )
 
     def get_agent_host(self, agent_name: str) -> tuple[str, int]:
         """Get the base URL of the specified agent."""
@@ -225,6 +202,39 @@ class Colony(BaseModel):
             raise KeyError(f"Agent '{agent_name}' is not registered in the colony.")
         spec: AgentSpec = self._specs[agent_name]
         return spec.host, spec.port
+
+
+class TaskStores:
+    """Makes the task store of each agent: a table of `db_url`, else in memory."""
+
+    def __init__(self, db_url: str | None) -> None:
+        self._db_engine: AsyncEngine | None = (
+            create_async_engine(db_url, echo=False, pool_pre_ping=True)
+            if db_url
+            else None
+        )
+
+    def get(self, table: str) -> TaskStore:
+        if self._db_engine is not None:
+            return DatabaseTaskStore(
+                engine=self._db_engine, create_table=True, table_name=table
+            )
+        return InMemoryTaskStore()
+
+    async def aclose(self) -> None:
+        """Dispose the async engine, returning all connections to the pool."""
+        if self._db_engine is not None:
+            await self._db_engine.dispose()
+
+
+def _has_endpoint_tool(agent: Agent, endpoint: str) -> bool:
+    endpoint = _normalize_url(endpoint)
+    return any(
+        isinstance(t, A2AAgentTool)
+        and t.config.endpoint
+        and _normalize_url(t.config.endpoint) == endpoint
+        for t in agent.tools
+    )
 
 
 class AgentSpec(BaseModel):

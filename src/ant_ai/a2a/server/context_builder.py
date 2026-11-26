@@ -129,30 +129,37 @@ class HistoryRequestContextBuilder(RequestContextBuilder):
         queue: list[str] = [tid for tid in initial_ids if tid not in visited]
 
         while queue:
-            batch: list[str] = list(dict.fromkeys(queue))
-            queue: list[str] = []
-
-            results: list[Task | None] = await asyncio.gather(
-                *(task_store.get(tid, context=context) for tid in batch),
+            found: list[Task] = await _fetch_tasks(
+                context, task_store, list(dict.fromkeys(queue))
             )
-
-            for tid, item in zip(batch, results, strict=True):
-                if not isinstance(item, Task):
-                    await obs.event(
-                        "a2a.referenced_task.unresolved",
-                        task_id=tid,
-                    )
-                    continue
-
+            queue: list[str] = []
+            for item in found:
                 if item.id in visited:
                     continue
-
                 visited.add(item.id)
                 tasks.append(item)
-
-                for msg in item.history or ():
-                    queue.extend(msg.reference_task_ids or ())
+                queue.extend(_referenced_ids(item))
 
             queue: list[str] = [tid for tid in queue if tid not in visited]
 
         return tasks[::-1]  # reverse to maintain original order
+
+
+async def _fetch_tasks(
+    context: ServerCallContext, task_store: TaskStore, task_ids: list[str]
+) -> list[Task]:
+    """The stored tasks among `task_ids`, in order; the missing ones are reported."""
+    results: list[Task | None] = await asyncio.gather(
+        *(task_store.get(tid, context=context) for tid in task_ids),
+    )
+    found: list[Task] = []
+    for tid, item in zip(task_ids, results, strict=True):
+        if isinstance(item, Task):
+            found.append(item)
+        else:
+            await obs.event("a2a.referenced_task.unresolved", task_id=tid)
+    return found
+
+
+def _referenced_ids(task: Task) -> list[str]:
+    return [tid for msg in task.history or () for tid in msg.reference_task_ids or ()]

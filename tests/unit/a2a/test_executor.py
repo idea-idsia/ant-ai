@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from a2a.types import Message as A2AMessage, Role
 
-from ant_ai.a2a.executor import A2AExecutor
+from ant_ai.a2a.server.executor import A2AExecutor
 from ant_ai.core.message import (
     Message,
     ToolCall,
@@ -43,7 +43,7 @@ def _tool_call(call_id: str = "id-1", name: str = "my_tool") -> ToolCall:
 
 @pytest.mark.unit
 def test_convert_history_passes_through_non_none():
-    """_convert_history returns whatever to_history_message produces, filtering None."""
+    """HistoryBuilder.convert returns whatever to_history_message produces, filtering None."""
     executor = _make_executor()
     tc = _tool_call()
     messages = [
@@ -53,8 +53,10 @@ def test_convert_history_passes_through_non_none():
     ]
     msgs = [_a2a_msg() for _ in messages]
 
-    with patch.object(executor._a2a_to_hv, "to_history_message", side_effect=messages):
-        result = executor._convert_history(msgs)
+    with patch.object(
+        executor._history._a2a_to_hv, "to_history_message", side_effect=messages
+    ):
+        result = executor._history.convert(msgs)
 
     assert result == messages
 
@@ -67,9 +69,9 @@ def test_convert_history_filters_none():
     msgs = [_a2a_msg(), _a2a_msg()]
 
     with patch.object(
-        executor._a2a_to_hv, "to_history_message", side_effect=[None, kept]
+        executor._history._a2a_to_hv, "to_history_message", side_effect=[None, kept]
     ):
-        result = executor._convert_history(msgs)
+        result = executor._history.convert(msgs)
 
     assert result == [kept]
 
@@ -81,8 +83,10 @@ def test_convert_history_agent_message_no_metadata_fallback():
     msg = _a2a_msg(role=Role.ROLE_AGENT)
     fallback = Message(role="assistant", content="fallback text")
 
-    with patch.object(executor._a2a_to_hv, "to_history_message", return_value=fallback):
-        result = executor._convert_history([msg])
+    with patch.object(
+        executor._history._a2a_to_hv, "to_history_message", return_value=fallback
+    ):
+        result = executor._history.convert([msg])
 
     assert len(result) == 1
     assert isinstance(result[0], Message)
@@ -96,8 +100,10 @@ def test_convert_history_agent_message_no_metadata_empty_text_skipped():
     executor = _make_executor()
     msg = _a2a_msg(role=Role.ROLE_AGENT)
 
-    with patch.object(executor._a2a_to_hv, "to_history_message", return_value=None):
-        result = executor._convert_history([msg])
+    with patch.object(
+        executor._history._a2a_to_hv, "to_history_message", return_value=None
+    ):
+        result = executor._history.convert([msg])
 
     assert result == []
 
@@ -109,8 +115,10 @@ def test_convert_history_user_message():
     msg = _a2a_msg(role=Role.ROLE_USER)
     user_msg = Message(role="user", content="user input")
 
-    with patch.object(executor._a2a_to_hv, "to_history_message", return_value=user_msg):
-        result = executor._convert_history([msg])
+    with patch.object(
+        executor._history._a2a_to_hv, "to_history_message", return_value=user_msg
+    ):
+        result = executor._history.convert([msg])
 
     assert len(result) == 1
     assert isinstance(result[0], Message)
@@ -131,9 +139,9 @@ def test_convert_history_mixed_sequence():
     msgs = [_a2a_msg() for _ in history_messages]
 
     with patch.object(
-        executor._a2a_to_hv, "to_history_message", side_effect=history_messages
+        executor._history._a2a_to_hv, "to_history_message", side_effect=history_messages
     ):
-        result = executor._convert_history(msgs)
+        result = executor._history.convert(msgs)
 
     assert len(result) == 3
     assert isinstance(result[0], ToolCallMessage)
@@ -299,8 +307,8 @@ def test_convert_history_tool_result_keeps_is_error():
         content="ERROR: nope", tool_call_id="c1", name="t", is_error=True
     )
     msg = _a2a_msg()
-    with patch.object(executor._a2a_to_hv, "translate", return_value=event):
-        result = executor._a2a_to_hv.to_history_message(msg)
+    with patch.object(executor._history._a2a_to_hv, "translate", return_value=event):
+        result = executor._history._a2a_to_hv.to_history_message(msg)
     assert isinstance(result, ToolCallResultMessage)
     assert result.is_error is True
 
@@ -321,8 +329,8 @@ def test_history_after_cancel_mid_tool_call_is_resumable():
     ]
     msgs = [_a2a_msg() for _ in events]
 
-    with patch.object(executor._a2a_to_hv, "translate", side_effect=events):
-        result = executor._convert_history(msgs)
+    with patch.object(executor._history._a2a_to_hv, "translate", side_effect=events):
+        result = executor._history.convert(msgs)
 
     assert [type(m).__name__ for m in result] == [
         "ToolCallMessage",
@@ -351,7 +359,7 @@ def test_dangling_tool_call_is_answered_before_the_next_message():
         Message(role="user", content="still there?"),
     ]
 
-    result = executor._answer_dangling_tool_calls(history)
+    result = executor._history.answer_dangling_tool_calls(history)
 
     assert [type(m).__name__ for m in result] == [
         "ToolCallMessage",
@@ -381,8 +389,8 @@ def test_history_after_clarification_is_resumable():
     ]
     msgs = [_a2a_msg() for _ in events]
 
-    with patch.object(executor._a2a_to_hv, "translate", side_effect=events):
-        result = executor._convert_history(msgs)
+    with patch.object(executor._history._a2a_to_hv, "translate", side_effect=events):
+        result = executor._history.convert(msgs)
 
     assert [type(m).__name__ for m in result] == [
         "ToolCallMessage",

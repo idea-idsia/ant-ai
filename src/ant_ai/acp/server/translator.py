@@ -47,6 +47,30 @@ def _text_block(text: str) -> TextContentBlock:
     return TextContentBlock(type="text", text=text)
 
 
+def _message_chunk(text: str) -> AgentMessageChunk:
+    return AgentMessageChunk(
+        session_update="agent_message_chunk", content=_text_block(text)
+    )
+
+
+def _thought_chunk(text: str) -> AgentThoughtChunk:
+    return AgentThoughtChunk(
+        session_update="agent_thought_chunk", content=_text_block(text)
+    )
+
+
+async def _send_unstreamed(
+    event: BaseEvent,
+    client: Client,
+    session_id: str,
+    chunk: Callable[[str], AgentMessageChunk | AgentThoughtChunk],
+) -> None:
+    # If the text was already streamed token-by-token as ContentDeltaEvents (stream_id set on the terminal event), re-sending the whole thing would uplicate it in the client; the deltas already delivered the message.
+    if getattr(event, "stream_id", None):
+        return
+    await client.session_update(session_id=session_id, update=chunk(event.content))
+
+
 def _arguments(raw: str) -> Any:
     """Tool call arguments as JSON when they parse, the raw string otherwise."""
     try:
@@ -58,7 +82,7 @@ def _arguments(raw: str) -> Any:
 class HVEventToACP:
     """Translates internal HV events into ACP session-update calls.
 
-    Mirrors :class:`ant_ai.a2a.translator.HVEventToA2A` but targets the ACP
+    Mirrors :class:`ant_ai.a2a.server.translator.HVEventToA2A` but targets the ACP
     protocol, using semantic ACP types (AgentMessageChunk, AgentThoughtChunk,
     ToolCallStart, ToolCallProgress) instead of a flat text stream.
     """
@@ -96,30 +120,13 @@ class HVEventToACP:
     async def _agent_message(
         self, event: BaseEvent, client: Client, session_id: str
     ) -> None:
-        # If the text was already streamed token-by-token as ContentDeltaEvents (stream_id set on the terminal event), re-sending the whole thing would uplicate it in the client; the deltas already delivered the message.
-        if getattr(event, "stream_id", None):
-            return
-        await client.session_update(
-            session_id=session_id,
-            update=AgentMessageChunk(
-                session_update="agent_message_chunk",
-                content=_text_block(event.content),
-            ),
-        )
+        await _send_unstreamed(event, client, session_id, _message_chunk)
 
     @handler(ReasoningEvent)
     async def _agent_thought(
         self, event: BaseEvent, client: Client, session_id: str
     ) -> None:
-        if getattr(event, "stream_id", None):
-            return
-        await client.session_update(
-            session_id=session_id,
-            update=AgentThoughtChunk(
-                session_update="agent_thought_chunk",
-                content=_text_block(event.content),
-            ),
-        )
+        await _send_unstreamed(event, client, session_id, _thought_chunk)
 
     @handler(ContentDeltaEvent)
     async def _content_delta(
@@ -129,15 +136,9 @@ class HVEventToACP:
         if not event.delta:
             return
         if event.target_kind == "reasoning":
-            update = AgentThoughtChunk(
-                session_update="agent_thought_chunk",
-                content=_text_block(event.delta),
-            )
+            update = _thought_chunk(event.delta)
         elif event.target_kind == "content":
-            update = AgentMessageChunk(
-                session_update="agent_message_chunk",
-                content=_text_block(event.delta),
-            )
+            update = _message_chunk(event.delta)
         else:
             # tool-calling fragments are surfaced via ToolCallingEvent instead
             return
@@ -151,11 +152,7 @@ class HVEventToACP:
         # acp-ui only attaches tool_call updates to an existing assistant message; if none exists yet the update is silently dropped. The chunk creates it, and carries the text the model wrote before the calls unless it was already streamed.
         reason = "" if event.stream_id else event.content
         await client.session_update(
-            session_id=session_id,
-            update=AgentMessageChunk(
-                session_update="agent_message_chunk",
-                content=_text_block(reason),
-            ),
+            session_id=session_id, update=_message_chunk(reason)
         )
         for tool_call in event.tool_calls:
             await client.session_update(

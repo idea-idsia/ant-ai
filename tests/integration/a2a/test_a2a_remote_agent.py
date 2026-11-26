@@ -1,13 +1,11 @@
 from typing import Any
 
 import pytest
-from a2a.client import Client, ClientConfig, create_client
 from a2a.types import AgentCard, AgentInterface
-from httpx import AsyncClient
 
-from ant_ai.a2a.agent import A2AAgentTool
 from ant_ai.a2a.client import A2AClient
-from ant_ai.a2a.config import A2AConfig
+from ant_ai.a2a.client.config import A2AConfig
+from ant_ai.a2a.client.tool import A2AAgentTool
 
 
 @pytest.fixture
@@ -36,20 +34,9 @@ async def a2a_tool(codegen_agent_server: str) -> A2AAgentTool:
             AgentInterface(protocol_binding="JSONRPC", url=endpoint)
         )
 
+    # Reconnect with the patched card instead of the one fetched from the server.
+    await a2a.aclose()
     a2a._agent_card = patched_card
-
-    if a2a._httpx is not None:
-        await a2a._httpx.aclose()
-
-    httpx_client = AsyncClient(timeout=a2a.config.timeout)
-    a2a._httpx: AsyncClient = httpx_client
-
-    cfg = ClientConfig(
-        httpx_client=httpx_client,
-        supported_protocol_bindings=list(a2a.config.supported_protocol_bindings),
-        streaming=a2a.config.streaming,
-    )
-    a2a._client: Client = await create_client(patched_card, client_config=cfg)
 
     return tool
 

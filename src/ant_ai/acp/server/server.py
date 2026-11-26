@@ -11,9 +11,10 @@ from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket
 
-from ant_ai.acp.adapter import ACPAdapter
-from ant_ai.acp.commands import ACPCommand
+from ant_ai.acp.server.adapter import ACPAdapter
+from ant_ai.acp.server.commands import ACPCommand
 from ant_ai.agent.agent import Agent
+from ant_ai.core.serving import run_uvicorn
 from ant_ai.core.types import InvocationContext
 from ant_ai.workflow.workflow import Workflow
 
@@ -151,29 +152,17 @@ class ACPServer(BaseModel):
 
     def serve(self) -> None:
         """Start a uvicorn server exposing ACP over WebSocket at ``/acp/ws``."""
-        try:
-            import uvicorn
-
-            logger.info(
-                f"Starting ACP WebSocket server for agent '{self.agent.name}' "
-                f"at {self.host}:{self.port} (ws://{self.host}:{self.port}/acp/ws)..."
-            )
-            uvicorn.run(self.starlette_app(), host=self.host, port=self.port)
-        except ImportError as e:
-            raise ImportError(
-                "Uvicorn is not installed. Please install it with 'uv add uvicorn'."
-            ) from e
-        except KeyboardInterrupt:
-            logger.info("Server stopped")
-        except Exception as e:
-            logger.error(f"Failed to start server: {e}")
-            raise RuntimeError(f"Failed to start the server: {e}") from e
+        logger.info(
+            f"Starting ACP WebSocket server for agent '{self.agent.name}' "
+            f"at {self.host}:{self.port} (ws://{self.host}:{self.port}/acp/ws)..."
+        )
+        run_uvicorn(self.starlette_app(), self.host, self.port)
 
     def serve_stdio(self) -> None:
         """Run the agent as a stdio ACP process (for editors/CLIs that spawn agents)."""
         import asyncio
 
-        from acp import run_agent
+        from acp.core import run_agent
 
         logger.info(f"Starting ACP stdio agent '{self.agent.name}'...")
         adapter = ACPAdapter(

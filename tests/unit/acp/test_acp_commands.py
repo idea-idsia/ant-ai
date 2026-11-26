@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ant_ai.acp.commands import ACPCommand, parse_slash_command
+from ant_ai.acp.server.commands import ACPCommand, parse_slash_command
 
 
 @pytest.mark.parametrize(

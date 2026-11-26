@@ -10,7 +10,7 @@ from acp.schema import (
     ToolCallStart,
 )
 
-from ant_ai.acp.translator import HVEventToACP
+from ant_ai.acp.server.translator import HVEventToACP
 from ant_ai.core.events import (
     ClarificationNeededEvent,
     CompletedEvent,

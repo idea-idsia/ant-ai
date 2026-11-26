@@ -11,8 +11,8 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from starlette.applications import Starlette
 
-from ant_ai.a2a.executor import A2AExecutor
 from ant_ai.a2a.server import A2AServer
+from ant_ai.a2a.server.executor import A2AExecutor
 from ant_ai.agent.agent import Agent
 from ant_ai.llm.integrations.lite_llm import LiteLLMChat
 from ant_ai.workflow.workflow import Workflow

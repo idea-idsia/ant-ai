@@ -18,7 +18,7 @@ from a2a.types import (
 from google.protobuf import json_format as _json_format
 from pydantic import TypeAdapter
 
-from ant_ai.a2a.types import A2AMetadata
+from ant_ai.a2a.server.types import A2AMetadata
 from ant_ai.core.events import (
     AnyEvent,
     BaseEvent,
@@ -209,39 +209,20 @@ class A2AToHVEvent:
 
     @translate.register
     def _(self, raw: A2AMessage) -> BaseEvent | None:
-        if not raw.metadata:
-            return None
-        md: dict[str, Any] = _json_format.MessageToDict(raw.metadata)
-        event = md.get("event")
-        if not event:
-            return None
-        event["task_id"] = raw.task_id
-        event["session_id"] = raw.context_id
-        return _any_event_adapter.validate_python(event)
+        return _metadata_event(raw.metadata, raw.task_id, raw.context_id)
 
     @translate.register
     def _(self, raw: TaskStatusUpdateEvent) -> BaseEvent | None:
-        if not raw.metadata:
-            return None
-        md: dict[str, Any] = _json_format.MessageToDict(raw.metadata)
-        event = md.get("event")
-        if not event:
-            return None
-        event["task_id"] = raw.task_id
-        event["session_id"] = raw.context_id
-        return _any_event_adapter.validate_python(event)
+        return _metadata_event(raw.metadata, raw.task_id, raw.context_id)
 
     @translate.register
     def _(self, raw: TaskArtifactUpdateEvent) -> BaseEvent | None:
         artifact = raw.artifact
-        md: dict[str, Any] = (
-            _json_format.MessageToDict(artifact.metadata) if artifact.metadata else {}
+        event: BaseEvent | None = _metadata_event(
+            artifact.metadata, raw.task_id, raw.context_id
         )
-        event = md.get("event")
-        if event:
-            event["task_id"] = raw.task_id
-            event["session_id"] = raw.context_id
-            return _any_event_adapter.validate_python(event)
+        if event is not None:
+            return event
 
         text = "".join(
             p.text for p in artifact.parts if p.WhichOneof("content") == "text"
@@ -259,15 +240,7 @@ class A2AToHVEvent:
 
     @translate.register
     def _(self, raw: Task) -> BaseEvent | None:
-        if not raw.metadata:
-            return None
-        md: dict[str, Any] = _json_format.MessageToDict(raw.metadata)
-        event = md.get("event")
-        if not event:
-            return None
-        event["task_id"] = raw.id
-        event["session_id"] = raw.context_id
-        return _any_event_adapter.validate_python(event)
+        return _metadata_event(raw.metadata, raw.id, raw.context_id)
 
     def task_events(
         self, task: Task, *, seen: set[str] | None = None
@@ -288,11 +261,8 @@ class A2AToHVEvent:
         Returns:
             The events, oldest first.
         """
-        messages: list[A2AMessage] = list(task.history)
-        if task.status.HasField("message"):
-            messages.append(task.status.message)
         events: list[BaseEvent] = []
-        for msg in messages:
+        for msg in _task_messages(task):
             if msg.role != Role.ROLE_AGENT:
                 continue
             if seen is not None:
@@ -309,10 +279,7 @@ class A2AToHVEvent:
 
     def has_events(self, task: Task) -> bool:
         """Whether any of the task's messages carries ant-ai event metadata."""
-        messages: list[A2AMessage] = [*task.history]
-        if task.status.HasField("message"):
-            messages.append(task.status.message)
-        return any(self.translate(m) is not None for m in messages)
+        return any(self.translate(m) is not None for m in _task_messages(task))
 
     @staticmethod
     def task_text(task: Task) -> str:
@@ -326,10 +293,7 @@ class A2AToHVEvent:
         )
         if text:
             return text
-        messages = [*task.history]
-        if task.status.HasField("message"):
-            messages.append(task.status.message)
-        agent = [m for m in messages if m.role == Role.ROLE_AGENT]
+        agent = [m for m in _task_messages(task) if m.role == Role.ROLE_AGENT]
         return get_message_text(agent[-1]) if agent else ""
 
     def to_history_message(self, raw: A2AMessage) -> AnyMessage | None:
@@ -347,3 +311,22 @@ class A2AToHVEvent:
                 return Message(role="user", content=text)
             return Message(role="assistant", content=text) if text else None
         return event_to_message(event)
+
+
+def _metadata_event(metadata: Any, task_id: str, session_id: str) -> BaseEvent | None:
+    """The ant-ai event stored under the `event` key of A2A `metadata`, if any."""
+    md: dict[str, Any] = _json_format.MessageToDict(metadata) if metadata else {}
+    event = md.get("event")
+    if not event:
+        return None
+    event["task_id"] = task_id
+    event["session_id"] = session_id
+    return _any_event_adapter.validate_python(event)
+
+
+def _task_messages(task: Task) -> list[A2AMessage]:
+    """A task's history followed by its status message, if it has one."""
+    messages: list[A2AMessage] = list(task.history)
+    if task.status.HasField("message"):
+        messages.append(task.status.message)
+    return messages

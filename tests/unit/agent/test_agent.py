@@ -38,6 +38,7 @@ from ant_ai.hooks import (
 from ant_ai.llm.protocol import ChatLLM
 from ant_ai.memory.protocol import Memory
 from ant_ai.steps.llm_step import LLMStep
+from ant_ai.steps.tool_call import parse_args
 from ant_ai.steps.tool_step import ToolStep
 from ant_ai.tools.registry import ToolRegistry
 from ant_ai.tools.tool import Tool
@@ -384,18 +385,18 @@ async def test_stream_max_steps_reached():
 
 @pytest.mark.unit
 def test_tool_step_parse_args_json():
-    assert ToolStep._parse_args('{"a": 1, "b": true}', "t") == {"a": 1, "b": True}
+    assert parse_args('{"a": 1, "b": true}', "t") == {"a": 1, "b": True}
 
 
 @pytest.mark.unit
 def test_tool_step_parse_args_empty():
-    assert ToolStep._parse_args("", "t") == {}
+    assert parse_args("", "t") == {}
 
 
 @pytest.mark.unit
 def test_tool_step_parse_args_invalid_raises():
     with pytest.raises(ValueError, match="Could not parse"):
-        ToolStep._parse_args("not json at all !!!", "t")
+        parse_args("not json at all !!!", "t")
 
 
 def _make_tool_shim(tool_name: str, impl: DummyTool):

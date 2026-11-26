@@ -3,7 +3,7 @@ from a2a.server.agent_execution import RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import InternalError
 
-from ant_ai.a2a.executor import A2AExecutor
+from ant_ai.a2a.server.executor import A2AExecutor
 from ant_ai.core.events import FinalAnswerEvent, StartEvent
 from ant_ai.workflow.workflow import Workflow
 

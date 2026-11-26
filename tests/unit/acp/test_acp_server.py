@@ -8,15 +8,14 @@ import time
 from collections.abc import Iterator
 from unittest.mock import MagicMock
 
-import acp
+import acp.core
 import pytest
 import uvicorn
 import websockets
 from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
 
-from ant_ai.acp.adapter import ACPAdapter
-from ant_ai.acp.server import ACPServer, build_acp_ws_route
+from ant_ai.acp.server import ACPAdapter, ACPServer, build_acp_ws_route
 from ant_ai.core.events import FinalAnswerEvent
 
 
@@ -226,7 +225,7 @@ def test_serve_stdio_runs_adapter_for_the_agent(monkeypatch):
         seen["adapter"] = adapter
         seen["kwargs"] = kwargs
 
-    monkeypatch.setattr(acp, "run_agent", _fake_run_agent)
+    monkeypatch.setattr(acp.core, "run_agent", _fake_run_agent)
     _make_server().serve_stdio()
 
     assert isinstance(seen["adapter"], ACPAdapter)

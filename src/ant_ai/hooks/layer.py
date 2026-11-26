@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ant_ai.core.result import StepResult
-from ant_ai.core.types import InvocationContext, State
 from ant_ai.hooks.protocol import (
     AgentHook,
     PostModelBlock,
@@ -15,6 +14,10 @@ from ant_ai.hooks.protocol import (
     PostModelRetry,
     WrapCall,
 )
+
+if TYPE_CHECKING:
+    from ant_ai.core.result import StepResult
+    from ant_ai.core.types import InvocationContext, State
 
 
 class HookLayer(BaseModel):
@@ -150,27 +153,22 @@ def _merge_decisions(
     Returns:
         The single winning decision.
     """
-    for d in decisions:
-        if isinstance(d, PostModelFallback):
-            return d
+    fallback = next((d for d in decisions if isinstance(d, PostModelFallback)), None)
+    if fallback is not None:
+        return fallback
 
-    block_reasons: list[str] = [
-        d.reason for d in decisions if isinstance(d, PostModelBlock) and d.reason
-    ]
-    if any(isinstance(d, PostModelBlock) for d in decisions):
-        return PostModelBlock(
-            reason="\n".join(block_reasons) if block_reasons else None
-        )
-
-    retry_reasons: list[str] = [
-        d.reason for d in decisions if isinstance(d, PostModelRetry) and d.reason
-    ]
-    if any(isinstance(d, PostModelRetry) for d in decisions):
-        return PostModelRetry(
-            reason="\n".join(retry_reasons) if retry_reasons else None
-        )
+    for verdict in (PostModelBlock, PostModelRetry):
+        matching = [d for d in decisions if isinstance(d, verdict)]
+        if matching:
+            return verdict(reason=_joined_reasons(matching))
 
     return PostModelPass(result=result)
+
+
+def _joined_reasons(decisions: list[PostModelBlock | PostModelRetry]) -> str | None:
+    """Join the non-empty reasons of `decisions` with newlines, or None if there are none."""
+    reasons: list[str] = [d.reason for d in decisions if d.reason]
+    return "\n".join(reasons) if reasons else None
 
 
 def _make_layer(method: str, hook: AgentHook, next_call: WrapCall) -> WrapCall:

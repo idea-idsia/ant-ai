@@ -1,11 +1,15 @@
+from __future__ import annotations
+
 from collections.abc import AsyncIterator
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel
 
 from ant_ai.core.message import BaseMessage, MessageChunk
 from ant_ai.core.response import ChatLLMResponse, ChatLLMStreamChunk
-from ant_ai.core.types import InvocationContext
+
+if TYPE_CHECKING:
+    from ant_ai.core.types import InvocationContext
 
 
 class ChatLLM(Protocol):

@@ -6,16 +6,16 @@ title: ACP
 
 The [Agent Client Protocol](https://agentclientprotocol.com/) (ACP) is how code editors talk to agents. Where [A2A](../multi-agent/index.md) connects agents to each other, ACP connects an agent to a person's editor — Zed, VSCode, the Gemini CLI, or any other ACP client.
 
-[`ACPServer`][ant_ai.acp.server.ACPServer] serves an [`Agent`][ant_ai.agent.agent.Agent] and its [`Workflow`][ant_ai.workflow.workflow.Workflow] over the protocol. The agent itself needs no changes: the workflow that answers `agent.stream()` also answers a prompt typed in the editor.
+[`ACPServer`][ant_ai.acp.server.server.ACPServer] serves an [`Agent`][ant_ai.agent.agent.Agent] and its [`Workflow`][ant_ai.workflow.workflow.Workflow] over the protocol. The agent itself needs no changes: the workflow that answers `agent.stream()` also answers a prompt typed in the editor.
 
 ## Core concepts
 
 | Concept                                       | Description                                                                    |
 | --------------------------------------------- | -------------------------------------------------------------------------------- |
-| [`ACPServer`][ant_ai.acp.server.ACPServer]     | Serves an agent over ACP, either on stdio or over WebSocket.                     |
-| [`ACPAdapter`][ant_ai.acp.adapter.ACPAdapter]  | Implements the protocol: sessions, prompts, per-session MCP servers, commands.   |
+| [`ACPServer`][ant_ai.acp.server.server.ACPServer]     | Serves an agent over ACP, either on stdio or over WebSocket.                     |
+| [`ACPAdapter`][ant_ai.acp.server.adapter.ACPAdapter]  | Implements the protocol: sessions, prompts, per-session MCP servers, commands.   |
 | **ACP tools**                                  | Tools that call back into the editor — read files, run terminals, push a plan.   |
-| [`ACPCommand`][ant_ai.acp.commands.ACPCommand] | A slash command advertised in the editor's prompt UI.                            |
+| [`ACPCommand`][ant_ai.acp.server.commands.ACPCommand] | A slash command advertised in the editor's prompt UI.                            |
 
 ## Serving an agent
 
@@ -89,7 +89,7 @@ ACPServer(
 )
 ```
 
-A `kind="prompt"` command expands its template (`{args}` is the text after the command) and runs a normal agent turn. A `kind="code"` command instead runs an async `handler` with no model turn at all — it receives an [`ACPCommandContext`][ant_ai.acp.commands.ACPCommandContext] holding the live session: its message history, working directory, and agent. That is enough for a `/compact` that rewrites the transcript in place, or a command that swaps in a differently configured agent for the rest of the session.
+A `kind="prompt"` command expands its template (`{args}` is the text after the command) and runs a normal agent turn. A `kind="code"` command instead runs an async `handler` with no model turn at all — it receives an [`ACPCommandContext`][ant_ai.acp.server.commands.ACPCommandContext] holding the live session: its message history, working directory, and agent. That is enough for a `/compact` that rewrites the transcript in place, or a command that swaps in a differently configured agent for the rest of the session.
 
 ## Sessions
 

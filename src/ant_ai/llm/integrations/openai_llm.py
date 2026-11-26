@@ -111,6 +111,24 @@ class OpenAIChat(ChatLLM):
             [m.to_provider_dict() for m in messages],
         )
 
+    @contextmanager
+    def _request(
+        self,
+        messages: list[BaseMessage],
+        tools: list | None,
+        response_format: dict | type[BaseModel] | None,
+    ) -> Generator[dict[str, Any]]:
+        """Yield the `create()` kwargs, translating errors raised while they are used."""
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": self._to_openai_messages(messages),
+            **_drop_none(
+                tools=tools, response_format=_to_response_format(response_format)
+            ),
+        }
+        with _translate_errors(self.model):
+            yield kwargs
+
     def invoke(
         self,
         messages: list[BaseMessage],
@@ -119,18 +137,8 @@ class OpenAIChat(ChatLLM):
         tools: list | None = None,
         response_format: dict | type[BaseModel] | None = None,
     ) -> ChatLLMResponse:
-        openai_messages = self._to_openai_messages(messages)
-
-        with _translate_errors(self.model):
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=openai_messages,
-                **_drop_none(
-                    tools=tools,
-                    response_format=_to_response_format(response_format),
-                ),
-            )
-        return _to_chatllm_response(response)
+        with self._request(messages, tools, response_format) as kwargs:
+            return _to_chatllm_response(self.client.chat.completions.create(**kwargs))
 
     async def ainvoke(
         self,
@@ -140,18 +148,10 @@ class OpenAIChat(ChatLLM):
         tools: list | None = None,
         response_format: dict | type[BaseModel] | None = None,
     ) -> ChatLLMResponse:
-        openai_messages = self._to_openai_messages(messages)
-
-        with _translate_errors(self.model):
-            response = await self.async_client.chat.completions.create(
-                model=self.model,
-                messages=openai_messages,
-                **_drop_none(
-                    tools=tools,
-                    response_format=_to_response_format(response_format),
-                ),
+        with self._request(messages, tools, response_format) as kwargs:
+            return _to_chatllm_response(
+                await self.async_client.chat.completions.create(**kwargs)
             )
-        return _to_chatllm_response(response)
 
     def stream(
         self,

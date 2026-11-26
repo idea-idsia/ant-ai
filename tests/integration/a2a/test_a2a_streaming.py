@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from ant_ai.a2a.client import A2AClient
-from ant_ai.a2a.config import A2AConfig
+from ant_ai.a2a.client.config import A2AConfig
 from ant_ai.core.events import ContentDeltaEvent, Event, FinalAnswerEvent
 
 

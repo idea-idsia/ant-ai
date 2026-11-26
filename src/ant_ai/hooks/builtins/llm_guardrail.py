@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 
 from ant_ai.core.message import BaseMessage, Message
-from ant_ai.core.result import StepResult
-from ant_ai.core.types import InvocationContext
-from ant_ai.hooks._guardrail_text import model_output_text
-from ant_ai.hooks.protocol import (
-    AgentHook,
-    PostModelBlock,
-    PostModelDecision,
-    PostModelPass,
-    PostModelRetry,
-)
+from ant_ai.hooks._guardrail_text import TextGuardrailHook, reject
+
+if TYPE_CHECKING:
+    from ant_ai.hooks.protocol import PostModelBlock, PostModelRetry
 
 _DEFAULT_JUDGE_SYSTEM_PROMPT = (
     "You are a strict content guardrail. Judge whether the text below "
@@ -34,7 +28,7 @@ class GuardrailVerdict(BaseModel):
     )
 
 
-class LLMGuardrailHook(AgentHook, BaseModel):
+class LLMGuardrailHook(TextGuardrailHook, BaseModel):
     """
     Templated LLM-as-judge guardrail base class.
 
@@ -109,16 +103,8 @@ class LLMGuardrailHook(AgentHook, BaseModel):
             ),
         ]
 
-    async def after_model(
-        self,
-        result: StepResult,
-        ctx: InvocationContext | None,
-    ) -> PostModelDecision:
-        raw = model_output_text(result)
-        if raw is None:
-            return PostModelPass(result=result)
-
-        messages = self.build_judge_messages(raw)
+    async def check_text(self, text: str) -> PostModelBlock | PostModelRetry | None:
+        messages = self.build_judge_messages(text)
 
         try:
             response = await self.judge_llm.ainvoke(
@@ -128,12 +114,10 @@ class LLMGuardrailHook(AgentHook, BaseModel):
                 response.message.content or ""
             )
         except Exception as exc:  # noqa: BLE001
-            return PostModelRetry(reason=f"LLM guardrail judge error: {exc}")
+            return reject(f"LLM guardrail judge error: {exc}")
 
         if verdict.passed:
-            return PostModelPass(result=result)
-
-        reason = verdict.reason or "LLM guardrail check failed"
-        if self.on_fail == "block":
-            return PostModelBlock(reason=reason)
-        return PostModelRetry(reason=reason)
+            return None
+        return reject(
+            verdict.reason or "LLM guardrail check failed", self.on_fail == "block"
+        )

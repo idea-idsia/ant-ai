@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from a2a.types import Artifact, Part, TaskArtifactUpdateEvent
 
-from ant_ai.a2a.translator import A2AToHVEvent, HVEventToA2A
+from ant_ai.a2a.server.translator import A2AToHVEvent, HVEventToA2A
 from ant_ai.core.events import (
     ContentDeltaEvent,
     FinalAnswerEvent,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any, Literal, cast
 
@@ -44,37 +45,35 @@ def _require_context() -> tuple[Client, str]:
     return client, session_id
 
 
-def _require_fs_read() -> tuple[Client, str]:
+def _require_capability(
+    supported: Callable[[ClientCapabilities], object], method: str, field: str
+) -> tuple[Client, str]:
     client, session_id = _require_context()
     caps = _acp_capabilities.get()
-    if not (caps and caps.fs and caps.fs.read_text_file):
+    if not (caps and supported(caps)):
         raise RuntimeError(
-            "Client does not support fs/read_text_file. "
-            "Check clientCapabilities.fs.readTextFile during initialize()."
+            f"Client does not support {method}. "
+            f"Check clientCapabilities.{field} during initialize()."
         )
     return client, session_id
+
+
+def _require_fs_read() -> tuple[Client, str]:
+    return _require_capability(
+        lambda c: c.fs and c.fs.read_text_file, "fs/read_text_file", "fs.readTextFile"
+    )
 
 
 def _require_fs_write() -> tuple[Client, str]:
-    client, session_id = _require_context()
-    caps = _acp_capabilities.get()
-    if not (caps and caps.fs and caps.fs.write_text_file):
-        raise RuntimeError(
-            "Client does not support fs/write_text_file. "
-            "Check clientCapabilities.fs.writeTextFile during initialize()."
-        )
-    return client, session_id
+    return _require_capability(
+        lambda c: c.fs and c.fs.write_text_file,
+        "fs/write_text_file",
+        "fs.writeTextFile",
+    )
 
 
 def _require_terminal() -> tuple[Client, str]:
-    client, session_id = _require_context()
-    caps = _acp_capabilities.get()
-    if not (caps and caps.terminal):
-        raise RuntimeError(
-            "Client does not support terminal/*. "
-            "Check clientCapabilities.terminal during initialize()."
-        )
-    return client, session_id
+    return _require_capability(lambda c: c.terminal, "terminal/*", "terminal")
 
 
 _PERMISSION_KINDS: tuple[PermissionOptionKind, ...] = (
