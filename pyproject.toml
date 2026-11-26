@@ -48,7 +48,15 @@ dependencies = [
     "websockets>=17.4",
 ]
 
+[project.scripts]
+ant = "ant_ai.cli:main"
+
 [project.optional-dependencies]
+cli = [
+    "prompt-toolkit>=3.0.50",
+    "rich>=14.0",
+    "textual>=8.2",
+]
 datafog = ["datafog>=4.9.0"]
 guardrails-ai = ["guardrails-ai>=0.11.0", "tokenizers>=0.23.3", "huggingface-hub>=1.33.0,<2.0"]
 langfuse = ["langfuse>=5.2.0"]
@@ -56,6 +64,9 @@ mem0 = ["mem0ai>=2.2.1"]
 openai = ["openai>=2.54.0"]
 viz = ["graphviz>=0.21"]
 all = [
+    "prompt-toolkit>=3.0.50",
+    "rich>=14.0",
+    "textual>=8.2",
     "datafog>=4.9.0",
     "guardrails-ai>=0.11.0",
     "tokenizers>=0.23.3",
