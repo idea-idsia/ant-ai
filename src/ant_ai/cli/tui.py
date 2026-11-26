@@ -1,8 +1,9 @@
 """`ant --tui`: the ACP client of `ant` as a Textual app.
 
-The conversation sits on the left, with every tool call folded on one line.
-The panel on the right follows the run: the agents and their state, the plan,
-the messages between the agents, and how much work each step did.
+The conversation takes the whole width, with every tool call folded on one line.
+The line above the input follows the run. The agents, the tools used and the
+messages between agents are in a panel that only Ctrl+T opens and closes: at
+the right of the conversation on a wide screen, above it on a narrow one.
 """
 
 from __future__ import annotations
@@ -13,10 +14,11 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from markdown_it import MarkdownIt
+from rich.cells import cell_len, set_cell_size
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -39,6 +41,7 @@ from textual.worker import Worker
 
 from ant_ai.cli.acp_client import RemoteSession
 from ant_ai.cli.render import (
+    LOGO,
     PLAN_MARKS,
     PLAN_TOOL,
     arguments,
@@ -62,30 +65,47 @@ from ant_ai.core.message import ToolCall
 RESULT_LINES = 40
 RESULT_CHARS = 4000
 LINE_CHARS = 300
+SIDE_FROM = 120
+# The plan items shown in the column at the right; a longer plan shows the
+# ones around the current item.
+PLAN_ROWS = 8
+# The room of the state word: the longest ("connecting", "asking you") and
+# three spaces.
+STATE_CHARS = 13
 
 CSS = """
 Screen { background: #17181c; color: #d4d4d8; }
 Header { background: #22242a; color: #d4d4d8; }
 Footer { background: #22242a; }
-#main { height: 1fr; }
-#left { width: 3fr; padding: 0 1; }
-#side { width: 1.4fr; min-width: 50; }
-#top { height: 11; }
-#conversation { height: 1fr; scrollbar-size-vertical: 1; }
-#statusbar { height: 1; margin: 1 0 0 1; }
-#status { width: 1fr; }
-#walker { width: auto; }
-.live { margin: 1 0 0 0; color: #a9adb6; }
-#ask { margin: 0; border: round #6c5a8e; background: #17181c; }
+#main { height: 1fr; padding: 0 1; }
+#panel { display: none; width: 100%; height: 3; margin: 0; }
+#panel.-open { display: block; }
+#body { width: 100%; height: 1fr; }
+Screen.-side #panel { display: block; dock: right; width: 32; height: 100%; layout: vertical; margin: 0; background: #1b1c21; }
+Screen.-side #panel.-shut { display: none; }
+#side-plan { display: none; }
+Screen.-side #side-plan { display: block; width: 100%; height: auto; max-height: 12; }
+#upper { width: 100%; height: 1fr; }
+Screen.-side #agents, Screen.-side #tools { width: 100%; height: auto; max-height: 10; }
+Screen.-side #messages, Screen.-side #no-messages { width: 100%; height: 1fr; }
+.welcome { width: 100%; height: 100%; content-align: center middle; color: #a99bc9; }
+#conversation { width: 100%; height: 1fr; scrollbar-size-vertical: 1; }
+#status { width: 100%; height: 1; margin: 1 0 0 0; padding: 0 0 0 1; }
+#ask { margin: 0; border: round #6c5a8e; background: #1b1c21; }
+#ask:focus { background-tint: transparent; }
 .panel { border: round #3a3d45; border-title-color: #a99bc9; border-title-style: bold; padding: 0 1; background: #1b1c21; }
-#agents, #activity { height: 100%; }
-#agents { width: 5fr; }
-#activity { width: 4fr; }
-#plan { height: auto; max-height: 10; }
-#messages { height: 1fr; }
-#stats, #tools { height: auto; }
-#context { height: 5; }
-.user { text-style: bold; color: #ffffff; margin: 1 0 0 0; }
+#agents, #tools, #messages { height: 100%; }
+.plan { margin: 0 0 1 2; }
+Screen.-side .plan { display: none; }
+Screen.-side.-panel-shut .plan { display: block; }
+#agents { width: 1fr; }
+#tools { width: 1fr; scrollbar-size-vertical: 1; }
+#messages { display: none; scrollbar-size-vertical: 1; scrollbar-gutter: stable; }
+#no-messages { height: 100%; color: #8a8f99; }
+#messages, #no-messages { width: 2fr; }
+DataTable:blur > .datatable--cursor { background: transparent; color: #d4d4d8; text-style: none; }
+DataTable > .datatable--even-row, DataTable > .datatable--odd-row { color: #d4d4d8; }
+.user { text-style: bold; color: #ffffff; margin: 1 0 1 0; }
 .reason { margin: 1 0 0 0; }
 .note { color: #8a8f99; }
 .answer { margin: 1 0 0 0; }
@@ -97,19 +117,15 @@ CollapsibleTitle { padding: 0; color: #c4c4cc; }
 .error CollapsibleTitle { color: #e07a6f; }
 DataTable { background: #1b1c21; height: 1fr; overflow-x: hidden; }
 Tree { background: #1b1c21; overflow-x: hidden; }
-PermissionScreen { align: center middle; background: #17181ccc; }
-#permission { width: 64; height: auto; border: round #6c5a8e; background: #22242a; padding: 1 2; }
-#permission Label { width: 100%; margin: 0 0 1 0; }
+PermissionScreen { align: left bottom; background: transparent; }
+#permission { width: 1fr; height: auto; margin: 0 1 1 1; border: round #6c5a8e; background: #17181c; padding: 0 1; }
+#permission Label { width: 100%; }
 #permission Horizontal { height: auto; }
 #permission Button { margin: 0 1 0 0; }
 MessageScreen { align: center middle; background: #17181ccc; }
 #message { width: 90; max-height: 80%; height: auto; border: round #3a3d45; border-title-color: #a99bc9; background: #22242a; padding: 1 2; }
 #message VerticalScroll { height: auto; max-height: 100%; }
 """
-
-
-def _now() -> str:
-    return datetime.now().strftime("%H:%M")
 
 
 def _is_agent(call: ToolCall) -> bool:
@@ -166,9 +182,6 @@ def _shown(content: str) -> str:
     return "\n".join(shown)
 
 
-# The ground the ant walks on, repeated.
-CRUMBS = "·  · ·   ·  ·    · ·  "
-
 # The ant, facing right, in block octants (2x4 pixels per character); the two
 # frames move its legs. Drawn from:
 #   .........#
@@ -181,18 +194,21 @@ ANT = (
 )
 
 
+def _markdown(text: str) -> Markdown:
+    """Text of the model; without linkify, which reads `hello.py` as a web address."""
+    return Markdown(
+        text,
+        classes="answer",
+        parser_factory=lambda: MarkdownIt("gfm-like", {"linkify": False}),
+    )
+
+
 @dataclass
 class ToolStats:
     """The calls of one tool in a turn."""
 
     calls: int = 0
     failed: int = 0
-
-
-def _bar(text: Text, share: float, width: int, *, full: str, empty: str) -> None:
-    filled = round(min(1.0, share) * width)
-    text.append(full * filled, style="#a99bc9")
-    text.append(empty * (width - filled), style="#3a3d45")
 
 
 class PermissionScreen(ModalScreen[str]):
@@ -214,11 +230,12 @@ class PermissionScreen(ModalScreen[str]):
         with Vertical(id="permission"):
             yield Label(Text(self.question, style="bold"))
             with Horizontal():
-                yield Button("Allow (y)", id="y", variant="primary")
-                yield Button("Reject (n)", id="n")
+                yield Button("Allow (y)", id="y", variant="primary", compact=True)
+                yield Button("Reject (n)", id="n", compact=True)
                 yield Button(
                     "Always (a)",
                     id="a",
+                    compact=True,
                     tooltip="every action of this kind, for this session",
                 )
 
@@ -249,15 +266,29 @@ class MessageScreen(ModalScreen[None]):
         self.dismiss(result)
 
 
+class MessagesTable(DataTable[str]):
+    """The messages, cut again to the width each time it changes."""
+
+    def on_resize(self) -> None:
+        app = self.app
+        if isinstance(app, AntApp):
+            app.call_after_refresh(app.view.fill_messages)
+
+
 class AntApp(App[None]):
-    """The conversation with one ACP agent, and a panel that follows its run."""
+    """The conversation with one ACP agent, and what follows its run below it."""
 
     TITLE = "ant-ai"
     CSS = CSS
+    # From 120 columns the panel is a column at the right, where the
+    # conversation leaves room; below, it is a strip on top.
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (SIDE_FROM, "-side")]
     BINDINGS = [
-        Binding("escape", "stop", "stop the turn"),
+        Binding("escape", "stop", "stop"),
         Binding("ctrl+l", "clear", "new conversation"),
-        Binding("ctrl+o", "toggle_all", "open/close tools"),
+        # With priority: it works while a permission question is open too.
+        Binding("ctrl+t", "toggle_panel", "panel", priority=True),
+        Binding("ctrl+o", "toggle_all", "details"),
         Binding("ctrl+q", "quit", "quit"),
     ]
 
@@ -291,49 +322,46 @@ class AntApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Horizontal(id="main"):
-            with Vertical(id="left"):
-                yield VerticalScroll(id="conversation")
-                with Horizontal(id="statusbar"):
-                    yield Static(id="status")
-                    yield Static(id="walker")
-                yield Input(placeholder="ask ant to do something", id="ask")
-            with Vertical(id="side"):
-                with Horizontal(id="top"):
+        with Vertical(id="main"):
+            with Vertical(id="upper"):
+                with Horizontal(id="panel"):
                     agents: Tree[str] = Tree("agents", id="agents", classes="panel")
                     agents.show_root = False
+                    agents.guide_depth = 2
                     agents.border_title = "AGENTS"
                     yield agents
-                    with Vertical(id="activity", classes="panel") as activity:
-                        activity.border_title = "ACTIVITY"
-                        yield Static(id="stats")
-                        yield Static(id="tools")
-                plan = Static(
-                    Text("no plan yet", style="#8a8f99"), id="plan", classes="panel"
-                )
-                plan.border_title = "PLAN"
-                yield plan
-                table: DataTable[str] = DataTable(
-                    id="messages",
-                    classes="panel",
-                    cursor_type="row",
-                    zebra_stripes=True,
-                )
-                table.border_title = "MESSAGES"
-                yield table
-                context = Static(id="context", classes="panel")
-                context.border_title = "CONTEXT"
-                yield context
+                    # Under the agents: the plan of the one at work.
+                    plan = Static(id="side-plan", classes="panel")
+                    plan.border_title = "PLAN"
+                    yield plan
+                    with VerticalScroll(id="tools", classes="panel") as tools:
+                        tools.border_title = "TOOLS"
+                        yield Static(Text("none yet", style="#8a8f99"), id="used")
+                    table = MessagesTable(
+                        id="messages",
+                        classes="panel",
+                        cursor_type="row",
+                        show_header=False,
+                        cell_padding=0,
+                    )
+                    table.border_title = "MESSAGES"
+                    yield table
+                    empty = Static("none yet", id="no-messages", classes="panel")
+                    empty.border_title = "MESSAGES"
+                    yield empty
+                with Vertical(id="body"), VerticalScroll(id="conversation"):
+                    yield Static(Text(LOGO), classes="welcome")
+                # Under the conversation, so the column reaches the input.
+                yield Static(id="status")
+            yield Input(placeholder="ask ant to do something", id="ask")
         yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#messages", DataTable)
-        table.add_column("time", width=5)
-        table.add_column("from", width=8)
-        table.add_column("to", width=8)
-        table.add_column("what", width=40)
-        self.query_one("#stats", Static).update(Text("connecting...", style="#8a8f99"))
-        self.view.show_status()
+        table.add_column("message", key="message")
+        self.view._show_side_plan()
+        self.view.reset_context()
+        self.view.doing("connecting")
         # Keys typed while the agent starts are kept: the message waits for it.
         self.query_one("#ask", Input).focus()
         self.set_interval(0.12, self.view.tick)
@@ -345,6 +373,7 @@ class AntApp(App[None]):
                 self.view.reset_agents(self.session.agent_name or "agent")
                 self.view.reset_context()
                 self.view.stats()
+                self.view.doing("")
                 self._connected.set()
                 self.query_one("#ask", Input).focus()
                 if self._queued:
@@ -355,6 +384,12 @@ class AntApp(App[None]):
 
     def _agent_stopped(self, error: BaseException) -> None:
         self._stopped = True
+        if not self.is_running:
+            # The app is closing and takes the agent down with it: nothing to
+            # tell, and the screen is already gone.
+            return
+        if self.view.current == "connecting":
+            self.view.doing("")
         lines = "\n".join(self.session.stderr)
         self.view.note(f"the agent stopped: {error}\n{lines}".rstrip())
 
@@ -376,7 +411,7 @@ class AntApp(App[None]):
         screen = PermissionScreen(question)
         self.push_screen(screen, callback=chosen)
         before = self.view.current
-        self.view.doing("waiting for you")
+        self.view.doing("asking you")
         try:
             return await answer
         except asyncio.CancelledError:
@@ -442,8 +477,35 @@ class AntApp(App[None]):
         self.view.note("new conversation")
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        title, text = self.view.messages[event.row_key.value or ""]
-        self.push_screen(MessageScreen(title, text))
+        sender, to, what, text, when = self.view.messages[event.row_key.value or ""]
+        self.push_screen(MessageScreen(f"{sender} → {to} · {what} · {when}", text))
+
+    def action_toggle_panel(self) -> None:
+        # The main screen, also when a question is open on top of it.
+        main = self.screen_stack[0]
+        panel = main.query_one("#panel")
+        # One switch for both places: what is shown now gets hidden, and it
+        # stays so when the window crosses from narrow to wide.
+        shown = bool(panel.display)
+        panel.set_class(shown, "-shut")
+        panel.set_class(not shown, "-open")
+        # The plan is in the column at the right, or in the conversation.
+        main.set_class(panel.has_class("-shut"), "-panel-shut")
+        self.view.show_status()
+        if not shown:
+            self.view.fit_panel(opening=True)
+        focused = main.focused
+        if (
+            focused is not None
+            and panel.display is False
+            and panel in focused.ancestors
+        ):
+            main.query_one("#ask", Input).focus()
+        self.call_after_refresh(self.view.follow_end)
+
+    def on_resize(self) -> None:
+        # Once the screen has its breakpoint class for the new width.
+        self.call_after_refresh(self.view.fit_panel, opening=True)
 
     def action_toggle_all(self) -> None:
         tools = list(self.query(Collapsible))
@@ -466,31 +528,46 @@ class TuiView:
         self.context_size = context_size
         self.max_steps = max_steps
         self._context_chars = 0
+        self._used_tokens = 0
+        self._context_text = Text("")
         self.verbose = False
         # Each running call: its box, its result and when it started.
         self._calls: dict[str, tuple[ToolCall, Collapsible, Static, float]] = {}
         self._agent_nodes: dict[str, TreeNode[str]] = {}
         self._root: TreeNode[str] | None = None
         self._agent = "agent"
-        self._started = 0.0
+        self._started = self._took = 0.0
+        self._plan_block: Static | None = None
+        self._plan_done = ""
         self.steps = 0
         self.tool_calls = 0
         self._by_tool: dict[str, ToolStats] = {}
-        # Each row of the messages panel: its title and the full message.
-        self.messages: dict[str, tuple[str, str]] = {}
-        self._live: Static | None = None
+        # Each row of the messages panel: sender, receiver, task or answer, text.
+        # Sender, receiver, kind, text and time of every message: the user's
+        # tasks, the answers, and what the agents send each other.
+        self.messages: dict[str, tuple[str, str, str, str, str]] = {}
+        self._panel_rows = 1
+        # Whether the panel is the column at the right of the conversation.
+        self._side = False
+        self._live: Markdown | None = None
+        self._drawn = ""
         self._live_text = ""
         # The reasoning of the model arrives in chunks, shown in one folded box.
         self._thought: Static | None = None
         self._thought_text = ""
         self._doing = ""
         self._frame = 0
+        self._follow = self._anchored = False
+        # The tools of the whole conversation, for the panel.
+        self._used: dict[str, ToolStats] = {}
 
     # -- what RemoteSession calls
 
     @contextmanager
     def turn(self) -> Generator[None]:
-        self.steps = self.tool_calls = 0
+        self.steps, self.tool_calls = 1, 0
+        self._plan_block, self._plan_done = None, ""
+        self._show_side_plan()
         self._by_tool = {}
         self._started = time.monotonic()
         self._set_state(self._root, "working")
@@ -501,8 +578,8 @@ class TuiView:
             self._end_live()
             self._close_open_calls()
             self._set_state(self._root, "waiting")
+            self._took = time.monotonic() - self._started
             self.doing("")
-            self.stats()
 
     @contextmanager
     def paused(self) -> Generator[None]:
@@ -521,17 +598,25 @@ class TuiView:
     def partial(self, text: str) -> None:
         """Show the text of the model while it is written, until its step or answer arrives."""
         self._live_text += text
-        if self._live is None:
-            self._live = Static(classes="live")
+        if self._live is None and self._live_text.strip():
+            self._drawn = self._live_text
+            self._live = _markdown(self._drawn)
             self._mount(self._live)
-        self._live.update(Text(self._live_text))
-        self.app.query_one("#conversation", VerticalScroll).scroll_end(animate=False)
         self.doing("writing")
 
-    def _end_live(self) -> None:
-        if self._live is not None:
-            self._live.remove()
-        self._live, self._live_text = None, ""
+    def _draw_live(self) -> None:
+        if self._live is not None and self._drawn != self._live_text:
+            new = self._live_text[len(self._drawn) :]
+            self._drawn = self._live_text
+            # On the widget's own queue: after its mount, and in order.
+            self._live.call_after_refresh(self._live.append, new)
+
+    def _end_live(self) -> bool:
+        """Close the text being written, which stays; whether there was one."""
+        shown = self._live is not None
+        self._draw_live()
+        self._live, self._live_text, self._drawn = None, "", ""
+        return shown
 
     # -- the walking ant
 
@@ -543,33 +628,74 @@ class TuiView:
         self._doing = what
         self.show_status()
 
+    def follow_end(self) -> None:
+        """Keep the end in view, only while the conversation fills the screen."""
+        # An anchored box puts a short conversation at the bottom and moves it
+        # up at every new line.
+        box = self.app.query_one("#conversation", VerticalScroll)
+        if box.max_scroll_y <= 0:
+            if self._anchored:
+                self._anchored, self._follow = False, True
+                box.anchor(False)
+                # Forced: a box with nothing to scroll ignores scroll_home, and an
+                # anchored one can be left scrolled below zero.
+                box.scroll_home(animate=False, immediate=True, force=True)
+        elif self._follow:
+            self._follow, self._anchored = False, True
+            # Follows what is written, until the user scrolls up.
+            box.anchor()
+
     def tick(self) -> None:
         # The timer can fire once more while the app closes, after its widgets are gone.
-        if self._doing and self.app.query("#status"):
+        if not self.app.query("#status"):
+            return
+        self.follow_end()
+        if self._doing:
             self._frame += 1
+            self._draw_live()
             self.show_status()
-            self.stats()
 
     def show_status(self) -> None:
-        line = Text("■ ", style="#a99bc9")
-        # The ant stays still at the right and the crumbs come to it, as if the
-        # view followed it walking; one step every two ticks.
-        step = self._frame // 2
-        ground = CRUMBS * 2
-        walker = Text(ANT[step % 2] + " ", style="#a99bc9")
-        if not self._doing:
-            line.append("ready", style="#8a8f99")
-            walker.append(" " * len(CRUMBS))
-        else:
-            elapsed = time.monotonic() - self._started if self._started else 0.0
-            line.append(self._doing, style="#d4d4d8")
-            line.append(f"  {elapsed:.1f}s", style="#8a8f99")
-            at = step % len(CRUMBS)
-            walker.append(ground[at : at + len(CRUMBS)], style="#6b707a")
+        # The ant at the start of the line moves its legs while the agent
+        # works, one step every two ticks, and stands still when it is done.
+        legs = ANT[(self._frame // 2) % 2] if self._doing else ANT[0]
+        line = Text(legs + " ", style="#a99bc9")
+        seconds = self._took
+        # What ants do when they look for food: the word while the model thinks.
+        state = {"thinking": "foraging", "": "ready"}.get(self._doing, self._doing)
+        line.append(
+            f"{_cut(state, STATE_CHARS - 1):<{STATE_CHARS}}",
+            style="#d4d4d8" if self._doing else "#8a8f99",
+        )
+        line.append_text(self._context_text)
+        if not self.app.screen_stack:
+            # The app is closing, e.g. quit while a question was open.
+            return
+        # The plan first: on a narrow screen the counters are cut, not the plan.
+        # In the column at the right while it is there.
+        main = self.app.screen_stack[0]
+        column = self._side and not main.has_class("-panel-shut")
+        if self._plan_done and not column:
+            line.append(self._plan_done, style="#a99bc9")
+            line.append(" · " if self.steps else "", style="#8a8f99")
+        parts = []
+        if self.steps:
+            if self._doing:
+                parts.append(f"step {self.steps}")
+                seconds = time.monotonic() - self._started
+            else:
+                parts.append(f"{self.steps} step{'' if self.steps == 1 else 's'}")
+            parts.append(f"{seconds:.1f}s")
+            parts.append(f"{self.tool_calls} tool{'' if self.tool_calls == 1 else 's'}")
+        line.append(" · ".join(parts), style="#8a8f99")
+        if failed := sum(tool.failed for tool in self._by_tool.values()):
+            line.append(f" ✗{failed}", style="bold #e07a6f")
+        line.no_wrap = True
+        line.overflow = "ellipsis"
         self.app.query_one("#status", Static).update(line)
-        self.app.query_one("#walker", Static).update(walker)
 
     def event(self, event: BaseEvent) -> None:
+        written = False
         if isinstance(
             event,
             ToolCallingEvent
@@ -577,43 +703,73 @@ class TuiView:
             | ClarificationNeededEvent
             | MaxStepsReachedEvent,
         ):
-            self._end_live()
+            written = self._end_live()
         if not isinstance(event, ReasoningEvent):
             self._thought, self._thought_text = None, ""
         match event:
             case ReasoningEvent():
                 self._reasoning(event.content)
             case ToolCallingEvent():
-                self._step(event)
+                self._step(event, written)
             case ToolResultEvent():
                 self._result(event)
             case FinalAnswerEvent():
-                self.steps += 1
-                self._mount(Markdown(event.content or "(no answer)", classes="answer"))
+                if not written:
+                    self._mount(_markdown(event.content or "(no answer)"))
                 self._seen(event.content)
-                self._message(self._agent, "user", "answer", event.content)
+                self._message(self._agent, "you", "answer", event.content)
             case MaxStepsReachedEvent():
                 self.note("stopped: step limit reached")
             case ClarificationNeededEvent():
                 self._mount(Static(Text(f"? {event.content}", style="bold #e0b36f")))
-                self._message(self._agent, "user", "question", event.content)
         self.stats()
 
     # -- the app's own calls
 
     def user(self, text: str) -> None:
+        self._follow = True
         self._mount(Static(Text(f"› {text}"), classes="user"))
+        self.follow_end()
         self._seen(text)
-        self._message("user", self._agent, "task", text)
+        self._message("you", self._agent, "task", text)
 
     def reset_agents(self, name: str) -> None:
         self._agent = name
         tree = self.app.query_one("#agents", Tree)
         tree.clear()
         self._agent_nodes.clear()
-        self._root = tree.root.add(name, expand=True)
+        self._root = tree.root.add(name, expand=True, allow_expand=False)
         self._root.data = name
         self._set_state(self._root, "waiting")
+
+    def fit_panel(self, opening: bool = False) -> None:
+        """Above the conversation: as tall as its longest part, up to a quarter
+        of the screen.
+
+        While open it only grows, until a new conversation: shrinking would move
+        the conversation under the reader. At the right it is as tall as the
+        conversation.
+        """
+        main = self.app.screen_stack[0]
+        panel = main.query_one("#panel")
+        # From the width: on a resize the breakpoint class comes later.
+        if (self.app.size.width >= SIDE_FROM) != self._side:
+            self._side = not self._side
+            self.fill_messages()
+            self._show_context()
+            self.show_status()
+        if self._side:
+            # A quarter of the screen: wider on a wide screen, so the messages
+            # are not cut for nothing.
+            panel.styles.width = max(32, self.app.size.width // 4)
+            panel.styles.height = None
+            return
+        panel.styles.width = None
+        lines = (1 + len(self._agent_nodes), len(self._used), len(self.messages))
+        cap = max(1, self.app.size.height // 4 - 2)
+        rows = min(max(1, *lines), cap)
+        self._panel_rows = rows if opening else max(self._panel_rows, rows)
+        main.query_one("#panel").styles.height = self._panel_rows + 2
 
     def reset(self, name: str) -> None:
         """Empty every panel, for a new conversation."""
@@ -622,10 +778,19 @@ class TuiView:
         self._calls.clear()
         self.steps = self.tool_calls = 0
         self._by_tool = {}
-        self._started = 0.0
+        self._started = self._took = 0.0
+        self._plan_block, self._plan_done = None, ""
+        self._show_side_plan()
+        self._follow = self._anchored = False
+        self.app.query_one("#conversation", VerticalScroll).anchor(False)
+        self._used.clear()
+        self._show_used()
         self.messages.clear()
         self.app.query_one("#messages", DataTable).clear()
-        self.app.query_one("#plan", Static).update(Text("no plan yet", style="#8a8f99"))
+        self.app.query_one("#messages").display = False
+        self.app.query_one("#no-messages").display = True
+        # A new conversation starts empty: nothing moves if the panel shrinks.
+        self.fit_panel(opening=True)
         self.stats()
 
     def _close_open_calls(self) -> None:
@@ -647,85 +812,89 @@ class TuiView:
         needs the agent to send ACP `usage_update`.
         """
         self._context_chars += len(text or "")
-        used = self._context_chars // 4
-        text_ = Text()
-        text_.append(f"≈ {used / 1000:.1f}k", style="bold #ffffff")
-        if self.context_size:
-            share = min(1.0, used / self.context_size)
-            text_.append(f" / {self.context_size // 1000}k tokens  ", style="#8a8f99")
-            text_.append(f"{share:.0%}\n", style="bold #ffffff")
-            _bar(text_, share, self._width("#context", 30), full="█", empty="░")
+        self._used_tokens = self._context_chars // 4
+        self._show_context()
+
+    def _show_context(self) -> None:
+        """The share, a bar and the tokens, after the state in the status line.
+
+        Always as wide, so the counters after it do not move; short on a
+        narrow screen.
+        """
+        tokens = _tokens(self._used_tokens)
+        if not self.context_size:
+            text = Text.assemble(
+                ("context " if self._side else "", "#8a8f99"),
+                (f"≈{tokens}", "#d4d4d8"),
+            )
+            # "context ≈999.9k", the longest count before it reads in M.
+            self._set_context(text, 15 if self._side else 7)
+            return
+        share = min(1.0, self._used_tokens / self.context_size)
+        style = "#e07a6f" if share >= 0.9 else "#e0b36f" if share >= 0.7 else "#a99bc9"
+        shown = f"{share:.0%}" if share >= 0.01 else "<1%"
+        total = _tokens(self.context_size, exact=False)
+        if self._side:
+            head = Text.assemble(("context ", "#8a8f99"), (f"{shown:>3} ", style))
+            tail = Text(f" {tokens}/{total}", style="#8a8f99")
+            width = 8
         else:
-            text_.append(" tokens (model limit unknown)", style="#8a8f99")
-        text_.append("\nestimate: what passed over ACP", style="#6b707a")
-        self.app.query_one("#context", Static).update(text_)
+            head, tail, width = Text(f"{shown:>3} ", style=style), Text(""), 5
+        filled = max(1 if self._used_tokens else 0, round(share * width))
+        bar = Text.assemble(("█" * filled, style), ("░" * (width - filled), "#5a5e68"))
+        # The longest the line gets with this total: 100% and 999.9k used.
+        longest = len("context 100% ") + width + len(f" 999.9k/{total}")
+        self._set_context(head + bar + tail, longest if self._side else 10)
+
+    def _set_context(self, text: Text, longest: int) -> None:
+        text.append(" " * max(2, longest + 2 - len(text.plain)))
+        self._context_text = text
+        self.show_status()
 
     def stats(self) -> None:
-        elapsed = time.monotonic() - self._started if self._started else 0.0
-        text = Text()
-        text.append(f"{self.tool_calls}", style="bold #ffffff")
-        text.append(" tools  ", style="#8a8f99")
-        text.append(f"{elapsed:.1f}", style="bold #ffffff")
-        text.append("s", style="#8a8f99")
-        self.app.query_one("#stats", Static).update(text)
-        self.app.query_one("#tools", Static).update(self._rows())
+        self.show_status()
 
-    def _width(self, selector: str, default: int) -> int:
-        """The width inside a widget, once it is laid out."""
-        return self.app.query_one(selector).content_size.width or default
-
-    def _rows(self) -> Text:
-        """The steps with a bar over the limit, then the calls of each tool, in columns."""
-        width = self._width("#tools", 24)
-        text = Text("steps ", style="#d4d4d8")
-        text.append(f"{self.steps}", style="bold #ffffff")
-        if self.max_steps:
-            text.append(f"/{self.max_steps}", style="#8a8f99")
-            text.append("\n")
-            _bar(text, self.steps / self.max_steps, width, full="━", empty="─")
-        cells = []
-        for name, tool in sorted(self._by_tool.items(), key=lambda kv: -kv[1].calls):
-            cell = Text(f"{name} ", style="#d4d4d8")
-            cell.append(f"{tool.calls}", style="bold #ffffff")
+    def _show_used(self) -> None:
+        text = Text(no_wrap=True, overflow="ellipsis")
+        for name, tool in self._used.items():
+            text.append(f"{name:<14} {tool.calls}", style="#d4d4d8")
             if tool.failed:
-                cell.append(f" ✗{tool.failed}", style="bold #e07a6f")
-            cells.append(cell)
-        if not cells:
-            return text
-        cell_width = max(c.cell_len for c in cells) + 2
-        columns = max(1, width // cell_width)
-        for i, cell in enumerate(cells):
-            text.append("\n" if i % columns == 0 else "")
-            if i % columns < columns - 1 and i < len(cells) - 1:
-                cell.pad_right(cell_width - cell.cell_len)
-            text.append_text(cell)
-        return text
+                text.append(f" ✗{tool.failed}", style="bold #e07a6f")
+            text.append("\n")
+        text.rstrip()
+        if not self._used:
+            text.append("none yet", style="#8a8f99")
+        self.app.query_one("#used", Static).update(text)
+        self.fit_panel()
 
     # -- drawing
 
     def _mount(self, widget: Any) -> None:
         box = self.app.query_one("#conversation", VerticalScroll)
+        box.query(".welcome").remove()
         box.mount(widget)
-        box.scroll_end(animate=False)
 
-    def _step(self, event: ToolCallingEvent) -> None:
-        self.steps += 1
+    def _step(self, event: ToolCallingEvent, written: bool) -> None:
         self._seen(event.content)
         for call in event.tool_calls:
             self._seen(call.function.arguments or "")
-        if event.content.strip():
+        if event.content.strip() and not written:
             self._mount(
                 Static(
                     Text.assemble(("● ", "#a99bc9"), event.content.strip()),
                     classes="reason",
                 )
             )
-        names = ", ".join(c.function.name for c in event.tool_calls)
-        self.doing(f"running {names}")
+        self.doing("running")
         for call in event.tool_calls:
-            self.tool_calls += 1
             name = call.function.name
+            # The plan is a block and an agent is in AGENTS: neither is a tool.
+            is_tool = name != PLAN_TOOL and not _is_agent(call)
+            self.tool_calls += is_tool
             self._by_tool.setdefault(name, ToolStats()).calls += 1
+            if is_tool:
+                self._used.setdefault(name, ToolStats()).calls += 1
+                self._show_used()
             if name == PLAN_TOOL:
                 self._plan(call)
             title = f"{_call_title(call)}  …"
@@ -733,13 +902,14 @@ class TuiView:
             result = Static("", classes="result")
             box = Collapsible(result, title=title, collapsed=True)
             self._calls[call.id] = (call, box, result, time.monotonic())
-            self._mount(box)
+            if name != PLAN_TOOL:
+                self._mount(box)
             if _is_agent(call):
-                node = (self._root or self.app.query_one("#agents", Tree).root).add(
-                    name, expand=True
-                )
+                root = self._root or self.app.query_one("#agents", Tree).root
+                node = root.add_leaf(name)
                 node.data = name
                 self._agent_nodes[call.id] = node
+                self.fit_panel()
                 self._set_state(node, "working")
                 task = next(iter(arguments(call).values()), "")
                 self._message(self._agent, name, "task", str(task))
@@ -751,13 +921,20 @@ class TuiView:
         call, box, result, started = found
         took = time.monotonic() - started
         if not self._calls:
+            # The last result of a step: the next one starts.
+            self.steps = min(self.steps + 1, self.max_steps or self.steps + 1)
             self.doing("thinking")
         name = event.name
         tool = self._by_tool.setdefault(name, ToolStats())
         if event.is_error:
             tool.failed += 1
+            if name in self._used:
+                self._used[name].failed += 1
+                self._show_used()
             summary = "✗ " + error_line(event.content)
             box.add_class("error")
+            if name == PLAN_TOOL:
+                self._mount(box)
         elif name == PLAN_TOOL:
             summary = "plan updated"
         else:
@@ -779,21 +956,77 @@ class TuiView:
         self._thought.update(Text(self._thought_text))
 
     def _plan(self, call: ToolCall) -> None:
-        text = Text()
-        for status, content in todos(call):
+        items = todos(call)
+        done = sum(status == "completed" for status, _ in items)
+        # Also in the status line, which stays in sight when the plan scrolls away.
+        self._plan_done = f"plan {done}/{len(items)}"
+        text = Text.assemble((self._plan_done, "bold #a99bc9"))
+        for status, content in items:
             mark, style = PLAN_MARKS.get(status, PLAN_MARKS["pending"])
-            text.append(f"{mark} {content}\n", style=style or "#d4d4d8")
-        self.app.query_one("#plan", Static).update(text or Text("no plan yet"))
+            text.append(f"\n{mark} {content}", style=style or "#d4d4d8")
+        self._show_side_plan(_plan_window(items), f"{done}/{len(items)}")
+        if self._plan_block is None:
+            self._plan_block = Static(text, classes="plan")
+            self._mount(self._plan_block)
+        else:
+            self._plan_block.update(text)
+
+    def _show_side_plan(self, text: Text | None = None, count: str = "") -> None:
+        if text is None:
+            text = Text("no plan yet", style="#8a8f99")
+        box = self.app.query_one("#side-plan", Static)
+        box.border_title = f"PLAN {count}".rstrip()
+        box.update(text)
 
     def _message(self, sender: str, to: str, what: str, content: str) -> None:
         table = self.app.query_one("#messages", DataTable)
-        first = (
-            (content or "").strip().splitlines()[0] if (content or "").strip() else ""
-        )
         key = str(len(self.messages))
-        self.messages[key] = (f"{sender} → {to} · {what}", content or "")
-        table.add_row(_now(), sender[:8], to[:8], f"{what}: {first}"[:40], key=key)
+        self.messages[key] = (sender, to, what, content or "", time.strftime("%H:%M"))
+        self._add_message_row(key)
+        table.border_title = f"MESSAGES {len(self.messages)}"
+        # The same place and width as the empty one it replaces.
+        table.display = True
+        self.app.query_one("#no-messages").display = False
         table.move_cursor(row=table.row_count - 1)
+        self.fit_panel()
+
+    def _add_message_row(self, key: str) -> None:
+        """Who to whom, what and when, then the first line of the message under it."""
+        sender, to, what, content, when = self.messages[key]
+        first = content.strip().splitlines()[0] if content.strip() else ""
+        table = self.app.query_one("#messages", DataTable)
+        # Hidden, the table has no width yet: a guess, cut again once shown.
+        room = max(8, table.scrollable_content_region.width or 36)
+        if not self._side:
+            # In the short panel at the top: all on one line, both names kept.
+            who = f"{_cut(sender, 8)}→{_cut(to, 8)}"
+            text = _cut(first, room - len(when) - cell_len(who) - 3)
+            table.add_row(
+                Text.assemble((when, "#8a8f99"), " ", (who, "bold"), "  " + text),
+                key=key,
+            )
+            return
+        # The names in bold as in AGENTS, kind and time in grey, the text plain.
+        what = f"{what} {when}"
+        who = _cut(f"{sender} → {to}", room - len(what) - 1)
+        row = Text.assemble(
+            (who, "bold"),
+            " " * max(1, room - cell_len(who) - len(what)),
+            (what, "#8a8f99"),
+            "\n" + _cut(first, room),
+        )
+        table.add_row(row, key=key, height=2)
+
+    def fill_messages(self) -> None:
+        """The rows again, cut to the width the table has now."""
+        table = self.app.screen_stack[0].query_one("#messages", DataTable)
+        # The column too: it keeps the width of its widest row otherwise.
+        table.clear(columns=True)
+        table.add_column("message", key="message")
+        for key in self.messages:
+            self._add_message_row(key)
+        if table.row_count:
+            table.move_cursor(row=table.row_count - 1)
 
     def _set_state(self, node: TreeNode[str] | None, state: str) -> None:
         if node is None:
@@ -814,6 +1047,42 @@ class TuiView:
                 (f" {state}", "#8a8f99"),
             )
         )
+
+
+def _cut(text: str, size: int) -> str:
+    """At most `size` terminal cells, wide characters counted twice."""
+    if size <= 0:
+        return ""
+    if cell_len(text) <= size:
+        return text
+    return set_cell_size(text, size - 1) + "…"
+
+
+def _plan_window(items: list[tuple[str, str]]) -> Text:
+    """The plan for the column: all of it, or the items around the current one."""
+    current = next(
+        (i for i, (status, _) in enumerate(items) if status != "completed"),
+        len(items) - 1,
+    )
+    start = max(0, min(current - 1, len(items) - PLAN_ROWS))
+    shown = items[start : start + PLAN_ROWS]
+    text = Text()
+    if start:
+        text.append(f"✓ {start} done before\n", style="#8a8f99")
+    for status, content in shown:
+        mark, style = PLAN_MARKS.get(status, PLAN_MARKS["pending"])
+        text.append(f"{mark} {content}\n", style=style or "#d4d4d8")
+    if start + len(shown) < len(items):
+        text.append(f"… {len(items) - start - len(shown)} more\n", style="#8a8f99")
+    text.rstrip()
+    return text
+
+
+def _tokens(count: int, exact: bool = True) -> str:
+    """A token count in a few characters: 45.0k, 999.9k, 1.2M (200k, 1M as totals)."""
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M" if exact else f"{count / 1_000_000:g}M"
+    return f"{count / 1000:.1f}k" if exact else f"{count // 1000}k"
 
 
 def context_size(model: str | None) -> int | None:

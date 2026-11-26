@@ -60,19 +60,21 @@ Conversations are saved per folder under `~/.ant/sessions` (or `$ANT_HOME/sessio
 
 ## The full-screen view
 
-`ant --tui` shows the conversation on the left, with each tool call folded on one line (its main argument, a short result and how long it took) and the model's reasoning, when it sends one, folded too. A panel on the right follows the run:
+`ant --tui` shows the conversation with each tool call folded on one line (its main argument, a short result and how long it took) and the model's reasoning, when it sends one, folded too. On a terminal of 120 columns or more, a column at the right follows the run:
 
-| Panel        | What it shows                                                                     |
-| ------------ | --------------------------------------------------------------------------------- |
-| **Agents**   | The agent and any agent it calls as a tool, with their state.                     |
-| **Plan**     | The checklist the agent writes with its planning tool.                            |
-| **Messages** | The messages between agents: the user's task, the tasks to sub-agents, their answers. `Enter` on a row shows it in full. |
-| **Activity** | Steps used out of the limit, and calls per tool with failures.                    |
-| **Context**  | An estimate of how full the model's context window is.                            |
+| Part         | What it shows                                                                       |
+| ------------ | ----------------------------------------------------------------------------------- |
+| **Agents**   | The agent and the agents it called, each with its state.                            |
+| **Plan**     | The checklist the agent writes with its planning tool; a long plan shows the items around the current one. |
+| **Tools**    | The tools used in the conversation, how many times, and how many failed.            |
+| **Messages** | Your messages, the answers, and the tasks and answers between agents, each with its time. `Enter` on a row shows it in full. |
+
+The line under the conversation shows what the agent is doing, an estimate of how full the model's context window is, the steps, the time and the tool calls. On a narrower terminal the same parts are in a panel at the top, closed until you open it, and the plan is a block of the conversation. A permission question takes the place of the input.
 
 | Key      | Action                       |
 | -------- | ---------------------------- |
 | `Esc`    | Stop the current turn; queued messages go back to the input. |
+| `Ctrl+T` | Hide or show the column (or the panel on a narrow terminal). |
 | `Ctrl+O` | Open or close all tool calls. |
 | `Ctrl+L` | Start a new conversation; every panel starts empty. |
 | `Ctrl+P` | Command palette.             |
@@ -80,7 +82,7 @@ Conversations are saved per folder under `~/.ant/sessions` (or `$ANT_HOME/sessio
 
 A message sent while the agent starts or works waits and is sent when it is ready.
 
-The view only speaks ACP, so it also works with an agent written by someone else, as long as that agent runs its own tools: the view offers it no file system and no terminal of the client. Some parts depend on what the agent sends: the plan appears only if it uses a planning tool, and the step limit is shown only for `ant`'s own agent.
+The view only speaks ACP, so it also works with an agent written by someone else, as long as that agent runs its own tools: the view offers it no file system and no terminal of the client. Some parts depend on what the agent sends: the plan appears only if it uses a planning tool, and the steps are counted from its tool calls.
 
 ## Limits of the prototype
 

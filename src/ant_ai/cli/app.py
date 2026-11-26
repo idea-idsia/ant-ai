@@ -285,8 +285,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tui",
         action="store_true",
-        help="full-screen view: conversation on the left, agents, plan and messages "
-        "on the right; the agent runs in its own process and talks ACP",
+        help="full-screen view of the conversation and of what the agent is doing; "
+        "the agent runs in its own process and talks ACP",
     )
     acp.add_argument(
         "--agent",
